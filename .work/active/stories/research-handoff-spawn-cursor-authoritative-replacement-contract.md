@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-cursor-authoritative-replacement-contract
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-identity-contract]
@@ -116,3 +116,31 @@ Independent early leaf after logical identity. Every spawn reconnect operation a
   3. **PASS** — `cd operator-domain && npm run build && npm test` (20/20 tests; 11 cursor-contract/store-conformance tests).
   4. **PASS** — `cd pi-adapter && npm test` (29/29 tests).
 - Residual handoff: downstream concrete CAS stores must execute the exported store-conformance suite, and the Pi story must supply only the four narrow ports. This leaf intentionally does not implement or claim Pi publication/storage conformance.
+
+### Fix round 2 — non-subclassable construction, overlapping-reader conformance, and pending guard oracles
+
+- Trigger: pass-2 thorough review retained three MATERIAL findings: subclassing could bypass every transition, settled-only store checks blessed a deterministic torn snapshot, and the already-pending known-suffix guard had no direct oracle.
+- Finding 1 — construction is closed over the concrete transition owner:
+  - `AuthoritativeCursorReplacement` now has a private constructor, an exported generic `create(...)` factory, and an explicit private nominal member. Downstream callers can construct only the module-owned transition implementation; they cannot structurally substitute an object or extend the class to override its binding methods.
+  - The compiled test suite includes `@ts-expect-error` assertions for both a complete no-op object literal and a no-op subclass overriding `reconcileKnown`, `stageReplacement`, and `commitReplacement`.
+- Finding 2 — the reusable store suite executes an overlapping read:
+  - `AtomicExternalCursorProjectionStore` now exposes optional conformance-only instrumentation that pauses immediately after the store's earliest externally observable mutation. The suite starts a CAS without awaiting it, pauses at that implementation-owned visibility point when available, loads concurrently, and accepts only the complete pre-CAS or complete post-CAS record.
+  - A committed `TearingStore` regression exposes next version/freshness with the old projection, pauses, then installs the complete record. The conformance suite rejects its observed hybrid.
+  - Rationale: an after-earliest-visible-mutation hook puts a truly atomic store at its complete post-state but a multi-step store at its first partial state, making the reviewed critical window deterministic without timing sleeps. Port and suite prose deliberately claims only the executed immediate/instrumented interleaving. Stores claiming process- or host-wide atomicity must wire the hook to and test across their real lock/transaction/rename boundary; an in-memory run does not establish that stronger claim.
+- Finding 3 — already-pending reconciliation fails before effects:
+  - Added explicit `reconcileKnown` cases seeded with valid `fetching` and `staged` records. Each requires the pending-replacement rejection, zero fetch/publication/write calls, and byte-for-structure preservation of the complete pre-attempt record.
+- Files changed:
+  - `operator-domain/src/reconciliation/external_cursor.ts` — static construction boundary, nominal brand, optional store-test instrumentation, overlapping-reader conformance oracle, and bounded assurance wording.
+  - `operator-domain/tests/external-cursor.test.ts` — factory use, two negative type assertions, deterministic tearing store, overlapping conformance rejection, fetch counters, and fetching/staged guard cases.
+  - This story file only; no Protobuf, generated-contract, foundation-doc, or Pi-specific ontology change was needed.
+- Mutation/probe evidence (all temporary edits restored with `git restore`; no mutant was committed):
+  - Removed both `@ts-expect-error` directives and compiled the injected no-op object/subclass shapes → TypeScript failed with TS2740 (private nominal/dependency members absent) and TS2675 (private constructor forbids extension). **KILLED.**
+  - Executed the instrumented next-metadata/old-projection `TearingStore` through the reusable suite → rejected with `the executed overlapping reader observed a torn cursor projection snapshot`. **KILLED.**
+  - Removed the `freshness !== "current" || pendingReplacement` guard → both fetching and staged tests failed before their zero-call assertions could be satisfied (21/23 passed, 2 failed). **KILLED.**
+  - Re-spot-checked three earlier kills: removed staged epoch/exact-entry/leaf correlation (22/23, conflict oracle failed); changed exact replacement to old-plus-new upsert (21/23, atomic/crash complete-record oracles failed); added Patchbay generation to the continuity key (22/23, N/N+1 continuity oracle failed). **ALL KILLED.** The clean suite keeps all six acceptance rows and every previously committed mutant oracle green.
+- Full clean verification after every mutation restore:
+  1. **PASS** — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`.
+  2. **PASS** — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build` (54 vectors, 17 promoted vectors, 22 implementation checks, 38 mutation witnesses; generated bindings clean).
+  3. **PASS** — `cd operator-domain && npm run build && npm test` (23/23 total; 14 cursor-contract/store-conformance tests).
+  4. **PASS** — `cd pi-adapter && npm test` (29/29).
+- Residual handoff for pass 3: the reusable suite proves only its single executed overlapping-reader schedule; each durable store still owns real cross-process/locking/rename-boundary evidence. Adapter-specific complete-fetch honesty and publication idempotence/acknowledgement remain downstream obligations and are not broadened by this bounded fix.

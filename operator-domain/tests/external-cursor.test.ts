@@ -58,6 +58,21 @@ function fetchingRecord(entries = [entry("kept"), entry("stale")]): Record {
   };
 }
 
+function stagedRecord(entries = [entry("kept"), entry("stale")]): Record {
+  const fetching = fetchingRecord(entries);
+  return {
+    recordVersion: fetching.recordVersion + 1n,
+    freshness: "stale",
+    projection: fetching.projection,
+    pendingReplacement: {
+      kind: "staged",
+      replacementEpoch: 8n,
+      exactEntries: [entry("replacement")],
+      leaf: "leaf-8",
+    },
+  };
+}
+
 class MemoryStore implements AtomicExternalCursorProjectionStore<
   ExternalCursorScope,
   Entry,
@@ -68,7 +83,15 @@ class MemoryStore implements AtomicExternalCursorProjectionStore<
   failNext: "before" | "after" | undefined;
   onWrite: ((record: Record) => void) | undefined;
   beforeSwap: (() => Promise<void>) | undefined;
+  readonly conformanceTestInstrumentation = {
+    setPauseAfterEarliestObservableMutation: (
+      pause: (() => Promise<void>) | undefined,
+    ): void => {
+      this.pauseAfterEarliestObservableMutation = pause;
+    },
+  };
   private readonly records = new Map<string, Record>();
+  private pauseAfterEarliestObservableMutation: (() => Promise<void>) | undefined;
 
   seed(scope: ExternalCursorScope, record: Record): void {
     this.records.set(externalCursorScopeKey(scope), cloneRecord(record));
@@ -94,6 +117,7 @@ class MemoryStore implements AtomicExternalCursorProjectionStore<
     assert.equal(current?.recordVersion, expectedRecordVersion, "compare-and-swap version");
     const committed = cloneRecord(next);
     this.records.set(key, committed);
+    await this.pauseAfterEarliestObservableMutation?.();
     this.writes.push(cloneRecord(committed));
     this.onWrite?.(cloneRecord(committed));
     if (this.failNext === "after") {
@@ -103,12 +127,60 @@ class MemoryStore implements AtomicExternalCursorProjectionStore<
   }
 }
 
+/** Regression probe: version/freshness become visible before the old projection is replaced. */
+class TearingStore implements AtomicExternalCursorProjectionStore<
+  ExternalCursorScope,
+  Entry,
+  Cursor,
+  Leaf
+> {
+  readonly conformanceTestInstrumentation = {
+    setPauseAfterEarliestObservableMutation: (
+      pause: (() => Promise<void>) | undefined,
+    ): void => {
+      this.pauseAfterEarliestObservableMutation = pause;
+    },
+  };
+  private record: Record;
+  private pauseAfterEarliestObservableMutation: (() => Promise<void>) | undefined;
+
+  constructor(record: Record) {
+    this.record = cloneRecord(record);
+  }
+
+  async load(_scope: ExternalCursorScope): Promise<Record> {
+    return cloneRecord(this.record);
+  }
+
+  async compareAndSwap(
+    _scope: ExternalCursorScope,
+    expectedRecordVersion: bigint,
+    next: Record,
+  ): Promise<void> {
+    assert.equal(this.record.recordVersion, expectedRecordVersion, "compare-and-swap version");
+    const oldProjection = cloneRecord(this.record).projection;
+    this.record = {
+      recordVersion: next.recordVersion,
+      freshness: next.freshness,
+      projection: oldProjection,
+      ...(next.pendingReplacement
+        ? { pendingReplacement: cloneRecord(next).pendingReplacement }
+        : {}),
+    };
+    await this.pauseAfterEarliestObservableMutation?.();
+    await Promise.resolve();
+    this.record = cloneRecord(next);
+  }
+}
+
 class ScriptedFetch implements ExternalCursorFetchPort<
   ExternalCursorScope,
   Entry,
   Cursor,
   Leaf
 > {
+  knownCalls = 0;
+  completeCalls = 0;
   known: (
     scope: ExternalCursorScope,
     cursor: Cursor,
@@ -126,12 +198,14 @@ class ScriptedFetch implements ExternalCursorFetchPort<
     scope: ExternalCursorScope,
     cursor: Cursor,
   ): Promise<KnownCursorFetch<Entry, Cursor, Leaf>> {
+    this.knownCalls += 1;
     return this.known(scope, cursor);
   }
 
   fetchComplete(
     scope: ExternalCursorScope,
   ): Promise<{ readonly entries: readonly Entry[]; readonly leaf: Leaf }> {
+    this.completeCalls += 1;
     return this.complete(scope);
   }
 }
@@ -179,8 +253,41 @@ function setup(record = initialRecord()) {
     store,
     fetch,
     publisher,
-    replacement: new AuthoritativeCursorReplacement(store, fetch, publisher, values),
+    replacement: AuthoritativeCursorReplacement.create(store, fetch, publisher, values),
   };
+}
+
+type ConcreteReplacement = AuthoritativeCursorReplacement<
+  ExternalCursorScope,
+  Entry,
+  Cursor,
+  Leaf
+>;
+
+const noOpObject = {
+  async read() { return undefined; },
+  async reconcileKnown() { return []; },
+  async stageReplacement() {
+    return { replacementEpoch: 1n, entries: [], leaf: "noop" };
+  },
+  async commitReplacement() {},
+};
+// @ts-expect-error the private nominal member forbids a structural no-op replacement
+const invalidNoOpObject: ConcreteReplacement = noOpObject;
+void invalidNoOpObject;
+
+// @ts-expect-error the private constructor forbids downstream replacement subclasses
+class NoOpReplacement extends AuthoritativeCursorReplacement<
+  ExternalCursorScope,
+  Entry,
+  Cursor,
+  Leaf
+> {
+  override async reconcileKnown() { return []; }
+  override async stageReplacement() {
+    return { replacementEpoch: 1n, entries: [], leaf: "noop" };
+  }
+  override async commitReplacement() {}
 }
 
 test("cursor continuity scope ignores Patchbay generation replacement", async () => {
@@ -190,7 +297,7 @@ test("cursor continuity scope ignores Patchbay generation replacement", async ()
   const fetch = new ScriptedFetch();
   const publisher = new RecordingPublisher();
   store.seed(generationOne, initialRecord());
-  const replacement = new AuthoritativeCursorReplacement(store, fetch, publisher, values);
+  const replacement = AuthoritativeCursorReplacement.create(store, fetch, publisher, values);
 
   assert.equal(externalCursorScopeKey(generationOne), externalCursorScopeKey(generationTwo));
   assert.equal((await replacement.read(generationTwo))?.projection.cursor, "cursor-7");
@@ -234,6 +341,14 @@ test("exported contract reconciles a known suffix idempotently and preserves unr
   assert.deepEqual((await replacement.read(baseScope))?.projection.exactEntries, [
     entry("kept"), entry("unrelated"), entry("new"),
   ]);
+});
+
+test("known reconciliation rejects an already-fetching replacement before side effects", async () => {
+  await assertPendingReplacementRejectsKnownReconciliation(fetchingRecord());
+});
+
+test("known reconciliation rejects an already-staged replacement before side effects", async () => {
+  await assertPendingReplacementRejectsKnownReconciliation(stagedRecord());
 });
 
 test("exported contract marks and retains the old projection stale before complete fetch", async () => {
@@ -540,44 +655,89 @@ test("barrier-controlled replacement fetches have one stale-version loser and on
 });
 
 test("MemoryStore runs the reusable atomic store conformance suite", async () => {
-  const initial = initialRecord();
-  const firstNext: Record = {
-    recordVersion: 4n,
-    freshness: "current",
-    projection: {
-      replacementEpoch: 7n,
-      exactEntries: [entry("first")],
-      cursor: "cursor-first",
-      leaf: "leaf-first",
-    },
-  };
-  const secondNext: Record = {
-    recordVersion: 4n,
-    freshness: "stale",
-    projection: initial.projection,
-    pendingReplacement: { kind: "fetching", replacementEpoch: 8n },
-  };
-
-  const cases = await assertAtomicExternalCursorProjectionStoreConformance({
-    createStore: () => {
+  const cases = await assertAtomicExternalCursorProjectionStoreConformance(
+    storeConformanceFixture(() => {
       const store = new MemoryStore();
-      store.seed(baseScope, initial);
+      store.seed(baseScope, initialRecord());
       return store;
-    },
-    scope: baseScope,
-    initialRecord: initial,
-    firstNextRecord: firstNext,
-    secondNextRecord: secondNext,
-    assertSnapshot: (actual, expected, context) => assert.deepEqual(actual, expected, context),
-  });
+    }),
+  );
 
   assert.deepEqual(cases, [
     "stale-expected-version rejection",
-    "all-or-nothing snapshots",
+    "complete settled snapshot",
+    "single overlapping-reader snapshot",
     "ambiguous post-commit retry",
     "racing-writer behavior",
   ]);
 });
+
+test("store conformance rejects an instrumented torn snapshot", async () => {
+  await assert.rejects(
+    assertAtomicExternalCursorProjectionStoreConformance(
+      storeConformanceFixture(() => new TearingStore(initialRecord())),
+    ),
+    /overlapping reader observed a torn cursor projection snapshot/,
+  );
+});
+
+async function assertPendingReplacementRejectsKnownReconciliation(record: Record): Promise<void> {
+  const expected = cloneRecord(record);
+  const { store, fetch, publisher, replacement } = setup(record);
+
+  await assert.rejects(
+    replacement.reconcileKnown(baseScope, record.projection.cursor),
+    /cannot apply while authoritative replacement is pending/,
+  );
+
+  assert.equal(fetch.knownCalls, 0, "pending guard runs before known-cursor fetch");
+  assert.equal(fetch.completeCalls, 0, "pending guard runs before complete fetch");
+  assert.equal(publisher.knownSuffixes.length, 0, "pending guard runs before publication");
+  assert.equal(publisher.replacements.length, 0, "pending guard publishes no replacement");
+  assert.equal(store.writes.length, 0, "pending guard runs before durable write");
+  assert.deepEqual(
+    await replacement.read(baseScope),
+    expected,
+    "pending guard preserves the complete pre-attempt record",
+  );
+}
+
+function storeConformanceFixture(
+  createStore: () => AtomicExternalCursorProjectionStore<
+    ExternalCursorScope,
+    Entry,
+    Cursor,
+    Leaf
+  >,
+) {
+  const initial = initialRecord();
+  return {
+    createStore,
+    scope: baseScope,
+    initialRecord: initial,
+    firstNextRecord: {
+      recordVersion: 4n,
+      freshness: "current" as const,
+      projection: {
+        replacementEpoch: 7n,
+        exactEntries: [entry("first")],
+        cursor: "cursor-first",
+        leaf: "leaf-first",
+      },
+    },
+    secondNextRecord: {
+      recordVersion: 4n,
+      freshness: "stale" as const,
+      projection: initial.projection,
+      pendingReplacement: { kind: "fetching" as const, replacementEpoch: 8n },
+    },
+    assertSnapshot: (
+      actual: Record | undefined,
+      expected: Record,
+      context: string,
+    ) => assert.deepEqual(actual, expected, context),
+  };
+}
 
 function assertExactlyOneCasWinner<T>(settled: readonly PromiseSettledResult<T>[]): number {
   const winners = settled

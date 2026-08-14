@@ -77,9 +77,28 @@ export interface ExternalCursorProjectionRecord<Entry, Cursor, Leaf> {
 }
 
 /**
+ * Optional store-owned seam used only by the reusable conformance suite. The
+ * store must invoke the installed pause immediately after its earliest
+ * externally observable mutation and before any later mutation or CAS return.
+ * A truly atomic store therefore invokes it after the complete next record has
+ * become visible; a multi-step store invokes it after its first visible step.
+ */
+export interface AtomicExternalCursorProjectionStoreTestInstrumentation {
+  setPauseAfterEarliestObservableMutation(
+    pause: (() => Promise<void>) | undefined,
+  ): void;
+}
+
+/**
  * The store must compare recordVersion and install the complete next record in
  * one atomic operation. A rejection must install nothing; a success may still
  * be followed by an ambiguous transport/process failure.
+ *
+ * The reusable suite executes one overlapping-reader interleaving. Stores that
+ * claim process- or host-wide atomicity must run it with reads crossing that
+ * real boundary and wire the optional instrumentation to the actual lock,
+ * transaction, or rename visibility point. An in-memory execution does not
+ * establish a cross-process claim.
  */
 export interface AtomicExternalCursorProjectionStore<
   Scope,
@@ -87,6 +106,8 @@ export interface AtomicExternalCursorProjectionStore<
   Cursor,
   Leaf,
 > {
+  readonly conformanceTestInstrumentation?:
+    AtomicExternalCursorProjectionStoreTestInstrumentation;
   load(scope: Scope): Promise<ExternalCursorProjectionRecord<Entry, Cursor, Leaf> | undefined>;
   compareAndSwap(
     scope: Scope,
@@ -138,7 +159,23 @@ export class AuthoritativeCursorReplacement<
   Cursor,
   Leaf,
 > {
-  constructor(
+  static create<
+    Scope extends ExternalCursorScope,
+    Entry,
+    Cursor,
+    Leaf,
+  >(
+    store: AtomicExternalCursorProjectionStore<Scope, Entry, Cursor, Leaf>,
+    fetch: ExternalCursorFetchPort<Scope, Entry, Cursor, Leaf>,
+    publish: ExternalCursorPublishPort<Scope, Entry, Cursor, Leaf>,
+    values: ExternalCursorValueContract<Entry, Cursor, Leaf>,
+  ): AuthoritativeCursorReplacement<Scope, Entry, Cursor, Leaf> {
+    return new AuthoritativeCursorReplacement(store, fetch, publish, values);
+  }
+
+  private readonly authoritativeCursorReplacementBrand: void = undefined;
+
+  private constructor(
     private readonly store: AtomicExternalCursorProjectionStore<Scope, Entry, Cursor, Leaf>,
     private readonly fetch: ExternalCursorFetchPort<Scope, Entry, Cursor, Leaf>,
     private readonly publish: ExternalCursorPublishPort<Scope, Entry, Cursor, Leaf>,
@@ -422,8 +459,9 @@ export interface AtomicExternalCursorProjectionStoreConformanceOptions<
 
 /**
  * Framework-neutral reusable CAS-store suite. Every concrete store must execute
- * it from that store's own tests; it checks stale-version rejection, complete
- * snapshot installation, ambiguous post-commit retry, and racing writers.
+ * it from that store's own tests. It checks settled writes plus one immediate or
+ * instrumented overlapping read; it does not claim unexecuted interleavings or
+ * cross-process atomicity on behalf of an in-process test.
  */
 export async function assertAtomicExternalCursorProjectionStoreConformance<
   Scope,
@@ -468,7 +506,55 @@ export async function assertAtomicExternalCursorProjectionStoreConformance<
   options.assertSnapshot(
     await snapshotStore.load(options.scope),
     options.firstNextRecord,
-    "successful CAS installs the complete next snapshot",
+    "successful CAS installs the complete settled next snapshot",
+  );
+
+  const overlappingStore = await options.createStore();
+  const pauseReached = deferred();
+  const releasePause = deferred();
+  const instrumentation = overlappingStore.conformanceTestInstrumentation;
+  instrumentation?.setPauseAfterEarliestObservableMutation(async () => {
+    pauseReached.resolve();
+    await releasePause.promise;
+  });
+  const overlappingSwap = overlappingStore.compareAndSwap(
+    options.scope,
+    options.initialRecord.recordVersion,
+    options.firstNextRecord,
+  );
+  let overlappingSnapshot:
+    | ExternalCursorProjectionRecord<Entry, Cursor, Leaf>
+    | undefined;
+  try {
+    if (instrumentation) await pauseReached.promise;
+    overlappingSnapshot = await overlappingStore.load(options.scope);
+  } finally {
+    releasePause.resolve();
+    instrumentation?.setPauseAfterEarliestObservableMutation(undefined);
+  }
+  await overlappingSwap;
+  if (
+    !snapshotMatches(
+      options,
+      overlappingSnapshot,
+      options.initialRecord,
+      "overlapping reader may observe the complete pre-CAS snapshot",
+    )
+    && !snapshotMatches(
+      options,
+      overlappingSnapshot,
+      options.firstNextRecord,
+      "overlapping reader may observe the complete post-CAS snapshot",
+    )
+  ) {
+    throw new ExternalCursorInvariantError(
+      "the executed overlapping reader observed a torn cursor projection snapshot",
+    );
+  }
+  options.assertSnapshot(
+    await overlappingStore.load(options.scope),
+    options.firstNextRecord,
+    "overlapping-reader CAS settles to the complete next snapshot",
   );
 
   const ambiguousStore = await options.createStore();
@@ -522,10 +608,25 @@ export async function assertAtomicExternalCursorProjectionStoreConformance<
 
   return [
     "stale-expected-version rejection",
-    "all-or-nothing snapshots",
+    "complete settled snapshot",
+    "single overlapping-reader snapshot",
     "ambiguous post-commit retry",
     "racing-writer behavior",
   ];
+}
+
+function snapshotMatches<Scope, Entry, Cursor, Leaf>(
+  options: AtomicExternalCursorProjectionStoreConformanceOptions<Scope, Entry, Cursor, Leaf>,
+  actual: ExternalCursorProjectionRecord<Entry, Cursor, Leaf> | undefined,
+  expected: ExternalCursorProjectionRecord<Entry, Cursor, Leaf>,
+  context: string,
+): boolean {
+  try {
+    options.assertSnapshot(actual, expected, context);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function boundedIdentity(value: string, field: string, max: number): string {
