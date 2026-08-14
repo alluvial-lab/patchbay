@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-cursor-authoritative-replacement-contract
 kind: story
-stage: review
+stage: implementing
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-identity-contract]
