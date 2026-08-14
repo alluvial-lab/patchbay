@@ -1456,6 +1456,18 @@ where
                         acceptance::exact_command_correlation(&observation.correlations)
                             .and_then(|command_id| commands.index.get_command(&command_id))
                             .is_some_and(|record| record.state.is_terminal());
+                    if late_terminal && acceptance::derive_transition(&observation).is_some() {
+                        if let Some(event_id) = self
+                            .storage
+                            .reconcile_observation_retry(&domain, observation.clone())
+                            .await
+                            .map_err(map_storage_error_to_status)?
+                        {
+                            return Ok(Response::new(ObservationResult {
+                                event_id: Some(event_id),
+                            }));
+                        }
+                    }
                     let is_current = matches!(
                         disposition.disposition.as_ref(),
                         Some(runtime_generation_disposition::Disposition::Current(_))

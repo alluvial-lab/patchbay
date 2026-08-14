@@ -8,6 +8,6 @@ pub mod events;
 pub mod projection;
 pub mod replay;
 
-pub use events::{entered, exited, encode, SecurityLockdownEvent};
+pub use events::{encode, entered, exited, SecurityLockdownEvent};
 pub use projection::{ActiveSecurityLockdown, SecurityError, SecurityPostureProjection};
 pub use replay::rebuild_from_log;

@@ -347,7 +347,10 @@ fn cross_domain_log_event_rejects_before_logical_projection_mutation() {
             payload,
         })
         .unwrap_err();
-    assert!(matches!(error, SessionError::AuthorityDomainMismatch { .. }));
+    assert!(matches!(
+        error,
+        SessionError::AuthorityDomainMismatch { .. }
+    ));
     assert_eq!(registry, original);
 }
 
@@ -457,7 +460,8 @@ fn checkpoint_rebuild_restores_all_slots_and_reverse_exclusivity() {
         .unwrap();
 
     let mut recovered =
-        LogicalTargetRegistry::from_checkpoint(authority, 7, original.checkpoint_records()).unwrap();
+        LogicalTargetRegistry::from_checkpoint(authority, 7, original.checkpoint_records())
+            .unwrap();
     assert_eq!(recovered, original);
     recovered
         .create(other.clone(), adapter("pi"), "machine-a".to_owned())

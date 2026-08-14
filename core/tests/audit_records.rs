@@ -4,20 +4,28 @@ use patchbay_contracts::patchbay::{
     GrantRevocationPolicy, IdempotencyKey, Lsn, OperationKind, ResourceId, ResourceIdentity,
     ResourceKind, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
 };
-use prost::Message;
 use patchbay_core::storage::{
     AuditPageSpec, AuditRecordDraft, AuditedDedupOutcome, AuditedStorage, CoreGenerationStore,
     GrantAppendOutcome, GrantIdentityKey, RusqliteStorage, Storage, StorageError, TargetKey,
 };
+use prost::Message;
 use prost_types::Timestamp;
 use tempfile::TempDir;
 
 fn domain(value: &str) -> AuthorityDomainId {
-    AuthorityDomainId { value: value.to_owned() }
+    AuthorityDomainId {
+        value: value.to_owned(),
+    }
 }
 
 fn draft(kind: AuditEventKind, reason: &str) -> AuditRecordDraft {
-    let mut draft = AuditRecordDraft::new(Timestamp { seconds: 10, nanos: 0 }, kind);
+    let mut draft = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        kind,
+    );
     draft.reason_code = reason.to_owned();
     draft
 }
@@ -27,7 +35,12 @@ fn target_key(scope: &TargetScope) -> TargetKey {
     let bytes = scope.encode_to_vec();
     let encoded = bytes
         .iter()
-        .flat_map(|byte| [HEX[(byte >> 4) as usize] as char, HEX[(byte & 0x0f) as usize] as char])
+        .flat_map(|byte| {
+            [
+                HEX[(byte >> 4) as usize] as char,
+                HEX[(byte & 0x0f) as usize] as char,
+            ]
+        })
         .collect();
     TargetKey::new(encoded).unwrap()
 }
@@ -91,19 +104,36 @@ async fn legacy_tag_eight_and_nested_resource_targets_remain_durably_filterable(
         TargetScopeKind::Resource as u8,
         0x42,
         0x09,
-        b'p', b'r', b'i', b'n', b'c', b'i', b'p', b'a', b'l',
+        b'p',
+        b'r',
+        b'i',
+        b'n',
+        b'c',
+        b'i',
+        b'p',
+        b'a',
+        b'l',
     ];
     let legacy = TargetScope::decode(old_bytes.as_slice()).unwrap();
-    let mut legacy_draft = draft(AuditEventKind::ControlSurfacePrincipalRevoked, "principal_revoked");
+    let mut legacy_draft = draft(
+        AuditEventKind::ControlSurfacePrincipalRevoked,
+        "principal_revoked",
+    );
     legacy_draft.target_scope = Some(legacy.clone());
     storage.append_audit(&domain, legacy_draft).await.unwrap();
 
     let nested = TargetScope {
         kind: TargetScopeKind::Resource as i32,
         resource: Some(ResourceIdentity {
-            adapter_id: Some(AdapterId { value: "adapter-a".to_owned() }),
-            resource_id: Some(ResourceId { value: "shared".to_owned() }),
-            resource_kind: Some(ResourceKind { value: "pool".to_owned() }),
+            adapter_id: Some(AdapterId {
+                value: "adapter-a".to_owned(),
+            }),
+            resource_id: Some(ResourceId {
+                value: "shared".to_owned(),
+            }),
+            resource_kind: Some(ResourceKind {
+                value: "pool".to_owned(),
+            }),
         }),
         ..TargetScope::default()
     };
@@ -147,7 +177,10 @@ async fn audit_records_are_redacted_indexed_and_cursor_bounded() {
 
     let mut other = page(1);
     other.before_lsn = Some(999);
-    assert!(matches!(storage.query_audit(&domain, other).await, Err(StorageError::InvalidAuditCursor(_))));
+    assert!(matches!(
+        storage.query_audit(&domain, other).await,
+        Err(StorageError::InvalidAuditCursor(_))
+    ));
 }
 
 #[tokio::test]
@@ -158,7 +191,9 @@ async fn audited_append_and_dedup_keep_source_and_audit_atomic() {
         kind: StoredEventKind::Observation as i32,
         payload: vec![1, 2, 3],
     };
-    let key = patchbay_contracts::patchbay::IdempotencyKey { value: "query-1".to_owned() };
+    let key = patchbay_contracts::patchbay::IdempotencyKey {
+        value: "query-1".to_owned(),
+    };
     let target = TargetKey::new("authority".to_owned()).unwrap();
     let result = storage
         .append_dedup_audited(
@@ -185,12 +220,18 @@ async fn audited_append_and_dedup_keep_source_and_audit_atomic() {
         .await
         .unwrap();
     match duplicate {
-        AuditedDedupOutcome::Duplicate { source_event_id: actual, .. } => {
+        AuditedDedupOutcome::Duplicate {
+            source_event_id: actual,
+            ..
+        } => {
             assert_eq!(actual, source_event_id)
         }
         AuditedDedupOutcome::Appended(_) => panic!("retry must reuse source"),
     }
-    let events = storage.read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 }).await.unwrap();
+    let events = storage
+        .read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 })
+        .await
+        .unwrap();
     assert_eq!(events.len(), 3, "source plus one audit per submission");
 }
 
@@ -266,21 +307,13 @@ async fn production_audited_storage_rejects_every_generic_grant_creation_route()
     ));
     assert!(matches!(
         storage
-            .append_decision_audited_many(
-                &domain,
-                source.clone(),
-                vec![grant_audit("grant-1")],
-            )
+            .append_decision_audited_many(&domain, source.clone(), vec![grant_audit("grant-1")],)
             .await,
         Err(StorageError::UnsupportedOperation)
     ));
     assert!(matches!(
         storage
-            .append_batch_audited(
-                &domain,
-                vec![source.clone()],
-                grant_audit("grant-1"),
-            )
+            .append_batch_audited(&domain, vec![source.clone()], grant_audit("grant-1"),)
             .await,
         Err(StorageError::UnsupportedOperation)
     ));
@@ -321,7 +354,9 @@ fn malformed_legacy_schema_is_rejected_without_mutation() {
     ));
     assert_eq!(std::fs::read(&path).unwrap(), before);
     let db = rusqlite::Connection::open(&path).unwrap();
-    let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
     assert_eq!(version, 0, "preflight failure must not stamp the baseline");
 }
 
@@ -348,7 +383,10 @@ async fn legacy_data_survives_versioned_migration() {
     }
     let storage = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
     let events = storage
-        .read_after(&domain("main"), patchbay_contracts::patchbay::Lsn { value: 0 })
+        .read_after(
+            &domain("main"),
+            patchbay_contracts::patchbay::Lsn { value: 0 },
+        )
         .await
         .unwrap();
     assert_eq!(events.len(), 1);
@@ -469,7 +507,11 @@ async fn v2_audit_schema_migrates_through_v3_to_v5_without_losing_rows() {
     let mut spec = page(10);
     spec.reason_codes = vec!["v2_preserved".to_owned()];
     assert_eq!(
-        storage.query_audit(&domain("main"), spec).await.unwrap().records,
+        storage
+            .query_audit(&domain("main"), spec)
+            .await
+            .unwrap()
+            .records,
         [audit]
     );
     drop(storage);
@@ -565,16 +607,25 @@ async fn v3_to_latest_migration_preserves_all_durable_rows_without_allocating_ls
         73
     );
     let db = rusqlite::Connection::open(&path).unwrap();
-    let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
     assert_eq!(version, 5);
     for table in ["events", "idempotency_keys", "snapshots", "audit_records"] {
         let count: u64 = db
-            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 1, "migration changed {table}");
     }
-    let max_lsn: u64 = db.query_row("SELECT MAX(lsn) FROM events", [], |row| row.get(0)).unwrap();
-    assert_eq!(max_lsn, 1, "metadata initialization must not allocate an event LSN");
+    let max_lsn: u64 = db
+        .query_row("SELECT MAX(lsn) FROM events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        max_lsn, 1,
+        "metadata initialization must not allocate an event LSN"
+    );
 }
 
 #[tokio::test]
@@ -699,6 +750,8 @@ fn future_schema_is_rejected_before_mutation() {
     };
     assert!(matches!(error, StorageError::UnsupportedSchemaVersion(77)));
     let db = rusqlite::Connection::open(&path).unwrap();
-    let version: u32 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
     assert_eq!(version, 77);
 }

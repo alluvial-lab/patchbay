@@ -18,8 +18,8 @@ use patchbay_core::{
         StoredSnapshot, TargetKey,
     },
 };
-use prost_types::Timestamp;
 use proptest::prelude::*;
+use prost_types::Timestamp;
 
 proptest! {
     #[test]
@@ -97,13 +97,22 @@ struct RejectAppendStorage {
 
 impl RejectAppendStorage {
     fn new() -> Self {
-        Self { inner: RusqliteStorage::open_in_memory().unwrap() }
+        Self {
+            inner: RusqliteStorage::open_in_memory().unwrap(),
+        }
     }
 }
 
 impl Storage for RejectAppendStorage {
-    async fn append(&self, _domain: &AuthorityDomainId, _payload: StoredEventPayload) -> Result<EventId, StorageError> {
-        Err(StorageError::WriteFailed { message: "injected append failure".into(), retryable: false })
+    async fn append(
+        &self,
+        _domain: &AuthorityDomainId,
+        _payload: StoredEventPayload,
+    ) -> Result<EventId, StorageError> {
+        Err(StorageError::WriteFailed {
+            message: "injected append failure".into(),
+            retryable: false,
+        })
     }
 
     async fn append_dedup(
@@ -116,15 +125,28 @@ impl Storage for RejectAppendStorage {
         self.inner.append_dedup(domain, key, target, payload).await
     }
 
-    async fn read_after(&self, domain: &AuthorityDomainId, cursor: Lsn) -> Result<Vec<RecordedEvent>, StorageError> {
+    async fn read_after(
+        &self,
+        domain: &AuthorityDomainId,
+        cursor: Lsn,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
         self.inner.read_after(domain, cursor).await
     }
 
-    async fn write_snapshot(&self, domain: &AuthorityDomainId, lsn: Lsn, payload: Vec<u8>) -> Result<(), StorageError> {
+    async fn write_snapshot(
+        &self,
+        domain: &AuthorityDomainId,
+        lsn: Lsn,
+        payload: Vec<u8>,
+    ) -> Result<(), StorageError> {
         self.inner.write_snapshot(domain, lsn, payload).await
     }
 
-    async fn load_latest_snapshot(&self, domain: &AuthorityDomainId, bound: Option<Lsn>) -> Result<Option<StoredSnapshot>, StorageError> {
+    async fn load_latest_snapshot(
+        &self,
+        domain: &AuthorityDomainId,
+        bound: Option<Lsn>,
+    ) -> Result<Option<StoredSnapshot>, StorageError> {
         self.inner.load_latest_snapshot(domain, bound).await
     }
 }
@@ -142,12 +164,19 @@ async fn resource_projection_never_folds_before_durable_append() {
             ResourceReportMode::Delta,
             AdapterSnapshotSupport::Partial,
             vec![upsert(WireResourceIdentity {
-                adapter_id: Some(AdapterId { value: "adapter-a".into() }),
-                resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
-                resource_id: Some(ResourceId { value: "pool-1".into() }),
+                adapter_id: Some(AdapterId {
+                    value: "adapter-a".into(),
+                }),
+                resource_kind: Some(ResourceKind {
+                    value: "provider_pool".into(),
+                }),
+                resource_id: Some(ResourceId {
+                    value: "pool-1".into(),
+                }),
             })],
         ),
-    ).await;
+    )
+    .await;
     assert!(result.is_err());
     assert_eq!(registry.resources().count(), 0);
     assert_eq!(registry.views().count(), 0);
@@ -189,7 +218,10 @@ enum ReconciliationAction {
 fn arbitrary_reconciliation_trace() -> impl Strategy<Value = Vec<ReconciliationAction>> {
     let report = (
         prop_oneof![Just(GenerationStep::Same), Just(GenerationStep::Advance)],
-        prop_oneof![Just(ResourceReportMode::Snapshot), Just(ResourceReportMode::Delta)],
+        prop_oneof![
+            Just(ResourceReportMode::Snapshot),
+            Just(ResourceReportMode::Delta)
+        ],
         prop_oneof![
             Just(AdapterSnapshotSupport::Authoritative),
             Just(AdapterSnapshotSupport::Partial),
@@ -197,12 +229,14 @@ fn arbitrary_reconciliation_trace() -> impl Strategy<Value = Vec<ReconciliationA
         ],
         prop_oneof![Just(ReportAction::Refresh), Just(ReportAction::Add)],
     )
-        .prop_map(|(generation_step, mode, tier, mutation)| ReconciliationAction::Report {
-            generation_step,
-            mode,
-            tier,
-            mutation,
-        });
+        .prop_map(
+            |(generation_step, mode, tier, mutation)| ReconciliationAction::Report {
+                generation_step,
+                mode,
+                tier,
+                mutation,
+            },
+        );
     let action = prop_oneof![
         5 => report,
         2 => Just(ReconciliationAction::ReplaceActive),
@@ -225,17 +259,18 @@ struct ReconciliationOracle {
 
 fn trace_identity(adapter: &str, kind: &str, local_id: String) -> DomainResourceIdentity {
     DomainResourceIdentity::new(
-        AdapterId { value: adapter.into() },
+        AdapterId {
+            value: adapter.into(),
+        },
         ResourceKind { value: kind.into() },
         ResourceId { value: local_id },
-    ).unwrap()
+    )
+    .unwrap()
 }
 
 fn ordered_identities(set: &HashSet<DomainResourceIdentity>) -> Vec<DomainResourceIdentity> {
     let mut identities = set.iter().cloned().collect::<Vec<_>>();
-    identities.sort_by(|left, right| {
-        left.resource_id().value.cmp(&right.resource_id().value)
-    });
+    identities.sort_by(|left, right| left.resource_id().value.cmp(&right.resource_id().value));
     identities
 }
 
@@ -247,7 +282,9 @@ fn oracle_matches_projection(oracle: &ReconciliationOracle, registry: &ResourceR
         .collect::<HashSet<_>>();
     assert_eq!(projected_active, oracle.active);
     for identity in &oracle.retired {
-        assert!(registry.get(identity).is_some_and(|record| record.tombstoned()));
+        assert!(registry
+            .get(identity)
+            .is_some_and(|record| record.tombstoned()));
     }
 }
 
@@ -256,7 +293,10 @@ async fn assert_prefix_convergence(
     registry: &ResourceRegistry,
     oracle: &ReconciliationOracle,
 ) {
-    let events = storage.read_after(&domain(), Lsn { value: 0 }).await.unwrap();
+    let events = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap();
     assert_eq!(events.len() as u64, oracle.applied_through_lsn);
     let replay_a = rebuild_from_log(storage, &domain()).await.unwrap();
     let replay_b = rebuild_from_log(storage, &domain()).await.unwrap();
@@ -272,7 +312,10 @@ async fn assert_prefix_convergence(
 }
 
 fn wire(identity: &DomainResourceIdentity) -> WireResourceIdentity {
-    identity.to_scope().resource.expect("canonical resource identity")
+    identity
+        .to_scope()
+        .resource
+        .expect("canonical resource identity")
 }
 
 fn replacement_tombstone(
@@ -504,23 +547,65 @@ proptest! {
 #[test]
 fn completeness_truth_table_kills_omission_mutants() {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum Expected { Current, Stale, Tombstoned }
+    enum Expected {
+        Current,
+        Stale,
+        Tombstoned,
+    }
     let oracle = |mode: ResourceReportMode, tier: AdapterSnapshotSupport| match (mode, tier) {
-        (ResourceReportMode::Snapshot, AdapterSnapshotSupport::Authoritative) => Expected::Tombstoned,
-        (ResourceReportMode::Snapshot, AdapterSnapshotSupport::Partial | AdapterSnapshotSupport::None) => Expected::Stale,
+        (ResourceReportMode::Snapshot, AdapterSnapshotSupport::Authoritative) => {
+            Expected::Tombstoned
+        }
+        (
+            ResourceReportMode::Snapshot,
+            AdapterSnapshotSupport::Partial | AdapterSnapshotSupport::None,
+        ) => Expected::Stale,
         (ResourceReportMode::Delta, _) => Expected::Current,
         _ => Expected::Current,
     };
-    let authoritative_as_partial = |_mode: ResourceReportMode, _tier: AdapterSnapshotSupport| Expected::Stale;
-    let weak_as_authoritative = |_mode: ResourceReportMode, _tier: AdapterSnapshotSupport| Expected::Tombstoned;
-    let delta_as_snapshot = |_mode: ResourceReportMode, _tier: AdapterSnapshotSupport| Expected::Stale;
+    let authoritative_as_partial =
+        |_mode: ResourceReportMode, _tier: AdapterSnapshotSupport| Expected::Stale;
+    let weak_as_authoritative =
+        |_mode: ResourceReportMode, _tier: AdapterSnapshotSupport| Expected::Tombstoned;
+    let delta_as_snapshot =
+        |_mode: ResourceReportMode, _tier: AdapterSnapshotSupport| Expected::Stale;
 
-    assert_eq!(oracle(ResourceReportMode::Snapshot, AdapterSnapshotSupport::Authoritative), Expected::Tombstoned);
-    assert_ne!(authoritative_as_partial(ResourceReportMode::Snapshot, AdapterSnapshotSupport::Authoritative), Expected::Tombstoned);
-    assert_eq!(oracle(ResourceReportMode::Snapshot, AdapterSnapshotSupport::Partial), Expected::Stale);
-    assert_ne!(weak_as_authoritative(ResourceReportMode::Snapshot, AdapterSnapshotSupport::Partial), Expected::Stale);
-    assert_eq!(oracle(ResourceReportMode::Delta, AdapterSnapshotSupport::Partial), Expected::Current);
-    assert_ne!(delta_as_snapshot(ResourceReportMode::Delta, AdapterSnapshotSupport::Partial), Expected::Current);
+    assert_eq!(
+        oracle(
+            ResourceReportMode::Snapshot,
+            AdapterSnapshotSupport::Authoritative
+        ),
+        Expected::Tombstoned
+    );
+    assert_ne!(
+        authoritative_as_partial(
+            ResourceReportMode::Snapshot,
+            AdapterSnapshotSupport::Authoritative
+        ),
+        Expected::Tombstoned
+    );
+    assert_eq!(
+        oracle(
+            ResourceReportMode::Snapshot,
+            AdapterSnapshotSupport::Partial
+        ),
+        Expected::Stale
+    );
+    assert_ne!(
+        weak_as_authoritative(
+            ResourceReportMode::Snapshot,
+            AdapterSnapshotSupport::Partial
+        ),
+        Expected::Stale
+    );
+    assert_eq!(
+        oracle(ResourceReportMode::Delta, AdapterSnapshotSupport::Partial),
+        Expected::Current
+    );
+    assert_ne!(
+        delta_as_snapshot(ResourceReportMode::Delta, AdapterSnapshotSupport::Partial),
+        Expected::Current
+    );
 }
 
 fn report(
@@ -543,7 +628,9 @@ fn report_at_generation(
 ) -> ValidatedResourceReport {
     ValidatedResourceReport {
         authority_domain_id: domain(),
-        adapter_id: AdapterId { value: adapter.into() },
+        adapter_id: AdapterId {
+            value: adapter.into(),
+        },
         adapter_generation: Generation { value: generation },
         mode,
         views: vec![ResourceViewReport {
@@ -551,17 +638,22 @@ fn report_at_generation(
             completeness: tier as i32,
             mutations,
         }],
-        observed_at: Timestamp { seconds: 100, nanos: 0 },
+        observed_at: Timestamp {
+            seconds: 100,
+            nanos: 0,
+        },
     }
 }
 
 fn upsert(identity: WireResourceIdentity) -> ResourceReportMutation {
     ResourceReportMutation {
         identity: Some(identity),
-        mutation: Some(resource_report_mutation::Mutation::Upsert(ResourceStateUpsert {
-            resource_payload: Some(envelope("resource.schema")),
-            projection_payload: Some(envelope("projection.schema")),
-        })),
+        mutation: Some(resource_report_mutation::Mutation::Upsert(
+            ResourceStateUpsert {
+                resource_payload: Some(envelope("resource.schema")),
+                projection_payload: Some(envelope("projection.schema")),
+            },
+        )),
     }
 }
 
@@ -574,5 +666,7 @@ fn envelope(schema: &str) -> PayloadEnvelope {
 }
 
 fn domain() -> AuthorityDomainId {
-    AuthorityDomainId { value: "authority-main".into() }
+    AuthorityDomainId {
+        value: "authority-main".into(),
+    }
 }

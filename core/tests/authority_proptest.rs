@@ -330,23 +330,28 @@ async fn ingest_test_descendant<L: GrantProjection>(
             },
         )
         .await?;
+    let result = Observation {
+        authority_domain_id: Some(authority_domain_id.clone()),
+        kind: ObservationKind::Result as i32,
+        correlations: vec![correlation.clone()],
+        target_scope: Some(fleet_scope()),
+        failure_code: FailureCode::Unspecified as i32,
+        ..Observation::default()
+    };
+    let mut result_audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        AuditEventKind::CommandRunning,
+    );
+    result_audit.command_id = Some(command_id.clone());
+    result_audit.target_scope = result.target_scope.clone();
+    result_audit.reason_code = "spawn_completion_deferred".to_owned();
     let source_event_id = storage
-        .append(
-            authority_domain_id,
-            StoredEventPayload {
-                kind: StoredEventKind::Observation as i32,
-                payload: Observation {
-                    authority_domain_id: Some(authority_domain_id.clone()),
-                    kind: ObservationKind::Result as i32,
-                    correlations: vec![correlation.clone()],
-                    target_scope: Some(fleet_scope()),
-                    failure_code: FailureCode::Unspecified as i32,
-                    ..Observation::default()
-                }
-                .encode_to_vec(),
-            },
-        )
-        .await?;
+        .append_spawn_result_deferred_audited(authority_domain_id, result, result_audit)
+        .await?
+        .source_event_id;
     storage
         .append(
             authority_domain_id,

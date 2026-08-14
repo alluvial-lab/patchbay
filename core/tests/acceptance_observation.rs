@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::future::ready;
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, AdapterId, AuthorityDomainId, CommandId, CommandTransition, FailureCode,
-    Lsn, Observation, ObservationKind, OperationKind, OperationState, ResourceId, ResourceIdentity,
-    ResourceKind, StoredEventKind, TargetScope, TargetScopeKind, TypedCorrelation,
+    typed_correlation, AcceptedOperation, AdapterId, AuthorityDomainId, CommandId,
+    CommandTransition, FailureCode, GrantId, Lsn, Observation, ObservationKind, Operation,
+    OperationKind, OperationState, ResourceId, ResourceIdentity, ResourceKind, StoredEventKind,
+    StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::acceptance::{
     ingest_observation, AcceptanceError, CommandSnapshot, CommandStateLookup, IngestResult,
@@ -40,7 +41,7 @@ impl CommandStateLookup for TestCommandStates {
                 .map(|(state, kind)| CommandSnapshot {
                     state: *state,
                     operation_kind: *kind,
-                    target_scope: None,
+                    target_scope: Some(default_scope()),
                     correlations: vec![],
                     terminal_lsn: None,
                 }),
@@ -66,6 +67,86 @@ fn command_correlation(command_id: CommandId) -> TypedCorrelation {
     }
 }
 
+fn default_scope() -> TargetScope {
+    TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(AdapterId {
+            value: "adapter-a".to_owned(),
+        }),
+        ..TargetScope::default()
+    }
+}
+
+async fn seed_command(
+    storage: &RusqliteStorage,
+    state: OperationState,
+    kind: OperationKind,
+    correlations: Vec<TypedCorrelation>,
+) {
+    storage
+        .append(
+            &authority_domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: AcceptedOperation {
+                    operation: Some(Operation {
+                        command_id: Some(command_id()),
+                        authority_domain_id: Some(authority_domain()),
+                        kind: kind as i32,
+                        target_scope: Some(default_scope()),
+                        idempotency_key: "command-1-key".to_owned(),
+                        correlations,
+                        ..Operation::default()
+                    }),
+                    authorizing_grant_id: Some(GrantId {
+                        value: "grant-1".to_owned(),
+                    }),
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await
+        .unwrap();
+    if matches!(state, OperationState::Delivered | OperationState::Running) {
+        storage
+            .append(
+                &authority_domain(),
+                StoredEventPayload {
+                    kind: StoredEventKind::CommandTransition as i32,
+                    payload: CommandTransition {
+                        command_id: Some(command_id()),
+                        from_state: OperationState::Accepted as i32,
+                        to_state: OperationState::Delivered as i32,
+                        failure_code: FailureCode::Unspecified as i32,
+                        ..CommandTransition::default()
+                    }
+                    .encode_to_vec(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    if state == OperationState::Running {
+        storage
+            .append(
+                &authority_domain(),
+                StoredEventPayload {
+                    kind: StoredEventKind::CommandTransition as i32,
+                    payload: CommandTransition {
+                        command_id: Some(command_id()),
+                        from_state: OperationState::Delivered as i32,
+                        to_state: OperationState::Running as i32,
+                        failure_code: FailureCode::Unspecified as i32,
+                        ..CommandTransition::default()
+                    }
+                    .encode_to_vec(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+}
+
 fn observation(kind: ObservationKind, failure_code: FailureCode) -> Observation {
     Observation {
         event_id: None,
@@ -75,7 +156,7 @@ fn observation(kind: ObservationKind, failure_code: FailureCode) -> Observation 
         recipient: None,
         kind: kind as i32,
         correlations: vec![command_correlation(command_id())],
-        target_scope: None,
+        target_scope: Some(default_scope()),
         payload: None,
         lsn: None,
         observed_at: None,
@@ -114,6 +195,15 @@ fn decode_transition(event: &patchbay_core::storage::RecordedEvent) -> CommandTr
         StoredEventKind::CommandTransition
     );
     CommandTransition::decode(event.payload.payload.as_slice()).unwrap()
+}
+
+fn last_transition(events: &[patchbay_core::storage::RecordedEvent]) -> CommandTransition {
+    events
+        .iter()
+        .rev()
+        .find(|event| event.payload.kind == StoredEventKind::CommandTransition as i32)
+        .map(decode_transition)
+        .expect("a command transition was appended")
 }
 
 #[tokio::test]
@@ -158,6 +248,15 @@ async fn every_observation_kind_is_recorded_as_observation() {
         let storage = RusqliteStorage::open_in_memory().unwrap();
         let states = TestCommandStates::with(command_id(), OperationState::Delivered);
         let submitted = observation(kind, FailureCode::Unspecified);
+        if matches!(kind, ObservationKind::Status | ObservationKind::Result) {
+            seed_command(
+                &storage,
+                OperationState::Delivered,
+                OperationKind::Instruct,
+                vec![],
+            )
+            .await;
+        }
 
         ingest_observation(&storage, &states, submitted.clone())
             .await
@@ -165,14 +264,11 @@ async fn every_observation_kind_is_recorded_as_observation() {
 
         let recorded = events(&storage).await;
         assert!(!recorded.is_empty(), "{kind:?} was not recorded");
-        assert_eq!(
-            StoredEventKind::try_from(recorded[0].payload.kind).unwrap(),
-            StoredEventKind::Observation
-        );
-        assert_eq!(
-            Observation::decode(recorded[0].payload.payload.as_slice()).unwrap(),
-            submitted
-        );
+        assert!(recorded.iter().any(|event| {
+            event.payload.kind == StoredEventKind::Observation as i32
+                && Observation::decode(event.payload.payload.as_slice()).ok()
+                    == Some(submitted.clone())
+        }));
     }
 }
 
@@ -258,6 +354,13 @@ async fn resource_status_rejects_every_mixed_target_shape_before_append() {
 #[tokio::test]
 async fn result_without_failure_emits_completed_transition() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
+    seed_command(
+        &storage,
+        OperationState::Delivered,
+        OperationKind::Instruct,
+        vec![],
+    )
+    .await;
     let states = TestCommandStates::with(command_id(), OperationState::Delivered);
 
     let result = ingest_observation(
@@ -276,8 +379,7 @@ async fn result_without_failure_emits_completed_transition() {
         }
     ));
     let recorded = events(&storage).await;
-    assert_eq!(recorded.len(), 3);
-    let transition = decode_transition(&recorded[1]);
+    let transition = last_transition(&recorded);
     assert_eq!(transition.command_id, Some(command_id()));
     assert_eq!(transition.from_state, OperationState::Delivered as i32);
     assert_eq!(transition.to_state, OperationState::Completed as i32);
@@ -288,6 +390,8 @@ async fn result_without_failure_emits_completed_transition() {
 async fn successful_spawn_result_records_redacted_deferred_evidence_without_terminal_transition() {
     for state in [OperationState::Delivered, OperationState::Running] {
         let inner = RusqliteStorage::open_in_memory().unwrap();
+        seed_command(&inner, state, OperationKind::Spawn, vec![]).await;
+        let before = events(&inner).await.len();
         let storage = AuditedStorage::new(inner.clone());
         let states = TestCommandStates::with_kind(command_id(), state, OperationKind::Spawn);
         let mut submitted = observation(ObservationKind::Result, FailureCode::Unspecified);
@@ -308,15 +412,15 @@ async fn successful_spawn_result_records_redacted_deferred_evidence_without_term
         let recorded = events(&inner).await;
         assert_eq!(
             recorded.len(),
-            2,
+            before + 2,
             "source and redacted audit commit atomically"
         );
         assert_eq!(
-            StoredEventKind::try_from(recorded[0].payload.kind).unwrap(),
+            StoredEventKind::try_from(recorded[before].payload.kind).unwrap(),
             StoredEventKind::Observation
         );
         assert!(
-            recorded
+            recorded[before..]
                 .iter()
                 .all(|event| event.payload.kind != StoredEventKind::CommandTransition as i32),
             "deferred evidence must not present terminal success"
@@ -355,6 +459,13 @@ async fn successful_spawn_result_records_redacted_deferred_evidence_without_term
 #[tokio::test]
 async fn unsupported_result_emits_rejected_transition_and_audit() {
     let inner = RusqliteStorage::open_in_memory().unwrap();
+    seed_command(
+        &inner,
+        OperationState::Delivered,
+        OperationKind::Instruct,
+        vec![],
+    )
+    .await;
     let storage = AuditedStorage::new(inner.clone());
     let states = TestCommandStates::with(command_id(), OperationState::Delivered);
 
@@ -374,8 +485,7 @@ async fn unsupported_result_emits_rejected_transition_and_audit() {
         }
     ));
     let recorded = events(&inner).await;
-    assert_eq!(recorded.len(), 3);
-    let transition = decode_transition(&recorded[1]);
+    let transition = last_transition(&recorded);
     assert_eq!(transition.from_state, OperationState::Delivered as i32);
     assert_eq!(transition.to_state, OperationState::Rejected as i32);
     assert_eq!(
@@ -417,6 +527,13 @@ async fn unsupported_result_emits_rejected_transition_and_audit() {
 #[tokio::test]
 async fn delivery_rejected_result_emits_rejected_transition() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
+    seed_command(
+        &storage,
+        OperationState::Delivered,
+        OperationKind::Instruct,
+        vec![],
+    )
+    .await;
     let states = TestCommandStates::with(command_id(), OperationState::Delivered);
 
     let result = ingest_observation(
@@ -435,8 +552,7 @@ async fn delivery_rejected_result_emits_rejected_transition() {
         }
     ));
     let recorded = events(&storage).await;
-    assert_eq!(recorded.len(), 3);
-    let transition = decode_transition(&recorded[1]);
+    let transition = last_transition(&recorded);
     assert_eq!(transition.from_state, OperationState::Delivered as i32);
     assert_eq!(transition.to_state, OperationState::Rejected as i32);
     assert_eq!(
@@ -462,6 +578,13 @@ async fn other_result_failure_codes_still_emit_failed_transition() {
 
 async fn assert_failed_result_preserves_code(failure_code: FailureCode) {
     let storage = RusqliteStorage::open_in_memory().unwrap();
+    seed_command(
+        &storage,
+        OperationState::Running,
+        OperationKind::Instruct,
+        vec![],
+    )
+    .await;
     let states = TestCommandStates::with(command_id(), OperationState::Running);
 
     let result = ingest_observation(
@@ -480,8 +603,7 @@ async fn assert_failed_result_preserves_code(failure_code: FailureCode) {
         }
     ));
     let recorded = events(&storage).await;
-    assert_eq!(recorded.len(), 3);
-    let transition = decode_transition(&recorded[1]);
+    let transition = last_transition(&recorded);
     assert_eq!(transition.from_state, OperationState::Running as i32);
     assert_eq!(transition.to_state, OperationState::Failed as i32);
     assert_eq!(transition.failure_code, failure_code as i32);
@@ -490,6 +612,13 @@ async fn assert_failed_result_preserves_code(failure_code: FailureCode) {
 #[tokio::test]
 async fn status_emits_running_transition() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
+    seed_command(
+        &storage,
+        OperationState::Delivered,
+        OperationKind::Instruct,
+        vec![],
+    )
+    .await;
     let states = TestCommandStates::with(command_id(), OperationState::Delivered);
 
     let result = ingest_observation(
@@ -508,8 +637,7 @@ async fn status_emits_running_transition() {
         }
     ));
     let recorded = events(&storage).await;
-    assert_eq!(recorded.len(), 3);
-    let transition = decode_transition(&recorded[1]);
+    let transition = last_transition(&recorded);
     assert_eq!(transition.from_state, OperationState::Delivered as i32);
     assert_eq!(transition.to_state, OperationState::Running as i32);
     assert_eq!(transition.failure_code, FailureCode::Unspecified as i32);
@@ -544,23 +672,39 @@ async fn disallowed_status_or_result_is_rejected_before_raw_evidence_append() {
 #[tokio::test]
 async fn repeated_running_status_records_without_duplicate_transition() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let states = TestCommandStates::with(command_id(), OperationState::Running);
-
-    let result = ingest_observation(
+    seed_command(
         &storage,
-        &states,
-        observation(ObservationKind::Status, FailureCode::Unspecified),
+        OperationState::Delivered,
+        OperationKind::Instruct,
+        vec![],
+    )
+    .await;
+    let submitted = observation(ObservationKind::Status, FailureCode::Unspecified);
+    let first = ingest_observation(
+        &storage,
+        &TestCommandStates::with(command_id(), OperationState::Delivered),
+        submitted.clone(),
+    )
+    .await
+    .unwrap();
+    let before_retry = events(&storage).await;
+    let retry = ingest_observation(
+        &storage,
+        &TestCommandStates::with(command_id(), OperationState::Running),
+        submitted,
     )
     .await
     .unwrap();
 
-    assert!(matches!(result, IngestResult::Recorded { .. }));
-    let recorded = events(&storage).await;
-    assert_eq!(recorded.len(), 1);
-    assert_eq!(
-        StoredEventKind::try_from(recorded[0].payload.kind).unwrap(),
-        StoredEventKind::Observation
-    );
+    let IngestResult::Transitioned {
+        observation_event_id: first_id,
+        ..
+    } = first
+    else {
+        panic!("first status must transition the command");
+    };
+    assert_eq!(retry, IngestResult::Recorded { event_id: first_id });
+    assert_eq!(events(&storage).await, before_retry);
 }
 
 #[tokio::test]
@@ -643,7 +787,7 @@ async fn transition_carries_command_elicitation_correlation() {
         typed_correlation, CommandTransition, ElicitationId, TypedCorrelation,
     };
 
-    let _elicitation_corr = TypedCorrelation {
+    let elicitation_corr = TypedCorrelation {
         r#ref: Some(typed_correlation::Ref::ElicitationId(ElicitationId {
             value: "elicitation-from-op".to_owned(),
         })),
@@ -655,7 +799,7 @@ async fn transition_carries_command_elicitation_correlation() {
             Some(CommandSnapshot {
                 state: OperationState::Delivered,
                 operation_kind: OperationKind::Instruct,
-                target_scope: None,
+                target_scope: Some(default_scope()),
                 correlations: vec![TypedCorrelation {
                     r#ref: Some(typed_correlation::Ref::ElicitationId(ElicitationId {
                         value: "elicitation-from-op".to_owned(),
@@ -667,6 +811,13 @@ async fn transition_carries_command_elicitation_correlation() {
     }
 
     let storage = RusqliteStorage::open_in_memory().unwrap();
+    seed_command(
+        &storage,
+        OperationState::Delivered,
+        OperationKind::Instruct,
+        vec![elicitation_corr],
+    )
+    .await;
     let obs = observation(ObservationKind::Result, FailureCode::Unspecified);
     let result = ingest_observation(&storage, &LookupWithCorrelation, obs)
         .await
@@ -682,6 +833,7 @@ async fn transition_carries_command_elicitation_correlation() {
         .unwrap();
     let transition_event = events
         .iter()
+        .rev()
         .find(|e| {
             StoredEventKind::try_from(e.payload.kind).unwrap() == StoredEventKind::CommandTransition
         })

@@ -1,22 +1,20 @@
 use std::{collections::HashSet, pin::Pin, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AuditEventKind, AuditRecord, AuthorityDomainId, CommandTransition,
-    EnterSecurityLockdownRequest, EnterSecurityLockdownResult,
-    DiagnosticsResult, GrantRevocationEffect, GrantRevocationPolicy, Generation, Revocation,
-    ControlSurfaceRevocation, OperatorSessionRevocation, RevokeAllOperatorSessionsRequest,
-    RevokeAllOperatorSessionsResult, RevokeControlSurfaceEndpointRequest,
-    RevokeControlSurfacePrincipalRequest, RevokeControlSurfaceResult,
-    EnrollControlSurfacePrincipalRequest, EnrollControlSurfacePrincipalResult, EventId,
-    LoadSnapshotRequest, LoadSnapshotResponse, LoadSecuritySnapshotRequest,
-    LoadSecuritySnapshotResponse, Lsn,
+    typed_correlation, ActorEndpointRef, ActorId, AuditEventKind, AuditRecord, AuthorityDomainId,
+    CommandTransition, ControlSurfaceRevocation, DiagnosticsResult,
+    EnrollControlSurfacePrincipalRequest, EnrollControlSurfacePrincipalResult,
+    EnterSecurityLockdownRequest, EnterSecurityLockdownResult, EventId, FailureCode, Generation,
+    GrantRevocationEffect, GrantRevocationPolicy, LoadSecuritySnapshotRequest,
+    LoadSecuritySnapshotResponse, LoadSnapshotRequest, LoadSnapshotResponse, Lsn, Observation,
+    ObservationKind, OperationState, OperatorSessionRevocation, PayloadContentType,
     QueryDiagnosticsRequest, QueryDiagnosticsResponse, RecordControlSurfaceAuditRequest,
-    RevokeGrantRequest, RevokeGrantResult, SecurityLockdownEntered,
-    RecordControlSurfaceAuditResponse, RevokeOperatorSessionRequest, RevokeOperatorSessionResult,
-    StoredEventKind, SubmissionOutcome, SubmissionResult, SubmitRequest,
-    SubscribeEvent, SubscribeRequest, Observation, ObservationKind, PayloadContentType,
-    TypedCorrelation, typed_correlation, OperationState, FailureCode, TargetScope,
-    TargetScopeKind,
+    RecordControlSurfaceAuditResponse, Revocation, RevokeAllOperatorSessionsRequest,
+    RevokeAllOperatorSessionsResult, RevokeControlSurfaceEndpointRequest,
+    RevokeControlSurfacePrincipalRequest, RevokeControlSurfaceResult, RevokeGrantRequest,
+    RevokeGrantResult, RevokeOperatorSessionRequest, RevokeOperatorSessionResult,
+    SecurityLockdownEntered, StoredEventKind, SubmissionOutcome, SubmissionResult, SubmitRequest,
+    SubscribeEvent, SubscribeRequest, TargetScope, TargetScopeKind, TypedCorrelation,
     VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
@@ -24,15 +22,18 @@ use patchbay_core::{
         self, AcceptanceError, CommandRecord, CommandStateLookup, GrantCheck, OperationPosture,
         OperationPostureDenied,
     },
-    security,
-    time::{Clock, SystemClock},
     audit::{AuditReceipt, AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
-    authority::{authorize_self_revocation_at, hash_principal_credential, GrantAdministrationDenied, GrantRecord, IssuerContext, IssuerRef, OperatorError},
+    authority::{
+        authorize_self_revocation_at, hash_principal_credential, GrantAdministrationDenied,
+        GrantRecord, IssuerContext, IssuerRef, OperatorError,
+    },
     diagnostics::{self, AuthorityDomainTargetResolver, ValidatedDiagnosticsQuery},
+    security,
     storage::{
         validate_next_replay_event, AuditPageSpec, AuditRecordDraft, CoreGenerationStore,
         RecordedEvent, Storage, StorageError,
     },
+    time::{Clock, SystemClock},
 };
 use prost::Message;
 use tokio_stream::{self as stream, Stream};
@@ -298,7 +299,8 @@ where
             operation.clone(),
             self.clock.as_ref(),
         )
-        .await {
+        .await
+        {
             Ok(result) => result,
             Err(error) => {
                 self.audit_submission_unknown(&issuer, &operation).await?;
@@ -356,7 +358,8 @@ where
         {
             Ok(authorized) => authorized.grant_id,
             Err(_) => {
-                let mut audit = AuditRecordDraft::new(evaluated_at, AuditEventKind::AuthorizationFailed);
+                let mut audit =
+                    AuditRecordDraft::new(evaluated_at, AuditEventKind::AuthorizationFailed);
                 audit.actor_id = issuer.verified_actor().cloned();
                 audit.endpoint_id = issuer.verified_endpoint().cloned();
                 audit.device_id = issuer.verified_device().cloned();
@@ -369,7 +372,8 @@ where
                 ));
             }
         };
-        let grant = grant.ok_or_else(|| Status::internal("lockdown authorization omitted grant provenance"))?;
+        let grant = grant
+            .ok_or_else(|| Status::internal("lockdown authorization omitted grant provenance"))?;
 
         let current = self.state.lockdown_state().await;
         if current.active {
@@ -437,7 +441,9 @@ where
             .map_err(map_storage_error_to_status)?;
         let lockdown = self.state.lockdown_state().await;
         if !lockdown.active {
-            return Err(Status::internal("committed lockdown event did not activate posture"));
+            return Err(Status::internal(
+                "committed lockdown event did not activate posture",
+            ));
         }
         Ok(Response::new(EnterSecurityLockdownResult {
             lockdown: Some(lockdown),
@@ -481,7 +487,8 @@ where
         {
             Ok(authorized) => authorized.grant_id,
             Err(_) => {
-                let mut audit = AuditRecordDraft::new(evaluated_at, AuditEventKind::AuthorizationFailed);
+                let mut audit =
+                    AuditRecordDraft::new(evaluated_at, AuditEventKind::AuthorizationFailed);
                 audit.actor_id = issuer.verified_actor().cloned();
                 audit.endpoint_id = issuer.verified_endpoint().cloned();
                 audit.device_id = issuer.verified_device().cloned();
@@ -489,16 +496,20 @@ where
                 audit.failure_code = Some(FailureCode::AuthorizationDenied);
                 audit.reason_code = "security_snapshot_authorization_denied".to_owned();
                 self.record_audit(audit).await?;
-                return Err(Status::permission_denied("security snapshot is not authorized"));
+                return Err(Status::permission_denied(
+                    "security snapshot is not authorized",
+                ));
             }
         };
-        let grant = grant
-            .ok_or_else(|| Status::internal("security snapshot authorization omitted grant provenance"))?;
+        let grant = grant.ok_or_else(|| {
+            Status::internal("security snapshot authorization omitted grant provenance")
+        })?;
         let snapshot = self
             .state
             .materialize_security_snapshot(requested_domain)
             .await;
-        let mut audit = AuditRecordDraft::new(evaluated_at, AuditEventKind::SubscriptionEstablished);
+        let mut audit =
+            AuditRecordDraft::new(evaluated_at, AuditEventKind::SubscriptionEstablished);
         audit.actor_id = issuer.verified_actor().cloned();
         audit.endpoint_id = issuer.verified_endpoint().cloned();
         audit.device_id = issuer.verified_device().cloned();
@@ -526,12 +537,17 @@ where
             .clone()
             .ok_or_else(|| Status::invalid_argument("grant_id is required"))?;
         if grant_id.value.is_empty() || grant_id.value.len() > 256 {
-            return Err(Status::invalid_argument("grant_id must be non-empty and bounded"));
+            return Err(Status::invalid_argument(
+                "grant_id must be non-empty and bounded",
+            ));
         }
         validate_revocation_reason(&request.get_ref().reason)?;
 
         let _decision_guard = self.decision_gate.acquire().await;
-        self.state.catch_up(&self.storage, &requested_domain).await.map_err(map_storage_error_to_status)?;
+        self.state
+            .catch_up(&self.storage, &requested_domain)
+            .await
+            .map_err(map_storage_error_to_status)?;
         let issuer = self
             .issuer_from_request(&request, requested_domain.clone())
             .await?;
@@ -539,11 +555,15 @@ where
         let request = request.into_inner();
         let Some(grant) = self.state.grant(&grant_id).await else {
             self.audit_revocation_denied(&issuer).await?;
-            return Err(Status::permission_denied("grant revocation is not authorized"));
+            return Err(Status::permission_denied(
+                "grant revocation is not authorized",
+            ));
         };
         let Some(actor) = issuer.verified_actor() else {
             self.audit_revocation_denied(&issuer).await?;
-            return Err(Status::permission_denied("grant revocation is not authorized"));
+            return Err(Status::permission_denied(
+                "grant revocation is not authorized",
+            ));
         };
         let issuer_ref = IssuerRef {
             actor,
@@ -554,7 +574,8 @@ where
         match authorize_self_revocation_at(&grant, &issuer_ref, &evaluated_at) {
             Ok(()) => {}
             Err(GrantAdministrationDenied::Expired { grant_id }) => {
-                let mut audit = AuditRecordDraft::new(self.clock.now(), AuditEventKind::GrantExpired);
+                let mut audit =
+                    AuditRecordDraft::new(self.clock.now(), AuditEventKind::GrantExpired);
                 audit.actor_id = Some(actor.clone());
                 audit.endpoint_id = issuer.verified_endpoint().cloned();
                 audit.device_id = issuer.verified_device().cloned();
@@ -562,11 +583,18 @@ where
                 audit.reason_code = "grant_expired".to_owned();
                 self.record_audit(audit).await?;
                 let _ = grant_id;
-                return Err(Status::permission_denied("grant revocation is not authorized"));
+                return Err(Status::permission_denied(
+                    "grant revocation is not authorized",
+                ));
             }
-            Err(GrantAdministrationDenied::MissingOrForeign | GrantAdministrationDenied::EndpointMismatch) => {
+            Err(
+                GrantAdministrationDenied::MissingOrForeign
+                | GrantAdministrationDenied::EndpointMismatch,
+            ) => {
                 self.audit_revocation_denied(&issuer).await?;
-                return Err(Status::permission_denied("grant revocation is not authorized"));
+                return Err(Status::permission_denied(
+                    "grant revocation is not authorized",
+                ));
             }
         }
         if grant.is_revoked() {
@@ -594,7 +622,8 @@ where
                 .await
                 <= 1
         {
-            let mut audit = AuditRecordDraft::new(evaluated_at, AuditEventKind::AuthorizationFailed);
+            let mut audit =
+                AuditRecordDraft::new(evaluated_at, AuditEventKind::AuthorizationFailed);
             audit.actor_id = Some(actor.clone());
             audit.endpoint_id = issuer.verified_endpoint().cloned();
             audit.device_id = issuer.verified_device().cloned();
@@ -628,10 +657,15 @@ where
             command_effects: effects.clone(),
             ..Revocation::default()
         };
-        let event_id = self.state.ingest_revocation(&self.storage, &requested_domain, revocation)
+        let event_id = self
+            .state
+            .ingest_revocation(&self.storage, &requested_domain, revocation)
             .await
             .map_err(map_authority_error_to_status)?;
-        self.state.catch_up(&self.storage, &requested_domain).await.map_err(map_storage_error_to_status)?;
+        self.state
+            .catch_up(&self.storage, &requested_domain)
+            .await
+            .map_err(map_storage_error_to_status)?;
         Ok(Response::new(RevokeGrantResult {
             changed: true,
             already_revoked: false,
@@ -653,7 +687,10 @@ where
             .await?;
         let scope = subscription_scope();
         let _decision_guard = self.decision_gate.acquire().await;
-        self.state.catch_up(&self.storage, &authority_domain_id).await.map_err(map_storage_error_to_status)?;
+        self.state
+            .catch_up(&self.storage, &authority_domain_id)
+            .await
+            .map_err(map_storage_error_to_status)?;
         let issuer = self
             .issuer_from_request(&request, authority_domain_id.clone())
             .await?;
@@ -663,25 +700,60 @@ where
         // reject a valid reconnect cursor.
         let current_lsn = self.state.current_lsn().await;
         if cursor.value > current_lsn {
-            return Err(Status::invalid_argument("subscription cursor is beyond current LSN"));
+            return Err(Status::invalid_argument(
+                "subscription cursor is beyond current LSN",
+            ));
         }
         let evaluated_at = self.clock.now();
-        let decision = self.state.grant_check().check_at(
-            &authority_domain_id,
-            &issuer,
-            patchbay_contracts::patchbay::OperationKind::Query,
-            &scope,
-            &evaluated_at,
-        ).await;
+        let decision = self
+            .state
+            .grant_check()
+            .check_at(
+                &authority_domain_id,
+                &issuer,
+                patchbay_contracts::patchbay::OperationKind::Query,
+                &scope,
+                &evaluated_at,
+            )
+            .await;
         let grant_id = match decision {
             Ok(authorized) => authorized.grant_id,
             Err(error) => {
                 let (kind, failure_code, reason_code, denied_grant_id) = match error {
                     patchbay_core::acceptance::GrantDenied::NoGrant { actor, .. }
-                        if actor.starts_with("grant_expired:") => (AuditEventKind::GrantExpired, FailureCode::Expired, "subscription_grant_expired", actor.strip_prefix("grant_expired:").map(|value| patchbay_contracts::patchbay::GrantId { value: value.to_owned() })),
+                        if actor.starts_with("grant_expired:") =>
+                    {
+                        (
+                            AuditEventKind::GrantExpired,
+                            FailureCode::Expired,
+                            "subscription_grant_expired",
+                            actor.strip_prefix("grant_expired:").map(|value| {
+                                patchbay_contracts::patchbay::GrantId {
+                                    value: value.to_owned(),
+                                }
+                            }),
+                        )
+                    }
                     patchbay_core::acceptance::GrantDenied::NoGrant { actor, .. }
-                        if actor.starts_with("grant_revoked:") => (AuditEventKind::SubscriptionDenied, FailureCode::AuthorizationDenied, "grant_revoked", actor.strip_prefix("grant_revoked:").map(|value| patchbay_contracts::patchbay::GrantId { value: value.to_owned() })),
-                    _ => (AuditEventKind::SubscriptionDenied, FailureCode::AuthorizationDenied, "authorization_denied", None),
+                        if actor.starts_with("grant_revoked:") =>
+                    {
+                        (
+                            AuditEventKind::SubscriptionDenied,
+                            FailureCode::AuthorizationDenied,
+                            "grant_revoked",
+                            actor.strip_prefix("grant_revoked:").map(|value| {
+                                patchbay_contracts::patchbay::GrantId {
+                                    value: value.to_owned(),
+                                }
+                            }),
+                        )
+                    }
+                    _ => (
+                        AuditEventKind::SubscriptionDenied,
+                        FailureCode::AuthorizationDenied,
+                        "authorization_denied",
+                        None,
+                    ),
                 };
                 let mut audit = AuditRecordDraft::new(evaluated_at, kind);
                 audit.actor_id = issuer.verified_actor().cloned();
@@ -692,11 +764,16 @@ where
                 audit.failure_code = Some(failure_code);
                 audit.reason_code = reason_code.to_owned();
                 self.record_audit(audit).await?;
-                return Err(Status::permission_denied("subscription grant is not authorized"));
+                return Err(Status::permission_denied(
+                    "subscription grant is not authorized",
+                ));
             }
         };
-        let grant_id = grant_id.ok_or_else(|| Status::internal("subscription authorization omitted grant provenance"))?;
-        let mut audit = AuditRecordDraft::new(evaluated_at, AuditEventKind::SubscriptionEstablished);
+        let grant_id = grant_id.ok_or_else(|| {
+            Status::internal("subscription authorization omitted grant provenance")
+        })?;
+        let mut audit =
+            AuditRecordDraft::new(evaluated_at, AuditEventKind::SubscriptionEstablished);
         audit.actor_id = issuer.verified_actor().cloned();
         audit.endpoint_id = issuer.verified_endpoint().cloned();
         audit.device_id = issuer.verified_device().cloned();
@@ -704,8 +781,15 @@ where
         audit.target_scope = Some(scope);
         audit.reason_code = "subscription_established".to_owned();
         self.record_audit(audit).await?;
-        let events = self.storage.read_after(&authority_domain_id, cursor).await.map_err(map_storage_error_to_status)?;
-        let events = events.into_iter().filter_map(operator_facing_subscribe_event).map(Ok);
+        let events = self
+            .storage
+            .read_after(&authority_domain_id, cursor)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let events = events
+            .into_iter()
+            .filter_map(operator_facing_subscribe_event)
+            .map(Ok);
         drop(_decision_guard);
         Ok(Response::new(Box::pin(stream::iter(events))))
     }
@@ -716,10 +800,9 @@ where
     ) -> Result<Response<LoadSnapshotResponse>, Status> {
         let authority_domain_id = required_domain(request.get_ref().authority_domain_id.clone())?;
         self.require_configured_domain(&authority_domain_id)?;
-        let view_kind = patchbay_contracts::patchbay::SnapshotViewKind::try_from(
-            request.get_ref().view_kind,
-        )
-        .map_err(|_| Status::invalid_argument("unknown snapshot view kind"))?;
+        let view_kind =
+            patchbay_contracts::patchbay::SnapshotViewKind::try_from(request.get_ref().view_kind)
+                .map_err(|_| Status::invalid_argument("unknown snapshot view kind"))?;
         if view_kind == patchbay_contracts::patchbay::SnapshotViewKind::Unspecified {
             return Err(Status::invalid_argument("snapshot view kind is required"));
         }
@@ -820,7 +903,10 @@ where
                 .is_ok()
             {
                 let adapter_id = identity.adapter_id.map(|id| id.value).unwrap_or_default();
-                let resource_kind = identity.resource_kind.map(|kind| kind.value).unwrap_or_default();
+                let resource_kind = identity
+                    .resource_kind
+                    .map(|kind| kind.value)
+                    .unwrap_or_default();
                 authorized_views.insert((adapter_id, resource_kind));
                 authorized_resources.push(resource);
             }
@@ -828,8 +914,14 @@ where
         snapshot.resources = authorized_resources;
         snapshot.view_revisions.retain(|view| {
             authorized_views.contains(&(
-                view.adapter_id.as_ref().map(|id| id.value.clone()).unwrap_or_default(),
-                view.resource_kind.as_ref().map(|kind| kind.value.clone()).unwrap_or_default(),
+                view.adapter_id
+                    .as_ref()
+                    .map(|id| id.value.clone())
+                    .unwrap_or_default(),
+                view.resource_kind
+                    .as_ref()
+                    .map(|kind| kind.value.clone())
+                    .unwrap_or_default(),
             ))
         });
         let snapshot_lsn = snapshot
@@ -1059,7 +1151,8 @@ where
         session_audit.actor_id = Some(actor_id);
         session_audit.endpoint_id = issuer.verified_endpoint().cloned();
         session_audit.device_id = issuer.verified_device().cloned();
-        session_audit.operator_session_hash = hash_principal_credential(&issuer.operator_session_id().value);
+        session_audit.operator_session_hash =
+            hash_principal_credential(&issuer.operator_session_id().value);
         session_audit.reason_code = "operator_session_revoked".to_owned();
         self.record_audit(session_audit).await?;
         let revoked = self
@@ -1096,7 +1189,10 @@ where
             .verified_actor()
             .cloned()
             .ok_or_else(|| Status::internal("verified issuer lost its actor"))?;
-        let generation = self.state.current_operator_session_generation(&actor_id).await;
+        let generation = self
+            .state
+            .current_operator_session_generation(&actor_id)
+            .await;
         let revocation = OperatorSessionRevocation {
             authority_domain_id: Some(self.authority_domain_id.clone()),
             operator_actor_id: Some(actor_id.clone()),
@@ -1178,16 +1274,16 @@ where
         };
         let (result, _target, revoked_session_count) = self
             .state
-            .ingest_control_surface_revocation(
-                &self.storage,
-                &self.authority_domain_id,
-                revocation,
-            )
+            .ingest_control_surface_revocation(&self.storage, &self.authority_domain_id, revocation)
             .await
             .map_err(map_operator_error_to_status)?;
         Ok(Response::new(RevokeControlSurfaceResult {
             newly_revoked: result.newly_revoked,
-            revoked_principal_count: if result.newly_revoked { principal_count } else { 0 },
+            revoked_principal_count: if result.newly_revoked {
+                principal_count
+            } else {
+                0
+            },
             revoked_session_count,
             revocation_event_id: Some(result.event_id),
         }))
@@ -1250,12 +1346,18 @@ where
         let revoked_principal_count = self.state.count_matching_revocation_target(&target).await;
         let target_wire = match &target {
             patchbay_core::authority::ControlSurfaceRevocationTarget::Endpoint(endpoint_id) => {
-                patchbay_contracts::patchbay::control_surface_revocation::Target::EndpointId(endpoint_id.clone())
+                patchbay_contracts::patchbay::control_surface_revocation::Target::EndpointId(
+                    endpoint_id.clone(),
+                )
             }
             patchbay_core::authority::ControlSurfaceRevocationTarget::Device(device_id) => {
-                patchbay_contracts::patchbay::control_surface_revocation::Target::DeviceId(device_id.clone())
+                patchbay_contracts::patchbay::control_surface_revocation::Target::DeviceId(
+                    device_id.clone(),
+                )
             }
-            patchbay_core::authority::ControlSurfaceRevocationTarget::Principal(_) => unreachable!(),
+            patchbay_core::authority::ControlSurfaceRevocationTarget::Principal(_) => {
+                unreachable!()
+            }
         };
         let revocation = ControlSurfaceRevocation {
             authority_domain_id: Some(self.authority_domain_id.clone()),
@@ -1266,16 +1368,16 @@ where
         };
         let (result, _target, revoked_session_count) = self
             .state
-            .ingest_control_surface_revocation(
-                &self.storage,
-                &self.authority_domain_id,
-                revocation,
-            )
+            .ingest_control_surface_revocation(&self.storage, &self.authority_domain_id, revocation)
             .await
             .map_err(map_operator_error_to_status)?;
         Ok(Response::new(RevokeControlSurfaceResult {
             newly_revoked: result.newly_revoked,
-            revoked_principal_count: if result.newly_revoked { revoked_principal_count } else { 0 },
+            revoked_principal_count: if result.newly_revoked {
+                revoked_principal_count
+            } else {
+                0
+            },
             revoked_session_count,
             revocation_event_id: Some(result.event_id),
         }))
@@ -1361,13 +1463,16 @@ where
                 .bytes()
                 .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
         {
-            return Err(Status::invalid_argument("reason_code must match [a-z0-9_]{1,64}"));
+            return Err(Status::invalid_argument(
+                "reason_code must match [a-z0-9_]{1,64}",
+            ));
         }
         let mut draft = AuditRecordDraft::new(crate::identity::now_timestamp()?, kind);
         draft.actor_id = issuer.verified_actor().cloned();
         draft.endpoint_id = issuer.verified_endpoint().cloned();
         draft.device_id = issuer.verified_device().cloned();
-        draft.operator_session_hash = hash_principal_credential(&issuer.operator_session_id().value);
+        draft.operator_session_hash =
+            hash_principal_credential(&issuer.operator_session_id().value);
         draft.reason_code = request.reason_code;
         let receipt = self
             .audit
@@ -1386,15 +1491,12 @@ where
         &self,
         request: Request<QueryDiagnosticsRequest>,
     ) -> Result<Response<QueryDiagnosticsResponse>, Status> {
-        let operation = request
-            .get_ref()
-            .operation
-            .clone()
-            .ok_or_else(|| Status::invalid_argument("query diagnostics request is missing operation"))?;
-        let authority_domain_id = operation
-            .authority_domain_id
-            .clone()
-            .ok_or_else(|| Status::invalid_argument("query operation is missing authority domain"))?;
+        let operation = request.get_ref().operation.clone().ok_or_else(|| {
+            Status::invalid_argument("query diagnostics request is missing operation")
+        })?;
+        let authority_domain_id = operation.authority_domain_id.clone().ok_or_else(|| {
+            Status::invalid_argument("query operation is missing authority domain")
+        })?;
         self.require_configured_domain(&authority_domain_id)?;
         let issuer = self
             .issuer_from_request(&request, authority_domain_id.clone())
@@ -1405,9 +1507,11 @@ where
         // lockdown is active the canonical posture denial must win over a
         // malformed typed diagnostics payload.
         let evaluated_at = self.clock.now();
-        if let Err(submission) = acceptance::validate_operation_boundary(&operation, &evaluated_at) {
+        if let Err(submission) = acceptance::validate_operation_boundary(&operation, &evaluated_at)
+        {
             let submission = *submission;
-            self.audit_submission_rejection(&issuer, &operation, &submission).await?;
+            self.audit_submission_rejection(&issuer, &operation, &submission)
+                .await?;
             return Ok(Response::new(QueryDiagnosticsResponse {
                 submission: Some(submission),
                 ..QueryDiagnosticsResponse::default()
@@ -1429,7 +1533,8 @@ where
             .await
         {
             let submission = rejected_query_lockdown_submission(&operation, reason_code);
-            self.audit_submission_rejection(&issuer, &operation, &submission).await?;
+            self.audit_submission_rejection(&issuer, &operation, &submission)
+                .await?;
             return Ok(Response::new(QueryDiagnosticsResponse {
                 submission: Some(submission),
                 ..QueryDiagnosticsResponse::default()
@@ -1444,7 +1549,8 @@ where
             Ok(validated) => validated,
             Err(error) => {
                 let submission = rejected_query_submission(&operation, error.to_string());
-                self.audit_submission_rejection(&issuer, &operation, &submission).await?;
+                self.audit_submission_rejection(&issuer, &operation, &submission)
+                    .await?;
                 return Ok(Response::new(QueryDiagnosticsResponse {
                     submission: Some(submission),
                     ..QueryDiagnosticsResponse::default()
@@ -1464,7 +1570,8 @@ where
             operation.clone(),
             self.clock.as_ref(),
         )
-        .await {
+        .await
+        {
             Ok(result) => result,
             Err(error) => {
                 self.audit_submission_unknown(&issuer, &operation).await?;
@@ -1495,7 +1602,9 @@ where
             .state_lookup()
             .current_state(&command_id)
             .await
-            .ok_or_else(|| Status::internal("accepted query is missing from the command projection"))?;
+            .ok_or_else(|| {
+                Status::internal("accepted query is missing from the command projection")
+            })?;
 
         // Every checkpoint is reconciled under the submit gate. A retry that
         // arrives after any durable prefix resumes the missing suffix instead
@@ -1519,7 +1628,9 @@ where
                 .state_lookup()
                 .current_state(&command_id)
                 .await
-                .ok_or_else(|| Status::internal("delivered query is missing from the command projection"))?;
+                .ok_or_else(|| {
+                    Status::internal("delivered query is missing from the command projection")
+                })?;
         }
         if current.state != OperationState::Delivered {
             if current.state == OperationState::Completed {
@@ -1592,7 +1703,9 @@ where
 
         let as_of_lsn = find_delivered_checkpoint(&self.storage, &authority_domain_id, &command_id)
             .await?
-            .ok_or_else(|| Status::internal("delivered query has no canonical audited checkpoint"))?;
+            .ok_or_else(|| {
+                Status::internal("delivered query has no canonical audited checkpoint")
+            })?;
         let as_of_lsn = as_of_lsn
             .lsn
             .ok_or_else(|| Status::internal("delivered query has no LSN"))?;
@@ -1603,16 +1716,13 @@ where
             validated,
             as_of_lsn.value,
         )
-        .await {
+        .await
+        {
             Ok(result) => result,
             Err(_) => {
-                let failed = append_query_failure(
-                    &self.storage,
-                    &authority_domain_id,
-                    &command_id,
-                )
-                .await
-                .map_err(map_storage_error_to_status)?;
+                let failed = append_query_failure(&self.storage, &authority_domain_id, &command_id)
+                    .await
+                    .map_err(map_storage_error_to_status)?;
                 self.state
                     .catch_up(&self.storage, &authority_domain_id)
                     .await
@@ -1627,39 +1737,46 @@ where
                 }));
             }
         };
+        let observation = Observation {
+            authority_domain_id: Some(authority_domain_id.clone()),
+            kind: ObservationKind::Result as i32,
+            correlations: vec![TypedCorrelation {
+                r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
+            }],
+            target_scope: operation.target_scope.clone(),
+            payload: Some(patchbay_contracts::patchbay::PayloadEnvelope {
+                payload: result.encode_to_vec(),
+                content_type: PayloadContentType::Protobuf as i32,
+                schema_ref: "patchbay.DiagnosticsResult".to_owned(),
+            }),
+            ..Observation::default()
+        };
+        let transition = CommandTransition {
+            command_id: Some(command_id.clone()),
+            from_state: OperationState::Delivered as i32,
+            to_state: OperationState::Completed as i32,
+            failure_code: FailureCode::Unspecified as i32,
+            correlations: observation.correlations.clone(),
+            ..CommandTransition::default()
+        };
+        let mut audit = AuditRecordDraft::new(
+            crate::identity::now_timestamp()
+                .map_err(|error| Status::internal(error.to_string()))?,
+            AuditEventKind::CommandCompleted,
+        );
+        audit.command_id = Some(command_id.clone());
+        audit.reason_code = "query_state_transition".to_owned();
         let result_event_id = self
             .storage
-            .append(
+            .append_observation_transition_audited(
                 &authority_domain_id,
-                patchbay_contracts::patchbay::StoredEventPayload {
-                    kind: StoredEventKind::Observation as i32,
-                    payload: Observation {
-                        authority_domain_id: Some(authority_domain_id.clone()),
-                        kind: ObservationKind::Result as i32,
-                        correlations: vec![TypedCorrelation {
-                            r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
-                        }],
-                        payload: Some(patchbay_contracts::patchbay::PayloadEnvelope {
-                            payload: result.encode_to_vec(),
-                            content_type: PayloadContentType::Protobuf as i32,
-                            schema_ref: "patchbay.DiagnosticsResult".to_owned(),
-                        }),
-                        ..Observation::default()
-                    }
-                    .encode_to_vec(),
-                },
+                observation,
+                transition,
+                audit,
             )
             .await
-            .map_err(map_storage_error_to_status)?;
-        append_query_transition(
-            &self.storage,
-            &authority_domain_id,
-            &command_id,
-            OperationState::Delivered,
-            OperationState::Completed,
-        )
-        .await
-        .map_err(map_storage_error_to_status)?;
+            .map_err(map_storage_error_to_status)?
+            .observation_event_id;
         self.state
             .catch_up(&self.storage, &authority_domain_id)
             .await
@@ -1694,10 +1811,7 @@ where
         }
     }
 
-    async fn require_operations_open(
-        &self,
-        issuer: &dyn IssuerContext,
-    ) -> Result<(), Status> {
+    async fn require_operations_open(&self, issuer: &dyn IssuerContext) -> Result<(), Status> {
         if self.state.lockdown_state().await.active {
             let mut audit = AuditRecordDraft::new(
                 crate::identity::now_timestamp()?,
@@ -1793,9 +1907,18 @@ where
         let kind = match result.reason_code.as_str() {
             "grant_expired" => AuditEventKind::GrantExpired,
             "grant_revoked" => AuditEventKind::AuthorizationFailed,
-            _ if failure == Some(FailureCode::AuthorizationDenied) => AuditEventKind::AuthorizationFailed,
+            _ if failure == Some(FailureCode::AuthorizationDenied) => {
+                AuditEventKind::AuthorizationFailed
+            }
             _ if failure == Some(FailureCode::TargetNotFound)
-                && operation.target_scope.as_ref().and_then(|target| target.session_generation.as_ref()).is_some() => AuditEventKind::TargetGenerationMismatch,
+                && operation
+                    .target_scope
+                    .as_ref()
+                    .and_then(|target| target.session_generation.as_ref())
+                    .is_some() =>
+            {
+                AuditEventKind::TargetGenerationMismatch
+            }
             _ => AuditEventKind::CommandSubmissionRejected,
         };
         let mut draft = AuditRecordDraft::new(crate::identity::now_timestamp()?, kind);
@@ -1818,10 +1941,7 @@ where
         Ok(())
     }
 
-    pub(crate) async fn record_audit(
-        &self,
-        mut draft: AuditRecordDraft,
-    ) -> Result<(), Status> {
+    pub(crate) async fn record_audit(&self, mut draft: AuditRecordDraft) -> Result<(), Status> {
         if draft.occurred_at.seconds == 0 && draft.occurred_at.nanos == 0 {
             draft.occurred_at = crate::identity::now_timestamp()?;
         }
@@ -1878,8 +1998,15 @@ where
 }
 
 fn validate_revocation_reason(reason: &str) -> Result<(), Status> {
-    if reason.is_empty() || reason.len() > 128 || !reason.bytes().all(|byte| byte.is_ascii_graphic() && byte != b'=' ) {
-        return Err(Status::invalid_argument("reason must be 1..128 safe ASCII characters"));
+    if reason.is_empty()
+        || reason.len() > 128
+        || !reason
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && byte != b'=')
+    {
+        return Err(Status::invalid_argument(
+            "reason must be 1..128 safe ASCII characters",
+        ));
     }
     Ok(())
 }
@@ -1893,8 +2020,21 @@ fn revocation_effects(
         .filter_map(|record| {
             let (to_state, failure_code) = match grant.revocation_policy {
                 GrantRevocationPolicy::Continue => return None,
-                GrantRevocationPolicy::Cancel if matches!(record.state, OperationState::Accepted | OperationState::Delivered | OperationState::Running) => (OperationState::Cancelled, FailureCode::Cancelled),
-                GrantRevocationPolicy::RequireReauthorization if record.state == OperationState::Accepted => (OperationState::Rejected, FailureCode::AuthorizationDenied),
+                GrantRevocationPolicy::Cancel
+                    if matches!(
+                        record.state,
+                        OperationState::Accepted
+                            | OperationState::Delivered
+                            | OperationState::Running
+                    ) =>
+                {
+                    (OperationState::Cancelled, FailureCode::Cancelled)
+                }
+                GrantRevocationPolicy::RequireReauthorization
+                    if record.state == OperationState::Accepted =>
+                {
+                    (OperationState::Rejected, FailureCode::AuthorizationDenied)
+                }
                 _ => return None,
             };
             Some(GrantRevocationEffect {
@@ -1920,7 +2060,11 @@ async fn append_query_transition<S: Storage>(
         OperationState::Failed => AuditEventKind::CommandFailed,
         _ => AuditEventKind::CommandSubmissionFailed,
     };
-    let mut audit = AuditRecordDraft::new(crate::identity::now_timestamp().map_err(|error| StorageError::InvalidAuditRecord(error.to_string()))?, kind);
+    let mut audit = AuditRecordDraft::new(
+        crate::identity::now_timestamp()
+            .map_err(|error| StorageError::InvalidAuditRecord(error.to_string()))?,
+        kind,
+    );
     audit.command_id = Some(command_id.clone());
     audit.reason_code = "query_state_transition".to_owned();
     storage
@@ -1948,7 +2092,8 @@ async fn append_query_failure<S: Storage>(
     command_id: &patchbay_contracts::patchbay::CommandId,
 ) -> Result<EventId, StorageError> {
     let mut audit = AuditRecordDraft::new(
-        crate::identity::now_timestamp().map_err(|error| StorageError::InvalidAuditRecord(error.to_string()))?,
+        crate::identity::now_timestamp()
+            .map_err(|error| StorageError::InvalidAuditRecord(error.to_string()))?,
         AuditEventKind::CommandFailed,
     );
     audit.command_id = Some(command_id.clone());
@@ -1983,10 +2128,13 @@ async fn materialize_diagnostics_result<S: Storage>(
     authority_domain_id: &AuthorityDomainId,
     query: ValidatedDiagnosticsQuery,
     as_of_lsn: u64,
-) -> Result<(
-    DiagnosticsResult,
-    patchbay_contracts::patchbay::query_diagnostics_response::Result,
-), diagnostics::DiagnosticsError> {
+) -> Result<
+    (
+        DiagnosticsResult,
+        patchbay_contracts::patchbay::query_diagnostics_response::Result,
+    ),
+    diagnostics::DiagnosticsError,
+> {
     let as_of = Some(Lsn { value: as_of_lsn });
     match query {
         ValidatedDiagnosticsQuery::Audit(spec) => {
@@ -1996,43 +2144,83 @@ async fn materialize_diagnostics_result<S: Storage>(
             Ok((
                 DiagnosticsResult {
                     as_of_lsn: as_of,
-                    result: Some(patchbay_contracts::patchbay::diagnostics_result::Result::Audit(page.clone())),
+                    result: Some(
+                        patchbay_contracts::patchbay::diagnostics_result::Result::Audit(
+                            page.clone(),
+                        ),
+                    ),
                 },
                 patchbay_contracts::patchbay::query_diagnostics_response::Result::Audit(page),
             ))
         }
         ValidatedDiagnosticsQuery::Command(query) => {
             let command_id = query.command_id.clone().expect("validated command id");
-            let projection = state.diagnostics_at(storage, authority_domain_id, as_of_lsn).await?;
+            let projection = state
+                .diagnostics_at(storage, authority_domain_id, as_of_lsn)
+                .await?;
             let mut inspection = projection.result_for_query(&command_id).unwrap_or(
-                patchbay_contracts::patchbay::CommandInspectionResult { found: false, inspection: None },
+                patchbay_contracts::patchbay::CommandInspectionResult {
+                    found: false,
+                    inspection: None,
+                },
             );
             if let Some(command) = inspection.inspection.as_mut() {
-                let before_lsn = query.audit_before_event_id.as_ref().and_then(|id| id.lsn.as_ref()).map(|lsn| lsn.value);
-                let page = storage.query_audit_through(authority_domain_id, AuditPageSpec {
-                    kinds: Vec::new(), actor_id: None, endpoint_id: None,
-                    command_id: Some(command_id), grant_id: None, target: None, failure_codes: Vec::new(),
-                    reason_codes: Vec::new(), occurred_from: None, occurred_before: None,
-                    before_lsn,
-                    limit: query.audit_limit.map_or(diagnostics::COMMAND_DEFAULT_LIMIT, |value| value as u16),
-                }, Lsn { value: as_of_lsn }).await?;
+                let before_lsn = query
+                    .audit_before_event_id
+                    .as_ref()
+                    .and_then(|id| id.lsn.as_ref())
+                    .map(|lsn| lsn.value);
+                let page = storage
+                    .query_audit_through(
+                        authority_domain_id,
+                        AuditPageSpec {
+                            kinds: Vec::new(),
+                            actor_id: None,
+                            endpoint_id: None,
+                            command_id: Some(command_id),
+                            grant_id: None,
+                            target: None,
+                            failure_codes: Vec::new(),
+                            reason_codes: Vec::new(),
+                            occurred_from: None,
+                            occurred_before: None,
+                            before_lsn,
+                            limit: query
+                                .audit_limit
+                                .map_or(diagnostics::COMMAND_DEFAULT_LIMIT, |value| value as u16),
+                        },
+                        Lsn { value: as_of_lsn },
+                    )
+                    .await?;
                 command.audit = Some(page);
             }
             Ok((
                 DiagnosticsResult {
                     as_of_lsn: as_of,
-                    result: Some(patchbay_contracts::patchbay::diagnostics_result::Result::Command(inspection.clone())),
+                    result: Some(
+                        patchbay_contracts::patchbay::diagnostics_result::Result::Command(
+                            inspection.clone(),
+                        ),
+                    ),
                 },
-                patchbay_contracts::patchbay::query_diagnostics_response::Result::Command(inspection),
+                patchbay_contracts::patchbay::query_diagnostics_response::Result::Command(
+                    inspection,
+                ),
             ))
         }
         ValidatedDiagnosticsQuery::Adapters(query) => {
-            let projection = state.diagnostics_at(storage, authority_domain_id, as_of_lsn).await?;
+            let projection = state
+                .diagnostics_at(storage, authority_domain_id, as_of_lsn)
+                .await?;
             let page = projection.adapter_page(&query, as_of_lsn)?;
             Ok((
                 DiagnosticsResult {
                     as_of_lsn: as_of,
-                    result: Some(patchbay_contracts::patchbay::diagnostics_result::Result::Adapters(page.clone())),
+                    result: Some(
+                        patchbay_contracts::patchbay::diagnostics_result::Result::Adapters(
+                            page.clone(),
+                        ),
+                    ),
                 },
                 patchbay_contracts::patchbay::query_diagnostics_response::Result::Adapters(page),
             ))
@@ -2119,25 +2307,26 @@ fn canonical_delivered_checkpoint(
         {
             continue;
         }
-        let transition = CommandTransition::decode(event.payload.payload.as_slice()).map_err(
-            |error| Status::internal(format!("cannot decode query transition: {error}")),
-        )?;
+        let transition =
+            CommandTransition::decode(event.payload.payload.as_slice()).map_err(|error| {
+                Status::internal(format!("cannot decode query transition: {error}"))
+            })?;
         if transition.command_id.as_ref() != Some(command_id)
-            || OperationState::try_from(transition.to_state).ok()
-                != Some(OperationState::Delivered)
+            || OperationState::try_from(transition.to_state).ok() != Some(OperationState::Delivered)
         {
             continue;
         }
-        if OperationState::try_from(transition.from_state).ok()
-            != Some(OperationState::Accepted)
-            || FailureCode::try_from(transition.failure_code).ok()
-                != Some(FailureCode::Unspecified)
+        if OperationState::try_from(transition.from_state).ok() != Some(OperationState::Accepted)
+            || FailureCode::try_from(transition.failure_code).ok() != Some(FailureCode::Unspecified)
         {
             return Err(Status::internal(
                 "delivered query transition has non-canonical lifecycle fields",
             ));
         }
-        if transition_checkpoint.replace(event.event_id.clone()).is_some() {
+        if transition_checkpoint
+            .replace(event.event_id.clone())
+            .is_some()
+        {
             return Err(Status::internal(
                 "query has multiple delivered transition checkpoints",
             ));
@@ -2157,8 +2346,7 @@ fn canonical_delivered_checkpoint(
         .ok_or_else(|| Status::internal("delivered query audit LSN overflows"))?;
     let mut audit_checkpoint = None;
     for event in events {
-        if StoredEventKind::try_from(event.payload.kind).ok()
-            != Some(StoredEventKind::AuditRecord)
+        if StoredEventKind::try_from(event.payload.kind).ok() != Some(StoredEventKind::AuditRecord)
         {
             continue;
         }
@@ -2170,8 +2358,7 @@ fn canonical_delivered_checkpoint(
         let canonical = AuditEventKind::try_from(record.kind).ok()
             == Some(AuditEventKind::CommandDelivered)
             && record.command_id.as_ref() == Some(command_id)
-            && FailureCode::try_from(record.failure_code).ok()
-                == Some(FailureCode::Unspecified)
+            && FailureCode::try_from(record.failure_code).ok() == Some(FailureCode::Unspecified)
             && record.reason_code == "query_state_transition";
         if !canonical {
             // A source-correlated audit with another purpose must never become
@@ -2202,7 +2389,11 @@ fn canonical_delivered_checkpoint(
     }
 
     audit_checkpoint.map_or_else(
-        || Err(Status::internal("delivered query transition has no canonical audit")),
+        || {
+            Err(Status::internal(
+                "delivered query transition has no canonical audit",
+            ))
+        },
         |checkpoint| Ok(Some(checkpoint)),
     )
 }
@@ -2348,12 +2539,7 @@ async fn find_diagnostics_result<S: Storage>(
     Status,
 > {
     let events = read_validated_replay_prefix(storage, authority_domain_id).await?;
-    diagnostics_result_from_prefix(
-        &events,
-        authority_domain_id,
-        command_id,
-        expected_kind,
-    )
+    diagnostics_result_from_prefix(&events, authority_domain_id, command_id, expected_kind)
 }
 
 fn subscription_scope() -> patchbay_contracts::patchbay::TargetScope {
@@ -2467,11 +2653,19 @@ pub fn map_acceptance_error_to_status(error: AcceptanceError) -> Status {
 
 pub fn map_authority_error_to_status(error: patchbay_core::authority::AuthorityError) -> Status {
     match error {
-        patchbay_core::authority::AuthorityError::GrantNotFound(_) => Status::permission_denied("grant revocation is not authorized"),
-        patchbay_core::authority::AuthorityError::InvalidGrant(message) => Status::invalid_argument(message),
+        patchbay_core::authority::AuthorityError::GrantNotFound(_) => {
+            Status::permission_denied("grant revocation is not authorized")
+        }
+        patchbay_core::authority::AuthorityError::InvalidGrant(message) => {
+            Status::invalid_argument(message)
+        }
         patchbay_core::authority::AuthorityError::CorruptRecord(message)
-        | patchbay_core::authority::AuthorityError::CorruptLog(message) => Status::internal(message),
-        patchbay_core::authority::AuthorityError::Storage(error) => map_storage_error_to_status(error),
+        | patchbay_core::authority::AuthorityError::CorruptLog(message) => {
+            Status::internal(message)
+        }
+        patchbay_core::authority::AuthorityError::Storage(error) => {
+            map_storage_error_to_status(error)
+        }
     }
 }
 
@@ -2521,6 +2715,12 @@ pub fn map_storage_error_to_status(error: StorageError) -> Status {
         } => Status::failed_precondition(format!(
             "staged successor for claim {command_id} conflicts with source LSN {existing_lsn}"
         )),
+        StorageError::ObservationEvidenceConflict {
+            command_id,
+            existing_lsn,
+        } => Status::failed_precondition(format!(
+            "observation evidence for command {command_id} conflicts with source LSN {existing_lsn}"
+        )),
         StorageError::CorruptRecord(message) => Status::internal(message),
         StorageError::WriteFailed { message, .. } | StorageError::ReadFailed { message, .. } => {
             Status::internal(message)
@@ -2545,7 +2745,9 @@ pub fn map_storage_error_to_status(error: StorageError) -> Status {
         StorageError::InvalidCoreGeneration(value) => {
             Status::internal(format!("invalid core generation {value}"))
         }
-        StorageError::UnsupportedOperation => Status::unimplemented("storage operation is unsupported"),
+        StorageError::UnsupportedOperation => {
+            Status::unimplemented("storage operation is unsupported")
+        }
     }
 }
 
@@ -2579,9 +2781,15 @@ mod tests {
 
     fn grant(policy: GrantRevocationPolicy) -> GrantRecord {
         GrantRecord {
-            grant_id: GrantId { value: "grant".to_owned() },
-            authority_domain_id: AuthorityDomainId { value: "domain".to_owned() },
-            subject_actor_id: ActorId { value: "actor".to_owned() },
+            grant_id: GrantId {
+                value: "grant".to_owned(),
+            },
+            authority_domain_id: AuthorityDomainId {
+                value: "domain".to_owned(),
+            },
+            subject_actor_id: ActorId {
+                value: "actor".to_owned(),
+            },
             subject_endpoint_id: None,
             subject_endpoint_class: String::new(),
             target_scope: TargetScope::default(),
@@ -2607,7 +2815,9 @@ mod tests {
     fn record(state: OperationState) -> CommandRecord {
         let mut record = CommandRecord::new(
             Operation {
-                command_id: Some(CommandId { value: "command".to_owned() }),
+                command_id: Some(CommandId {
+                    value: "command".to_owned(),
+                }),
                 ..Operation::default()
             },
             1,
@@ -2780,10 +2990,7 @@ mod tests {
         event
     }
 
-    fn corrupt_tails(
-        authority_domain_id: &AuthorityDomainId,
-        next_lsn: u64,
-    ) -> [RecordedEvent; 2] {
+    fn corrupt_tails(authority_domain_id: &AuthorityDomainId, next_lsn: u64) -> [RecordedEvent; 2] {
         [
             stored_event(
                 authority_domain_id,
@@ -3055,14 +3262,36 @@ mod tests {
             for state in states {
                 let effects = revocation_effects(&grant(policy), &[record(state)]);
                 let expected = match (policy, state) {
-                    (GrantRevocationPolicy::Cancel, OperationState::Accepted | OperationState::Delivered | OperationState::Running) => Some((OperationState::Cancelled, patchbay_contracts::patchbay::FailureCode::Cancelled)),
-                    (GrantRevocationPolicy::RequireReauthorization, OperationState::Accepted) => Some((OperationState::Rejected, patchbay_contracts::patchbay::FailureCode::AuthorizationDenied)),
+                    (
+                        GrantRevocationPolicy::Cancel,
+                        OperationState::Accepted
+                        | OperationState::Delivered
+                        | OperationState::Running,
+                    ) => Some((
+                        OperationState::Cancelled,
+                        patchbay_contracts::patchbay::FailureCode::Cancelled,
+                    )),
+                    (GrantRevocationPolicy::RequireReauthorization, OperationState::Accepted) => {
+                        Some((
+                            OperationState::Rejected,
+                            patchbay_contracts::patchbay::FailureCode::AuthorizationDenied,
+                        ))
+                    }
                     _ => None,
                 };
-                assert_eq!(effects.len(), usize::from(expected.is_some()), "policy={policy:?}, state={state:?}");
+                assert_eq!(
+                    effects.len(),
+                    usize::from(expected.is_some()),
+                    "policy={policy:?}, state={state:?}"
+                );
                 if let Some((to_state, failure_code)) = expected {
                     assert_eq!(OperationState::try_from(effects[0].to_state), Ok(to_state));
-                    assert_eq!(patchbay_contracts::patchbay::FailureCode::try_from(effects[0].failure_code), Ok(failure_code));
+                    assert_eq!(
+                        patchbay_contracts::patchbay::FailureCode::try_from(
+                            effects[0].failure_code
+                        ),
+                        Ok(failure_code)
+                    );
                 }
             }
         }

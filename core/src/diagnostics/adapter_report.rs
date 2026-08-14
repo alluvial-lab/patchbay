@@ -6,11 +6,11 @@
 //! content into the log.
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, AdapterDiagnosticDetail, AdapterDiagnosticPayload,
+    typed_correlation, ActorEndpointRef, AdapterDiagnosticDetail, AdapterDiagnosticPayload,
     AdapterDiagnosticReport, AdapterDiagnosticSeverity, AdapterId, AdapterRegistration,
-    ActorEndpointRef, AuditEventKind, AuthorityDomainId, FailureCode, Observation,
-    ObservationKind, OperationKind, PayloadContentType, PayloadEnvelope, StoredEventKind,
-    StoredEventPayload, TargetScope, TargetScopeKind,
+    AuditEventKind, AuthorityDomainId, FailureCode, Observation, ObservationKind, OperationKind,
+    PayloadContentType, PayloadEnvelope, StoredEventKind, StoredEventPayload, TargetScope,
+    TargetScopeKind,
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -89,11 +89,15 @@ pub fn validate_adapter_diagnostic_report(
     let mut command_id = None;
     for correlation in &report.correlations {
         match correlation.r#ref.as_ref() {
-            Some(typed_correlation::Ref::CommandId(id)) if !id.value.is_empty() && command_id.is_none() => {
+            Some(typed_correlation::Ref::CommandId(id))
+                if !id.value.is_empty() && command_id.is_none() =>
+            {
                 command_id = Some(id.clone());
             }
             Some(typed_correlation::Ref::CommandId(_)) => {
-                return Err(invalid("report must contain zero or one non-empty command correlation"));
+                return Err(invalid(
+                    "report must contain zero or one non-empty command correlation",
+                ));
             }
             Some(_) | None => return Err(invalid("report correlation must be a command id")),
         }
@@ -106,7 +110,9 @@ pub fn validate_adapter_diagnostic_report(
     if envelope.content_type != PayloadContentType::Protobuf as i32
         || envelope.schema_ref != ADAPTER_DIAGNOSTIC_SCHEMA
     {
-        return Err(invalid("report payload must be the exact protobuf diagnostic schema"));
+        return Err(invalid(
+            "report payload must be the exact protobuf diagnostic schema",
+        ));
     }
     let payload = AdapterDiagnosticPayload::decode(envelope.payload.as_slice())
         .map_err(|error| invalid(format!("diagnostic payload is malformed: {error}")))?;
@@ -115,7 +121,9 @@ pub fn validate_adapter_diagnostic_report(
         return Err(invalid("diagnostic count must be between 1 and 1000"));
     }
     if payload.adapter_generation.as_ref() != Some(adapter_generation) {
-        return Err(invalid("diagnostic payload generation does not match attachment"));
+        return Err(invalid(
+            "diagnostic payload generation does not match attachment",
+        ));
     }
     let severity = AdapterDiagnosticSeverity::try_from(payload.severity)
         .map_err(|_| invalid("diagnostic severity is unknown"))?;
@@ -138,17 +146,25 @@ pub fn validate_adapter_diagnostic_report(
             | OperationKind::Reconfigure
             | OperationKind::SessionManagement
     ) {
-        return Err(invalid("diagnostic operation kind is reserved or unavailable"));
+        return Err(invalid(
+            "diagnostic operation kind is reserved or unavailable",
+        ));
     }
     if operation_kind == OperationKind::Unspecified && command_id.is_some() {
-        return Err(invalid("a command-correlated diagnostic must name an operation kind"));
+        return Err(invalid(
+            "a command-correlated diagnostic must name an operation kind",
+        ));
     }
     let failure_code = FailureCode::try_from(report.failure_code)
         .map_err(|_| invalid("diagnostic failure code is unknown"))?;
-    if matches!(severity, AdapterDiagnosticSeverity::Warning | AdapterDiagnosticSeverity::Error)
-        && failure_code == FailureCode::Unspecified
+    if matches!(
+        severity,
+        AdapterDiagnosticSeverity::Warning | AdapterDiagnosticSeverity::Error
+    ) && failure_code == FailureCode::Unspecified
     {
-        return Err(invalid("warning and error diagnostics require a canonical failure code"));
+        return Err(invalid(
+            "warning and error diagnostics require a canonical failure code",
+        ));
     }
 
     let payload = AdapterDiagnosticPayload {
@@ -299,8 +315,12 @@ mod tests {
     fn registration() -> AdapterRegistration {
         AdapterRegistration {
             adapter_id: Some(AdapterId { value: "pi".into() }),
-            endpoint_id: Some(patchbay_contracts::patchbay::EndpointId { value: "pi-endpoint".into() }),
-            authority_domain_id: Some(AuthorityDomainId { value: "main".into() }),
+            endpoint_id: Some(patchbay_contracts::patchbay::EndpointId {
+                value: "pi-endpoint".into(),
+            }),
+            authority_domain_id: Some(AuthorityDomainId {
+                value: "main".into(),
+            }),
             adapter_generation: Some(Generation { value: 1 }),
             capability: Some(AdapterCapability {
                 session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
@@ -313,13 +333,18 @@ mod tests {
 
     fn report() -> AdapterDiagnosticReport {
         AdapterDiagnosticReport {
-            authority_domain_id: Some(AuthorityDomainId { value: "main".into() }),
+            authority_domain_id: Some(AuthorityDomainId {
+                value: "main".into(),
+            }),
             target_scope: Some(TargetScope {
                 kind: TargetScopeKind::Adapter as i32,
                 adapter_id: Some(AdapterId { value: "pi".into() }),
                 ..Default::default()
             }),
-            observed_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+            observed_at: Some(Timestamp {
+                seconds: 1,
+                nanos: 0,
+            }),
             failure_code: FailureCode::Unspecified as i32,
             payload: Some(PayloadEnvelope {
                 payload: AdapterDiagnosticPayload {
@@ -343,12 +368,27 @@ mod tests {
             report(),
             &AdapterId { value: "pi".into() },
             &registration(),
-            Timestamp { seconds: 2, nanos: 0 },
+            Timestamp {
+                seconds: 2,
+                nanos: 0,
+            },
         )
         .expect("valid report");
-        assert_eq!(validated.audit.kind, AuditEventKind::AdapterDiagnosticReported);
+        assert_eq!(
+            validated.audit.kind,
+            AuditEventKind::AdapterDiagnosticReported
+        );
         assert_eq!(validated.audit.reason_code, "pi_adapter_started");
-        assert_eq!(validated.observation.sender.unwrap().endpoint_id.unwrap().value, "pi-endpoint");
+        assert_eq!(
+            validated
+                .observation
+                .sender
+                .unwrap()
+                .endpoint_id
+                .unwrap()
+                .value,
+            "pi-endpoint"
+        );
     }
 
     #[test]
@@ -366,7 +406,10 @@ mod tests {
             value.clone(),
             &AdapterId { value: "pi".into() },
             &registration(),
-            Timestamp { seconds: 2, nanos: 0 },
+            Timestamp {
+                seconds: 2,
+                nanos: 0
+            },
         )
         .is_err());
         value.correlations.push(TypedCorrelation::default());
@@ -374,7 +417,10 @@ mod tests {
             value,
             &AdapterId { value: "pi".into() },
             &registration(),
-            Timestamp { seconds: 2, nanos: 0 },
+            Timestamp {
+                seconds: 2,
+                nanos: 0
+            },
         )
         .is_err());
     }

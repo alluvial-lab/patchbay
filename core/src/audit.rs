@@ -36,10 +36,7 @@ pub struct DurableAuditSink<S: Storage> {
 
 impl<S: Storage> DurableAuditSink<S> {
     #[must_use]
-    pub fn new(
-        storage: S,
-        domain: patchbay_contracts::patchbay::AuthorityDomainId,
-    ) -> Self {
+    pub fn new(storage: S, domain: patchbay_contracts::patchbay::AuthorityDomainId) -> Self {
         Self { storage, domain }
     }
 }
@@ -129,7 +126,11 @@ fn safe_log_value(value: &str) -> String {
 
 fn redacted_line(draft: &AuditRecordDraft) -> String {
     let kind = AuditEventKind::try_from(draft.kind as i32)
-        .map(|kind| kind.as_str_name().trim_start_matches("AUDIT_EVENT_KIND_").to_ascii_lowercase())
+        .map(|kind| {
+            kind.as_str_name()
+                .trim_start_matches("AUDIT_EVENT_KIND_")
+                .to_ascii_lowercase()
+        })
         .unwrap_or_else(|_| "unknown".to_owned());
     let actor_id = draft
         .actor_id
@@ -159,19 +160,30 @@ mod tests {
     #[tokio::test]
     async fn stderr_sink_is_explicitly_diagnostic_only() {
         let draft = AuditRecordDraft::new(
-            Timestamp { seconds: 1, nanos: 0 },
+            Timestamp {
+                seconds: 1,
+                nanos: 0,
+            },
             AuditEventKind::LoginFailed,
         );
-        assert_eq!(StderrAuditSink.record(draft).await.unwrap(), AuditReceipt::DiagnosticOnly);
+        assert_eq!(
+            StderrAuditSink.record(draft).await.unwrap(),
+            AuditReceipt::DiagnosticOnly
+        );
     }
 
     #[test]
     fn line_contains_only_allowlisted_fields() {
         let draft = AuditRecordDraft::new(
-            Timestamp { seconds: 1, nanos: 0 },
+            Timestamp {
+                seconds: 1,
+                nanos: 0,
+            },
             AuditEventKind::LoginSucceeded,
         );
-        let _ = AuthorityDomainId { value: "main".to_owned() };
+        let _ = AuthorityDomainId {
+            value: "main".to_owned(),
+        };
         let line = redacted_line(&draft);
         assert!(!line.contains("payload"));
         assert!(!line.contains("token"));

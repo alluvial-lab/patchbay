@@ -32,9 +32,7 @@ pub fn rebuild_from_events(
     let mut previous_lsn = 0u64;
     for event in events {
         let validated = validate_next_replay_event(authority_domain_id, previous_lsn, event)
-            .map_err(|error| {
-                error.map(ResourceError::CorruptRecord, ResourceError::CorruptLog)
-            })?;
+            .map_err(|error| error.map(ResourceError::CorruptRecord, ResourceError::CorruptLog))?;
         registry.observe(event)?;
         previous_lsn = validated.lsn;
     }
@@ -110,9 +108,7 @@ fn fold_contiguous_suffix(
     let mut previous_lsn = registry.applied_lsn();
     for event in events {
         let validated = validate_next_replay_event(authority_domain_id, previous_lsn, event)
-            .map_err(|error| {
-                error.map(ResourceError::CorruptRecord, ResourceError::CorruptLog)
-            })?;
+            .map_err(|error| error.map(ResourceError::CorruptRecord, ResourceError::CorruptLog))?;
         next.observe(event)?;
         previous_lsn = validated.lsn;
     }

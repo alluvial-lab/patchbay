@@ -38,10 +38,9 @@ fn authenticated<T>(message: T, token: &str) -> Request<T> {
     request
         .metadata_mut()
         .insert(ADAPTER_ID_HEADER, "pi".parse().expect("metadata"));
-    request.metadata_mut().insert(
-        ADAPTER_EVIDENCE_HEADER,
-        EVIDENCE.parse().expect("metadata"),
-    );
+    request
+        .metadata_mut()
+        .insert(ADAPTER_EVIDENCE_HEADER, EVIDENCE.parse().expect("metadata"));
     request.metadata_mut().insert(
         ADAPTER_ATTACHMENT_TOKEN_HEADER,
         token.parse().expect("metadata"),
@@ -150,9 +149,9 @@ async fn authenticated_evidence_is_canonicalized_and_wrong_claim_is_not_appended
         .ingest_observation(authenticated(
             ObservationRequest {
                 authority_domain_id: Some(domain()),
-                observation: Some(
-                    observation_request::Observation::SpawnExecutionEvidence(evidence.clone()),
-                ),
+                observation: Some(observation_request::Observation::SpawnExecutionEvidence(
+                    evidence.clone(),
+                )),
             },
             &token,
         ))
@@ -174,8 +173,8 @@ async fn authenticated_evidence_is_canonicalized_and_wrong_claim_is_not_appended
         StoredEventKind::try_from(stored.payload.kind).ok(),
         Some(StoredEventKind::SpawnExecutionEvidence)
     );
-    let canonical = SpawnExecutionEvidence::decode(stored.payload.payload.as_slice())
-        .expect("typed evidence");
+    let canonical =
+        SpawnExecutionEvidence::decode(stored.payload.payload.as_slice()).expect("typed evidence");
     assert_eq!(
         canonical.producer,
         SpawnExecutionEvidenceProducer::CurrentAdapter as i32
@@ -198,16 +197,20 @@ async fn authenticated_evidence_is_canonicalized_and_wrong_claim_is_not_appended
 
     let before = events.len();
     let mut wrong = evidence;
-    wrong.exact_claim.as_mut().expect("claim").claim_operation_id = Some(CommandId {
+    wrong
+        .exact_claim
+        .as_mut()
+        .expect("claim")
+        .claim_operation_id = Some(CommandId {
         value: "another-claim".into(),
     });
     assert!(service
         .ingest_observation(authenticated(
             ObservationRequest {
                 authority_domain_id: Some(domain()),
-                observation: Some(
-                    observation_request::Observation::SpawnExecutionEvidence(wrong),
-                ),
+                observation: Some(observation_request::Observation::SpawnExecutionEvidence(
+                    wrong
+                ),),
             },
             &token,
         ))

@@ -6,6 +6,7 @@ publish = false
 
 [features]
 conformance-fault-injection = []
+proptest = []
 
 [dependencies]
 patchbay-contracts = { path = "../contracts/rust" }

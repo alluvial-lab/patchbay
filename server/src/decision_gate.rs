@@ -19,10 +19,11 @@ impl CoreDecisionGate {
 mod tests {
     use super::CoreDecisionGate;
     use patchbay_contracts::patchbay::{
-        CommandId, CommandTransition, FailureCode, GrantRevocationEffect, Operation,
-        OperationState,
+        CommandId, CommandTransition, FailureCode, GrantRevocationEffect, Operation, OperationState,
     };
-    use patchbay_core::acceptance::{apply_grant_revocation_effect, apply_transition, CommandRecord};
+    use patchbay_core::acceptance::{
+        apply_grant_revocation_effect, apply_transition, CommandRecord,
+    };
     use std::sync::{Arc, Mutex};
     use tokio::sync::Barrier;
 
@@ -91,14 +92,24 @@ mod tests {
         adapter.await.expect("adapter task must complete");
         assert_eq!(
             *order.lock().unwrap(),
-            vec!["revocation_plan", "adapter_attempt", "revocation_append", "adapter_append"],
+            vec![
+                "revocation_plan",
+                "adapter_attempt",
+                "revocation_append",
+                "adapter_append"
+            ],
         );
 
         // The LSN sequence produced by that order is replayed through the
         // canonical transition folds: the earlier revocation terminal wins.
-        let command_id = CommandId { value: "race-command".to_owned() };
+        let command_id = CommandId {
+            value: "race-command".to_owned(),
+        };
         let mut record = CommandRecord::new(
-            Operation { command_id: Some(command_id.clone()), ..Operation::default() },
+            Operation {
+                command_id: Some(command_id.clone()),
+                ..Operation::default()
+            },
             1,
         )
         .expect("race command has an id");

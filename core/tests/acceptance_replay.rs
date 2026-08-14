@@ -1,6 +1,6 @@
 use patchbay_contracts::patchbay::{
-    AcceptedOperation, AdapterId, AuthorityDomainId, CommandId, CommandTransition, FailureCode, Observation,
-    Operation, OperationKind, OperationState, RuntimeSessionId, StoredEventKind,
+    AcceptedOperation, AdapterId, AuthorityDomainId, CommandId, CommandTransition, FailureCode,
+    Observation, Operation, OperationKind, OperationState, RuntimeSessionId, StoredEventKind,
     StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use patchbay_core::acceptance::{rebuild_from_log, target_key_for, AcceptanceError, CommandIndex};
@@ -68,8 +68,11 @@ async fn append_operation(storage: &RusqliteStorage, operation: &Operation) -> u
                 kind: StoredEventKind::Operation as i32,
                 payload: AcceptedOperation {
                     operation: Some(operation.clone()),
-                    authorizing_grant_id: Some(patchbay_contracts::patchbay::GrantId { value: "test-grant".to_owned() }),
-                }.encode_to_vec(),
+                    authorizing_grant_id: Some(patchbay_contracts::patchbay::GrantId {
+                        value: "test-grant".to_owned(),
+                    }),
+                }
+                .encode_to_vec(),
             },
         )
         .await

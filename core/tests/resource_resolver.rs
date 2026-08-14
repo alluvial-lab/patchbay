@@ -17,14 +17,22 @@ use patchbay_core::{
 use prost_types::Timestamp;
 
 fn domain() -> AuthorityDomainId {
-    AuthorityDomainId { value: "authority-main".to_owned() }
+    AuthorityDomainId {
+        value: "authority-main".to_owned(),
+    }
 }
 
 fn identity(adapter: &str, kind: &str, id: &str) -> ResourceIdentity {
     ResourceIdentity::new(
-        AdapterId { value: adapter.to_owned() },
-        ResourceKind { value: kind.to_owned() },
-        ResourceId { value: id.to_owned() },
+        AdapterId {
+            value: adapter.to_owned(),
+        },
+        ResourceKind {
+            value: kind.to_owned(),
+        },
+        ResourceId {
+            value: id.to_owned(),
+        },
     )
     .unwrap()
 }
@@ -43,20 +51,25 @@ fn registry(identities: &[ResourceIdentity]) -> ResourceRegistry {
             mutations: vec![ResourceStateMutation {
                 identity: Some(identity.to_scope().resource.unwrap()),
                 from_revision_lsn: None,
-                mutation: Some(resource_state_mutation::Mutation::Upsert(ResourceStateUpsert {
-                    resource_payload: Some(PayloadEnvelope {
-                        payload: vec![1],
-                        content_type: PayloadContentType::Protobuf as i32,
-                        schema_ref: "resource.schema".into(),
-                    }),
-                    projection_payload: Some(PayloadEnvelope {
-                        payload: vec![2],
-                        content_type: PayloadContentType::Protobuf as i32,
-                        schema_ref: "projection.schema".into(),
-                    }),
-                })),
+                mutation: Some(resource_state_mutation::Mutation::Upsert(
+                    ResourceStateUpsert {
+                        resource_payload: Some(PayloadEnvelope {
+                            payload: vec![1],
+                            content_type: PayloadContentType::Protobuf as i32,
+                            schema_ref: "resource.schema".into(),
+                        }),
+                        projection_payload: Some(PayloadEnvelope {
+                            payload: vec![2],
+                            content_type: PayloadContentType::Protobuf as i32,
+                            schema_ref: "projection.schema".into(),
+                        }),
+                    },
+                )),
             }],
-            observed_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+            observed_at: Some(Timestamp {
+                seconds: 1,
+                nanos: 0,
+            }),
         };
         registry
             .observe(&RecordedEvent {
@@ -75,7 +88,13 @@ async fn registered_resource_resolves_by_the_exact_tuple() {
     let targets = TargetRegistry::new(SessionRegistry::new(domain()).unwrap(), resources);
 
     assert_eq!(
-        TargetResolver::resolve(&targets, &domain(), OperationKind::Query, &registered.to_scope()).await,
+        TargetResolver::resolve(
+            &targets,
+            &domain(),
+            OperationKind::Query,
+            &registered.to_scope()
+        )
+        .await,
         Ok(TargetBinding::Resource(registered.clone()))
     );
     for unknown in [
@@ -83,11 +102,14 @@ async fn registered_resource_resolves_by_the_exact_tuple() {
         identity("adapter-a", "window", "shared"),
         identity("adapter-a", "pool", "other"),
     ] {
-        assert!(
-            TargetResolver::resolve(&targets, &domain(), OperationKind::Query, &unknown.to_scope())
-                .await
-                .is_err()
-        );
+        assert!(TargetResolver::resolve(
+            &targets,
+            &domain(),
+            OperationKind::Query,
+            &unknown.to_scope()
+        )
+        .await
+        .is_err());
     }
     assert_eq!(targets.resources().resources().count(), 1);
 }
@@ -103,13 +125,19 @@ async fn malformed_legacy_and_nonordinary_resource_targets_fail_closed() {
         ..TargetScope::default()
     };
     let mut mixed = identity("adapter-a", "pool", "shared").to_scope();
-    mixed.adapter_id = Some(AdapterId { value: "adapter-a".to_owned() });
+    mixed.adapter_id = Some(AdapterId {
+        value: "adapter-a".to_owned(),
+    });
     let authority = TargetScope {
         kind: TargetScopeKind::AuthorityDomain as i32,
         ..TargetScope::default()
     };
     for scope in [legacy, mixed, authority] {
-        assert!(TargetResolver::resolve(&targets, &domain(), OperationKind::Query, &scope).await.is_err());
+        assert!(
+            TargetResolver::resolve(&targets, &domain(), OperationKind::Query, &scope)
+                .await
+                .is_err()
+        );
     }
 }
 
@@ -212,33 +240,37 @@ async fn diagnostics_resolution_returns_an_honest_authority_domain_binding() {
             &domain(),
             OperationKind::Query,
             &scope,
-        ).await,
+        )
+        .await,
         Ok(TargetBinding::AuthorityDomain(domain()))
     );
 
     let resource = identity("adapter-a", "pool", "shared").to_scope();
-    assert!(
-        TargetResolver::resolve(
-            &AuthorityDomainTargetResolver,
-            &domain(),
-            OperationKind::Query,
-            &resource,
-        )
-            .await
-            .is_err()
-    );
+    assert!(TargetResolver::resolve(
+        &AuthorityDomainTargetResolver,
+        &domain(),
+        OperationKind::Query,
+        &resource,
+    )
+    .await
+    .is_err());
 }
 
 #[test]
 fn adapter_routing_uses_only_complete_canonical_resource_identity() {
     let canonical = identity("adapter-a", "pool", "shared").to_scope();
-    assert_eq!(target_adapter_id(&canonical).map(|id| id.value.as_str()), Some("adapter-a"));
+    assert_eq!(
+        target_adapter_id(&canonical).map(|id| id.value.as_str()),
+        Some("adapter-a")
+    );
 
     let mut partial = canonical.clone();
     partial.resource.as_mut().unwrap().resource_kind = None;
     assert_eq!(target_adapter_id(&partial), None);
 
     let mut mixed = canonical;
-    mixed.adapter_id = Some(AdapterId { value: "adapter-b".to_owned() });
+    mixed.adapter_id = Some(AdapterId {
+        value: "adapter-b".to_owned(),
+    });
     assert_eq!(target_adapter_id(&mixed), None);
 }

@@ -176,7 +176,9 @@ impl OperatorSessionRegistry {
         while sessions.contains_key(&value) {
             value = format!("operator-session-{}", random_token());
         }
-        let id = OperatorSessionId { value: value.clone() };
+        let id = OperatorSessionId {
+            value: value.clone(),
+        };
         sessions.insert(
             value,
             OperatorSessionRecord {
@@ -205,9 +207,7 @@ impl OperatorSessionRegistry {
             return false;
         };
         let now = Instant::now();
-        if session.revoked_at.is_some()
-            || now >= session.expires_at
-            || session.binding != *binding
+        if session.revoked_at.is_some() || now >= session.expires_at || session.binding != *binding
         {
             return false;
         }
@@ -225,7 +225,10 @@ impl OperatorSessionRegistry {
         let Some(session) = sessions.get_mut(&session_id.value) else {
             return false;
         };
-        if session.binding != *binding || session.revoked_at.is_some() || Instant::now() >= session.expires_at {
+        if session.binding != *binding
+            || session.revoked_at.is_some()
+            || Instant::now() >= session.expires_at
+        {
             return false;
         }
         session.revoked_at = Some(Instant::now());
@@ -253,11 +256,7 @@ impl OperatorSessionRegistry {
         }
     }
 
-    pub async fn revoke_all_for_actor(
-        &self,
-        actor_id: &ActorId,
-        through: &Generation,
-    ) -> u32 {
+    pub async fn revoke_all_for_actor(&self, actor_id: &ActorId, through: &Generation) -> u32 {
         let _mutation_guard = self.mutation_guard.lock().await;
         let now = Instant::now();
         let mut sessions = self.sessions.lock().await;
@@ -284,9 +283,7 @@ impl OperatorSessionRegistry {
         let mut sessions = self.sessions.lock().await;
         let mut revoked = 0;
         for session in sessions.values_mut() {
-            if binding(&session.binding)
-                && session.revoked_at.is_none()
-                && now < session.expires_at
+            if binding(&session.binding) && session.revoked_at.is_none() && now < session.expires_at
             {
                 session.revoked_at = Some(now);
                 revoked += 1;
@@ -369,15 +366,17 @@ impl OperatorSessionRegistry {
         let sessions = self.sessions.lock().await;
         sessions
             .values()
-            .map(|session| patchbay_contracts::patchbay::OperatorSessionSummary {
-                actor_id: Some(session.binding.actor_id.clone()),
-                endpoint_id: Some(session.binding.endpoint_id.clone()),
-                device_id: Some(session.binding.device_id.clone()),
-                operator_session_generation: Some(session.session_generation),
-                active: session.revoked_at.is_none() && now < session.expires_at,
-                revoked: session.revoked_at.is_some(),
-                expired: now >= session.expires_at,
-            })
+            .map(
+                |session| patchbay_contracts::patchbay::OperatorSessionSummary {
+                    actor_id: Some(session.binding.actor_id.clone()),
+                    endpoint_id: Some(session.binding.endpoint_id.clone()),
+                    device_id: Some(session.binding.device_id.clone()),
+                    operator_session_generation: Some(session.session_generation),
+                    active: session.revoked_at.is_none() && now < session.expires_at,
+                    revoked: session.revoked_at.is_some(),
+                    expired: now >= session.expires_at,
+                },
+            )
             .collect()
     }
 

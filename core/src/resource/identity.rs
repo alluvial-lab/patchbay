@@ -22,7 +22,9 @@ impl ResourceIdentity {
         resource_id: ResourceId,
     ) -> Result<Self, ResourceIdentityError> {
         if adapter_id.value.is_empty() {
-            return Err(ResourceIdentityError::Missing { field: "adapter_id" });
+            return Err(ResourceIdentityError::Missing {
+                field: "adapter_id",
+            });
         }
         if resource_kind.value.is_empty() {
             return Err(ResourceIdentityError::Missing {
@@ -41,14 +43,14 @@ impl ResourceIdentity {
         })
     }
 
-    pub fn try_from_wire(
-        resource: &WireResourceIdentity,
-    ) -> Result<Self, ResourceIdentityError> {
+    pub fn try_from_wire(resource: &WireResourceIdentity) -> Result<Self, ResourceIdentityError> {
         Self::new(
             resource
                 .adapter_id
                 .clone()
-                .ok_or(ResourceIdentityError::Missing { field: "adapter_id" })?,
+                .ok_or(ResourceIdentityError::Missing {
+                    field: "adapter_id",
+                })?,
             resource
                 .resource_kind
                 .clone()
@@ -58,7 +60,9 @@ impl ResourceIdentity {
             resource
                 .resource_id
                 .clone()
-                .ok_or(ResourceIdentityError::Missing { field: "resource_id" })?,
+                .ok_or(ResourceIdentityError::Missing {
+                    field: "resource_id",
+                })?,
         )
     }
 
@@ -79,9 +83,10 @@ impl ResourceIdentity {
             return Err(ResourceIdentityError::MixedTargetFields);
         }
 
-        let resource = scope.resource.as_ref().ok_or(ResourceIdentityError::Missing {
-            field: "resource",
-        })?;
+        let resource = scope
+            .resource
+            .as_ref()
+            .ok_or(ResourceIdentityError::Missing { field: "resource" })?;
         Self::try_from_wire(resource)
     }
 

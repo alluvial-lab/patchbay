@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
     resource_state_mutation, AdapterSnapshotSupport, AuthorityDomainId, PayloadContentType,
-    ResourceFreshnessState, ResourceFreshnessChanged, ResourceStateEvent, ResourceStateMutation,
+    ResourceFreshnessChanged, ResourceFreshnessState, ResourceStateEvent, ResourceStateMutation,
     ResourceStateTombstone, ResourceStateUnknown, ResourceStateUpsert, StoredEventKind,
 };
 use prost::Message;
@@ -10,9 +10,7 @@ use prost_types::Timestamp;
 
 use crate::storage::RecordedEvent;
 
-use super::{
-    ResourceError, ResourceIdentity, ResourceRecord, ResourceViewKey, ResourceViewRecord,
-};
+use super::{ResourceError, ResourceIdentity, ResourceRecord, ResourceViewKey, ResourceViewRecord};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct AppliedPrefix {
@@ -38,7 +36,9 @@ impl AppliedPrefix {
             ));
         }
         if event_lsn == 0 {
-            return Err(ResourceError::CorruptRecord("resource event has zero LSN".into()));
+            return Err(ResourceError::CorruptRecord(
+                "resource event has zero LSN".into(),
+            ));
         }
         if self
             .authority_domain_id
@@ -107,11 +107,12 @@ impl ResourceRegistry {
 
         let (event_domain, event_lsn) = event_identity(event)?;
         let state = if kind == StoredEventKind::ResourceState {
-            let state = ResourceStateEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
-                ResourceError::CorruptRecord(format!(
-                    "cannot decode resource state event at LSN {event_lsn}: {error}"
-                ))
-            })?;
+            let state =
+                ResourceStateEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
+                    ResourceError::CorruptRecord(format!(
+                        "cannot decode resource state event at LSN {event_lsn}: {error}"
+                    ))
+                })?;
             validate_event(&state, event_domain, event_lsn)?;
             Some(state)
         } else {
@@ -201,7 +202,10 @@ impl ResourceRegistry {
         state: &ResourceStateEvent,
         event_lsn: u64,
     ) -> Result<(), ResourceError> {
-        let adapter_id = state.source_adapter_id.as_ref().expect("validated adapter id");
+        let adapter_id = state
+            .source_adapter_id
+            .as_ref()
+            .expect("validated adapter id");
         let generation = state
             .source_adapter_generation
             .expect("validated adapter generation");
@@ -246,9 +250,14 @@ impl ResourceRegistry {
             validate_from_revision(prior.as_ref(), mutation, event_lsn)?;
 
             let next = match mutation.mutation.as_ref().expect("validated mutation") {
-                resource_state_mutation::Mutation::Upsert(upsert) => {
-                    apply_upsert(identity.clone(), prior, upsert, generation, event_lsn, observed_at)?
-                }
+                resource_state_mutation::Mutation::Upsert(upsert) => apply_upsert(
+                    identity.clone(),
+                    prior,
+                    upsert,
+                    generation,
+                    event_lsn,
+                    observed_at,
+                )?,
                 resource_state_mutation::Mutation::Unknown(_unknown) => {
                     apply_unknown(identity.clone(), prior, generation, event_lsn, observed_at)?
                 }
@@ -337,11 +346,12 @@ fn validate_event(
 
     let mut identities = HashSet::new();
     for mutation in &state.mutations {
-        let identity = ResourceIdentity::try_from_wire(mutation.identity.as_ref().ok_or_else(|| {
-            ResourceError::CorruptRecord(format!(
-                "resource mutation at LSN {event_lsn} is missing identity"
-            ))
-        })?)?;
+        let identity =
+            ResourceIdentity::try_from_wire(mutation.identity.as_ref().ok_or_else(|| {
+                ResourceError::CorruptRecord(format!(
+                    "resource mutation at LSN {event_lsn} is missing identity"
+                ))
+            })?)?;
         if identity.adapter_id() != adapter_id {
             return Err(ResourceError::CorruptLog(format!(
                 "resource mutation at LSN {event_lsn} does not match source adapter"

@@ -425,9 +425,7 @@ impl LogicalTargetRegistry {
             let superseded_at_lsn = tombstone
                 .superseded_at_lsn
                 .filter(|lsn| lsn.value > 0 && lsn.value <= checkpoint_lsn)
-                .ok_or_else(|| {
-                    corrupt("tombstone LSN is outside the checkpoint's durable prefix")
-                })?
+                .ok_or_else(|| corrupt("tombstone LSN is outside the checkpoint's durable prefix"))?
                 .value;
             if record
                 .current

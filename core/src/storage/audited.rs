@@ -354,17 +354,29 @@ fn operation_kind_reason(kind: i32) -> String {
         .unwrap_or_else(|| "operation".to_owned())
 }
 
+fn transition_producing_observation(payload: &StoredEventPayload) -> bool {
+    if payload.kind != StoredEventKind::Observation as i32 {
+        return false;
+    }
+    Observation::decode(payload.payload.as_slice())
+        .ok()
+        .and_then(|observation| crate::acceptance::derive_transition(&observation))
+        .is_some()
+}
+
 fn reject_generic_special(payload: &StoredEventPayload) -> Result<(), StorageError> {
     let kind =
         StoredEventKind::try_from(payload.kind).map_err(|_| StorageError::InvalidEventKind)?;
-    if matches!(
-        kind,
-        StoredEventKind::Grant
-            | StoredEventKind::DescendantGrant
-            | StoredEventKind::SpawnSuccessorEvidenceStaged
-            | StoredEventKind::SpawnPromotionCommitted
-            | StoredEventKind::QuarantinedRuntimeEvidence
-    ) {
+    if transition_producing_observation(payload)
+        || matches!(
+            kind,
+            StoredEventKind::Grant
+                | StoredEventKind::DescendantGrant
+                | StoredEventKind::SpawnSuccessorEvidenceStaged
+                | StoredEventKind::SpawnPromotionCommitted
+                | StoredEventKind::QuarantinedRuntimeEvidence
+        )
+    {
         Err(StorageError::UnsupportedOperation)
     } else {
         Ok(())
@@ -395,22 +407,13 @@ where
         authority_domain_id: &AuthorityDomainId,
         payload: StoredEventPayload,
     ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
-        // A generic Observation envelope cannot determine whether a result is
-        // a completion, a stale candidate, or merely evidence. SessionState is
-        // different: it is already a domain-owned lifecycle mutation and must
-        // never bypass the paired writer boundary.
+        // Generic storage cannot validate the durable command pre-state or
+        // reconcile retries for status/Result evidence. Every such shape is
+        // owned by a typed dedicated boundary below. SessionState is already a
+        // domain-owned lifecycle mutation and retains its paired writer path.
+        reject_generic_special(&payload)?;
         let kind =
             StoredEventKind::try_from(payload.kind).map_err(|_| StorageError::InvalidEventKind)?;
-        if matches!(
-            kind,
-            StoredEventKind::Grant
-                | StoredEventKind::DescendantGrant
-                | StoredEventKind::SpawnSuccessorEvidenceStaged
-                | StoredEventKind::SpawnPromotionCommitted
-                | StoredEventKind::QuarantinedRuntimeEvidence
-        ) {
-            return Err(StorageError::UnsupportedOperation);
-        }
         if kind == StoredEventKind::SessionState {
             let mut audit =
                 AuditRecordDraft::new(SystemClock.now(), AuditEventKind::AdapterAttached);
@@ -468,6 +471,7 @@ where
         payload: StoredEventPayload,
         logical_payload: Vec<u8>,
     ) -> Result<DedupOutcome, StorageError> {
+        reject_generic_special(&payload)?;
         let audit = audit_draft_for_source(&payload)?;
         match self
             .inner
@@ -564,6 +568,27 @@ where
                 transition,
                 audit,
             )
+            .await
+    }
+
+    async fn append_spawn_result_deferred_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        observation: Observation,
+        audit: AuditRecordDraft,
+    ) -> Result<AuditedAppend, StorageError> {
+        self.inner
+            .append_spawn_result_deferred_audited(authority_domain_id, observation, audit)
+            .await
+    }
+
+    async fn reconcile_observation_retry(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        observation: Observation,
+    ) -> Result<Option<patchbay_contracts::patchbay::EventId>, StorageError> {
+        self.inner
+            .reconcile_observation_retry(authority_domain_id, observation)
             .await
     }
 

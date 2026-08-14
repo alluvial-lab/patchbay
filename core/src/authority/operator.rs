@@ -117,7 +117,7 @@ impl OperatorRegistry {
             .get(&endpoint_id.value)
             .map(String::as_str)
             == Some(principal_id))
-            .then_some(record)
+        .then_some(record)
     }
 
     #[must_use]
@@ -206,16 +206,16 @@ impl OperatorRegistry {
 
     #[must_use]
     pub fn has_endpoint(&self, endpoint_id: &EndpointId) -> bool {
-        self.principals.values().any(|principal| {
-            principal.endpoint_id.as_ref() == Some(endpoint_id)
-        })
+        self.principals
+            .values()
+            .any(|principal| principal.endpoint_id.as_ref() == Some(endpoint_id))
     }
 
     #[must_use]
     pub fn has_device(&self, device_id: &DeviceId) -> bool {
-        self.principals.values().any(|principal| {
-            principal.device_id.as_ref() == Some(device_id)
-        })
+        self.principals
+            .values()
+            .any(|principal| principal.device_id.as_ref() == Some(device_id))
     }
 
     #[must_use]
@@ -246,7 +246,9 @@ impl OperatorRegistry {
             StoredEventKind::OperatorRecord => self.observe_operator(event),
             StoredEventKind::ControlSurfacePrincipal => self.observe_principal(event),
             StoredEventKind::OperatorSessionRevocation => self.observe_session_revocation(event),
-            StoredEventKind::ControlSurfaceRevocation => self.observe_control_surface_revocation(event),
+            StoredEventKind::ControlSurfaceRevocation => {
+                self.observe_control_surface_revocation(event)
+            }
             StoredEventKind::Operation
             | StoredEventKind::Observation
             | StoredEventKind::Elicitation
@@ -347,7 +349,11 @@ impl OperatorRegistry {
     fn observe_session_revocation(&mut self, event: &RecordedEvent) -> Result<(), OperatorError> {
         let (event_domain, lsn) = event_identity(event)?;
         let revocation = OperatorSessionRevocation::decode(event.payload.payload.as_slice())
-            .map_err(|error| OperatorError::CorruptRecord(format!("cannot decode operator-session revocation at LSN {lsn}: {error}")))?;
+            .map_err(|error| {
+                OperatorError::CorruptRecord(format!(
+                    "cannot decode operator-session revocation at LSN {lsn}: {error}"
+                ))
+            })?;
         validate_session_revocation(&revocation, event_domain)?;
         let actor = revocation
             .operator_actor_id
@@ -366,7 +372,9 @@ impl OperatorRegistry {
             reason_code: revocation.reason_code,
         };
         if let Some(existing) = self.session_revocations.get(&actor.value) {
-            if existing.invalidated_through_generation.value > recorded.invalidated_through_generation.value {
+            if existing.invalidated_through_generation.value
+                > recorded.invalidated_through_generation.value
+            {
                 return Ok(());
             }
             if existing.invalidated_through_generation == recorded.invalidated_through_generation {
@@ -383,7 +391,11 @@ impl OperatorRegistry {
     ) -> Result<(), OperatorError> {
         let (event_domain, lsn) = event_identity(event)?;
         let revocation = ControlSurfaceRevocation::decode(event.payload.payload.as_slice())
-            .map_err(|error| OperatorError::CorruptRecord(format!("cannot decode control-surface revocation at LSN {lsn}: {error}")))?;
+            .map_err(|error| {
+                OperatorError::CorruptRecord(format!(
+                    "cannot decode control-surface revocation at LSN {lsn}: {error}"
+                ))
+            })?;
         validate_control_surface_revocation(&revocation, event_domain)?;
         let target = match revocation.target.clone().expect("validated target") {
             control_surface_revocation::Target::PrincipalId(id) => {
@@ -406,8 +418,12 @@ impl OperatorRegistry {
         };
         let destination = match &target {
             ControlSurfaceRevocationTarget::Principal(id) => self.principal_revocations.get_mut(id),
-            ControlSurfaceRevocationTarget::Endpoint(id) => self.endpoint_revocations.get_mut(&id.value),
-            ControlSurfaceRevocationTarget::Device(id) => self.device_revocations.get_mut(&id.value),
+            ControlSurfaceRevocationTarget::Endpoint(id) => {
+                self.endpoint_revocations.get_mut(&id.value)
+            }
+            ControlSurfaceRevocationTarget::Device(id) => {
+                self.device_revocations.get_mut(&id.value)
+            }
         };
         if let Some(existing) = destination {
             if existing == &recorded {
@@ -469,10 +485,16 @@ pub async fn ingest_control_surface_principal<S: Storage>(
     let endpoint_id = record.endpoint_id.as_ref().expect("validated endpoint");
     let device_id = record.device_id.as_ref().expect("validated device");
     if projection.revocation_for_endpoint(endpoint_id).is_some() {
-        return Err(OperatorError::RevokedIdentity(format!("endpoint {}", endpoint_id.value)));
+        return Err(OperatorError::RevokedIdentity(format!(
+            "endpoint {}",
+            endpoint_id.value
+        )));
     }
     if projection.revocation_for_device(device_id).is_some() {
-        return Err(OperatorError::RevokedIdentity(format!("device {}", device_id.value)));
+        return Err(OperatorError::RevokedIdentity(format!(
+            "device {}",
+            device_id.value
+        )));
     }
     append_and_warm(
         storage,
@@ -493,7 +515,10 @@ pub async fn ingest_operator_session_revocation<S: Storage>(
     revocation: OperatorSessionRevocation,
 ) -> Result<RevocationIngestResult, OperatorError> {
     validate_session_revocation(&revocation, authority_domain_id)?;
-    let actor = revocation.operator_actor_id.as_ref().expect("validated actor");
+    let actor = revocation
+        .operator_actor_id
+        .as_ref()
+        .expect("validated actor");
     let generation = revocation
         .invalidated_through_generation
         .as_ref()
@@ -514,7 +539,8 @@ pub async fn ingest_operator_session_revocation<S: Storage>(
         payload: revocation.encode_to_vec(),
     };
     let audit = session_revocation_audit(&revocation);
-    let result = append_and_warm_audited(storage, projection, authority_domain_id, payload, audit).await?;
+    let result =
+        append_and_warm_audited(storage, projection, authority_domain_id, payload, audit).await?;
     Ok(RevocationIngestResult {
         event_id: result.source_event_id,
         newly_revoked: true,
@@ -530,7 +556,9 @@ pub async fn ingest_control_surface_revocation<S: Storage>(
     validate_control_surface_revocation(&revocation, authority_domain_id)?;
     let target = control_surface_target(&revocation)?;
     match &target {
-        ControlSurfaceRevocationTarget::Principal(id) if projection.principal_record(id).is_none() => {
+        ControlSurfaceRevocationTarget::Principal(id)
+            if projection.principal_record(id).is_none() =>
+        {
             return Err(OperatorError::PrincipalNotFound);
         }
         ControlSurfaceRevocationTarget::Endpoint(id) if !projection.has_endpoint(id) => {
@@ -563,7 +591,8 @@ pub async fn ingest_control_surface_revocation<S: Storage>(
         payload: revocation.encode_to_vec(),
     };
     let audit = control_surface_revocation_audit(&revocation, &target);
-    let result = append_and_warm_audited(storage, projection, authority_domain_id, payload, audit).await?;
+    let result =
+        append_and_warm_audited(storage, projection, authority_domain_id, payload, audit).await?;
     Ok((
         RevocationIngestResult {
             event_id: result.source_event_id,
@@ -581,7 +610,10 @@ async fn append_and_warm<S: Storage>(
 ) -> Result<EventId, OperatorError> {
     let event_id = storage.append(authority_domain_id, payload.clone()).await?;
     validate_event_id(&event_id, authority_domain_id)?;
-    projection.observe(&RecordedEvent { event_id: event_id.clone(), payload })?;
+    projection.observe(&RecordedEvent {
+        event_id: event_id.clone(),
+        payload,
+    })?;
     Ok(event_id)
 }
 
@@ -605,7 +637,10 @@ async fn append_and_warm_audited<S: Storage>(
 
 fn session_revocation_audit(revocation: &OperatorSessionRevocation) -> AuditRecordDraft {
     let mut audit = AuditRecordDraft::new(
-        revocation.occurred_at.unwrap_or(Timestamp { seconds: 0, nanos: 0 }),
+        revocation.occurred_at.unwrap_or(Timestamp {
+            seconds: 0,
+            nanos: 0,
+        }),
         patchbay_contracts::patchbay::AuditEventKind::OperatorSessionRevoked,
     );
     audit.actor_id = revocation.operator_actor_id.clone();
@@ -637,7 +672,10 @@ fn control_surface_revocation_audit(
         }
     };
     let mut audit = AuditRecordDraft::new(
-        revocation.occurred_at.unwrap_or(Timestamp { seconds: 0, nanos: 0 }),
+        revocation.occurred_at.unwrap_or(Timestamp {
+            seconds: 0,
+            nanos: 0,
+        }),
         kind,
     );
     audit.actor_id = revocation
@@ -691,9 +729,16 @@ fn validate_session_revocation(
     revocation: &OperatorSessionRevocation,
     expected_domain: &AuthorityDomainId,
 ) -> Result<(), OperatorError> {
-    validate_domain(revocation.authority_domain_id.as_ref(), expected_domain, "session revocation")?;
+    validate_domain(
+        revocation.authority_domain_id.as_ref(),
+        expected_domain,
+        "session revocation",
+    )?;
     required_non_empty(
-        revocation.operator_actor_id.as_ref().map(|value| value.value.as_str()),
+        revocation
+            .operator_actor_id
+            .as_ref()
+            .map(|value| value.value.as_str()),
         "session revocation operator actor id",
     )?;
     if revocation
@@ -751,7 +796,11 @@ pub fn validate_operator_record(
     record: &OperatorRecord,
     expected_domain: &AuthorityDomainId,
 ) -> Result<(), OperatorError> {
-    validate_domain(record.authority_domain_id.as_ref(), expected_domain, "operator record")?;
+    validate_domain(
+        record.authority_domain_id.as_ref(),
+        expected_domain,
+        "operator record",
+    )?;
     required_non_empty(
         record.actor_id.as_ref().map(|value| value.value.as_str()),
         "operator actor id",
@@ -769,14 +818,24 @@ fn validate_principal_record(
     record: &ControlSurfacePrincipalRecord,
     expected_domain: &AuthorityDomainId,
 ) -> Result<(), OperatorError> {
-    validate_domain(record.authority_domain_id.as_ref(), expected_domain, "principal record")?;
+    validate_domain(
+        record.authority_domain_id.as_ref(),
+        expected_domain,
+        "principal record",
+    )?;
     required_non_empty(Some(record.principal_id.as_str()), "principal id")?;
     required_non_empty(
-        record.operator_actor_id.as_ref().map(|value| value.value.as_str()),
+        record
+            .operator_actor_id
+            .as_ref()
+            .map(|value| value.value.as_str()),
         "principal operator actor id",
     )?;
     required_non_empty(
-        record.endpoint_id.as_ref().map(|value| value.value.as_str()),
+        record
+            .endpoint_id
+            .as_ref()
+            .map(|value| value.value.as_str()),
         "principal endpoint id",
     )?;
     required_non_empty(
@@ -888,7 +947,9 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     }
     left.iter()
         .zip(right)
-        .fold(0_u8, |difference, (left, right)| difference | (left ^ right))
+        .fold(0_u8, |difference, (left, right)| {
+            difference | (left ^ right)
+        })
         == 0
 }
 
@@ -933,9 +994,7 @@ pub async fn rebuild_operator_registry<S: Storage>(
     let mut previous_lsn = 0;
     for event in &events {
         let validated = validate_next_replay_event(authority_domain_id, previous_lsn, event)
-            .map_err(|error| {
-                error.map(OperatorError::CorruptRecord, OperatorError::CorruptLog)
-            })?;
+            .map_err(|error| error.map(OperatorError::CorruptRecord, OperatorError::CorruptLog))?;
         registry.observe(event)?;
         previous_lsn = validated.lsn;
     }

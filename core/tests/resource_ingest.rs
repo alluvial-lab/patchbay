@@ -1,11 +1,11 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use patchbay_contracts::patchbay::{
-    resource_report_mutation, AdapterId, AdapterSnapshotSupport, AuditEventKind,
-    AuthorityDomainId, EventId, Generation, IdempotencyKey, Lsn, PayloadContentType,
-    PayloadEnvelope, ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind,
-    ResourceReportMutation, ResourceStateTombstone, ResourceStateUnknown, ResourceStateUpsert,
-    ResourceViewReport, StoredEventKind, StoredEventPayload,
+    resource_report_mutation, AdapterId, AdapterSnapshotSupport, AuditEventKind, AuthorityDomainId,
+    EventId, Generation, IdempotencyKey, Lsn, PayloadContentType, PayloadEnvelope,
+    ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind, ResourceReportMutation,
+    ResourceStateTombstone, ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport,
+    StoredEventKind, StoredEventPayload,
 };
 use patchbay_core::{
     resource::{
@@ -103,7 +103,10 @@ async fn unknown_survives_omission_generation_disconnect_tombstone_and_replay() 
     let identity = domain_identity("mystery");
     let initial_revision = registry.get(&identity).unwrap().revision_lsn;
 
-    for tier in [AdapterSnapshotSupport::Partial, AdapterSnapshotSupport::None] {
+    for tier in [
+        AdapterSnapshotSupport::Partial,
+        AdapterSnapshotSupport::None,
+    ] {
         ingest_resource_report(
             &storage,
             &mut registry,
@@ -144,9 +147,14 @@ async fn unknown_survives_omission_generation_disconnect_tombstone_and_replay() 
     assert!(adapter_stale_event(
         &registry,
         &domain(),
-        &AdapterId { value: "adapter-a".into() },
+        &AdapterId {
+            value: "adapter-a".into()
+        },
         Generation { value: 2 },
-        Timestamp { seconds: 200, nanos: 0 },
+        Timestamp {
+            seconds: 200,
+            nanos: 0
+        },
     )
     .unwrap()
     .is_none());
@@ -171,7 +179,10 @@ async fn unknown_survives_omission_generation_disconnect_tombstone_and_replay() 
 
     let replayed = rebuild_from_log(&storage, &domain()).await.unwrap();
     assert_eq!(replayed, registry);
-    assert_eq!(replayed.get(&identity).unwrap().freshness, ResourceFreshnessState::Unknown);
+    assert_eq!(
+        replayed.get(&identity).unwrap().freshness,
+        ResourceFreshnessState::Unknown
+    );
 }
 
 #[tokio::test]
@@ -190,7 +201,10 @@ async fn delta_omission_is_inert_and_replacement_is_one_atomic_event() {
     )
     .await
     .unwrap();
-    let untouched_revision = registry.get(&domain_identity("untouched")).unwrap().revision_lsn;
+    let untouched_revision = registry
+        .get(&domain_identity("untouched"))
+        .unwrap()
+        .revision_lsn;
 
     let replacement = ResourceReportMutation {
         identity: Some(wire_identity("old")),
@@ -216,11 +230,18 @@ async fn delta_omission_is_inert_and_replacement_is_one_atomic_event() {
     assert!(!registry.contains(&domain_identity("old")));
     assert!(registry.contains(&domain_identity("new")));
     assert_eq!(
-        registry.get(&domain_identity("old")).unwrap().replaced_by.as_ref(),
+        registry
+            .get(&domain_identity("old"))
+            .unwrap()
+            .replaced_by
+            .as_ref(),
         Some(&domain_identity("new"))
     );
     assert_eq!(
-        registry.get(&domain_identity("untouched")).unwrap().revision_lsn,
+        registry
+            .get(&domain_identity("untouched"))
+            .unwrap()
+            .revision_lsn,
         untouched_revision,
         "delta omission must not mutate another identity"
     );
@@ -318,9 +339,7 @@ impl Storage for InterleavingAuditStorage {
                     AuditEventKind::AdapterDiagnosticReported,
                 );
                 audit.reason_code = "interleaved_audit".into();
-                self.inner
-                    .append_audit(authority_domain_id, audit)
-                    .await?;
+                self.inner.append_audit(authority_domain_id, audit).await?;
             }
         }
         self.inner.append(authority_domain_id, payload).await
@@ -333,7 +352,9 @@ impl Storage for InterleavingAuditStorage {
         target: &TargetKey,
         payload: StoredEventPayload,
     ) -> Result<DedupOutcome, StorageError> {
-        self.inner.append_dedup(authority_domain_id, key, target, payload).await
+        self.inner
+            .append_dedup(authority_domain_id, key, target, payload)
+            .await
     }
 
     async fn read_after(
@@ -350,10 +371,15 @@ impl Storage for InterleavingAuditStorage {
         cursor: Lsn,
         as_of_lsn: Lsn,
     ) -> Result<Vec<RecordedEvent>, StorageError> {
-        if self.omit_committed_suffix_once.swap(false, Ordering::SeqCst) {
+        if self
+            .omit_committed_suffix_once
+            .swap(false, Ordering::SeqCst)
+        {
             return Ok(Vec::new());
         }
-        self.inner.read_through(authority_domain_id, cursor, as_of_lsn).await
+        self.inner
+            .read_through(authority_domain_id, cursor, as_of_lsn)
+            .await
     }
 
     async fn write_snapshot(
@@ -362,7 +388,9 @@ impl Storage for InterleavingAuditStorage {
         snapshot_lsn: Lsn,
         snapshot_payload: Vec<u8>,
     ) -> Result<(), StorageError> {
-        self.inner.write_snapshot(authority_domain_id, snapshot_lsn, snapshot_payload).await
+        self.inner
+            .write_snapshot(authority_domain_id, snapshot_lsn, snapshot_payload)
+            .await
     }
 
     async fn load_latest_snapshot(
@@ -370,7 +398,9 @@ impl Storage for InterleavingAuditStorage {
         authority_domain_id: &AuthorityDomainId,
         at_or_before: Option<Lsn>,
     ) -> Result<Option<StoredSnapshot>, StorageError> {
-        self.inner.load_latest_snapshot(authority_domain_id, at_or_before).await
+        self.inner
+            .load_latest_snapshot(authority_domain_id, at_or_before)
+            .await
     }
 }
 
@@ -390,7 +420,9 @@ async fn report_ingest_folds_an_interleaved_ungated_audit_and_returns_committed_
         ),
     )
     .await
-    .expect("a committed report must not become Internal/retry-ambiguous because an audit interleaved");
+    .expect(
+        "a committed report must not become Internal/retry-ambiguous because an audit interleaved",
+    );
 
     assert_eq!(result.event_id.lsn.as_ref().map(|lsn| lsn.value), Some(2));
     assert_eq!(
@@ -398,13 +430,25 @@ async fn report_ingest_folds_an_interleaved_ungated_audit_and_returns_committed_
         1,
         "success must not require a duplicate report retry",
     );
-    let events = storage.read_after(&domain(), Lsn { value: 0 }).await.unwrap();
+    let events = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap();
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].payload.kind, StoredEventKind::AuditRecord as i32);
     assert_eq!(events[1].event_id, result.event_id);
-    assert_eq!(events[1].payload.kind, StoredEventKind::ResourceState as i32);
-    assert_eq!(registry.get(&domain_identity("one")).unwrap().revision_lsn, 2);
-    assert_eq!(registry, rebuild_from_log(&storage, &domain()).await.unwrap());
+    assert_eq!(
+        events[1].payload.kind,
+        StoredEventKind::ResourceState as i32
+    );
+    assert_eq!(
+        registry.get(&domain_identity("one")).unwrap().revision_lsn,
+        2
+    );
+    assert_eq!(
+        registry,
+        rebuild_from_log(&storage, &domain()).await.unwrap()
+    );
 }
 
 #[tokio::test]
@@ -425,11 +469,19 @@ async fn report_ingest_fails_closed_when_the_committed_suffix_is_missing() {
     .await
     .unwrap_err();
 
-    assert!(error.to_string().contains("does not end with the exact committed report"));
+    assert!(error
+        .to_string()
+        .contains("does not end with the exact committed report"));
     assert_eq!(storage.resource_append_attempts.load(Ordering::SeqCst), 1);
     let replayed = rebuild_from_log(&storage, &domain()).await.unwrap();
-    assert_eq!(registry, replayed, "failure recovery must reinstall durable authority");
-    assert_eq!(registry.get(&domain_identity("one")).unwrap().revision_lsn, 2);
+    assert_eq!(
+        registry, replayed,
+        "failure recovery must reinstall durable authority"
+    );
+    assert_eq!(
+        registry.get(&domain_identity("one")).unwrap().revision_lsn,
+        2
+    );
 }
 
 #[tokio::test]
@@ -515,7 +567,9 @@ async fn authoritative_snapshot_unknown_rejects_before_append_or_projection() {
     )
     .await
     .unwrap_err();
-    assert!(error.to_string().contains("authoritative snapshot cannot list"));
+    assert!(error
+        .to_string()
+        .contains("authoritative snapshot cannot list"));
     assert_eq!(registry, before);
     assert!(storage
         .read_after(&domain(), patchbay_contracts::patchbay::Lsn { value: 0 })
@@ -534,7 +588,9 @@ async fn malformed_none_and_duplicate_reports_reject_before_append() {
         AdapterSnapshotSupport::None,
         vec![upsert("one")],
     );
-    assert!(ingest_resource_report(&storage, &mut registry, bad_none).await.is_err());
+    assert!(ingest_resource_report(&storage, &mut registry, bad_none)
+        .await
+        .is_err());
 
     let mut duplicate = report(
         1,
@@ -543,7 +599,9 @@ async fn malformed_none_and_duplicate_reports_reject_before_append() {
         vec![upsert("one"), upsert("one")],
     );
     duplicate.views.push(duplicate.views[0].clone());
-    assert!(ingest_resource_report(&storage, &mut registry, duplicate).await.is_err());
+    assert!(ingest_resource_report(&storage, &mut registry, duplicate)
+        .await
+        .is_err());
     assert_eq!(registry.resources().count(), 0);
 }
 
@@ -565,7 +623,9 @@ fn report_for_kind(
 ) -> ValidatedResourceReport {
     ValidatedResourceReport {
         authority_domain_id: domain(),
-        adapter_id: AdapterId { value: "adapter-a".into() },
+        adapter_id: AdapterId {
+            value: "adapter-a".into(),
+        },
         adapter_generation: Generation { value: generation },
         mode,
         views: vec![ResourceViewReport {
@@ -573,7 +633,10 @@ fn report_for_kind(
             completeness: tier as i32,
             mutations,
         }],
-        observed_at: Timestamp { seconds: 100 + generation as i64, nanos: 0 },
+        observed_at: Timestamp {
+            seconds: 100 + generation as i64,
+            nanos: 0,
+        },
     }
 }
 
@@ -589,10 +652,12 @@ fn unknown(id: &str) -> ResourceReportMutation {
 fn upsert(id: &str) -> ResourceReportMutation {
     ResourceReportMutation {
         identity: Some(wire_identity(id)),
-        mutation: Some(resource_report_mutation::Mutation::Upsert(ResourceStateUpsert {
-            resource_payload: Some(envelope("resource.schema")),
-            projection_payload: Some(envelope("projection.schema")),
-        })),
+        mutation: Some(resource_report_mutation::Mutation::Upsert(
+            ResourceStateUpsert {
+                resource_payload: Some(envelope("resource.schema")),
+                projection_payload: Some(envelope("projection.schema")),
+            },
+        )),
     }
 }
 
@@ -605,7 +670,9 @@ fn envelope(schema: &str) -> PayloadEnvelope {
 }
 
 fn domain() -> AuthorityDomainId {
-    AuthorityDomainId { value: "authority-main".into() }
+    AuthorityDomainId {
+        value: "authority-main".into(),
+    }
 }
 
 fn wire_identity(id: &str) -> ResourceIdentity {
@@ -614,7 +681,9 @@ fn wire_identity(id: &str) -> ResourceIdentity {
 
 fn wire_identity_for_kind(kind: &str, id: &str) -> ResourceIdentity {
     ResourceIdentity {
-        adapter_id: Some(AdapterId { value: "adapter-a".into() }),
+        adapter_id: Some(AdapterId {
+            value: "adapter-a".into(),
+        }),
         resource_kind: Some(ResourceKind { value: kind.into() }),
         resource_id: Some(ResourceId { value: id.into() }),
     }
@@ -625,6 +694,8 @@ fn domain_identity(id: &str) -> patchbay_core::resource::ResourceIdentity {
 }
 
 fn freshness(registry: &ResourceRegistry, id: &str) -> String {
-    format!("{:?}", registry.get(&domain_identity(id)).unwrap().freshness)
+    format!(
+        "{:?}",
+        registry.get(&domain_identity(id)).unwrap().freshness
+    )
 }
-

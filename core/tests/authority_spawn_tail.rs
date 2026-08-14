@@ -385,8 +385,7 @@ fn byte_identical_legacy_descendant_redelivery_is_inert_but_changed_bytes_corrup
             audit_event(6, event_id(4)),
         ],
     );
-    let Some(SpawnCompletionAction::IssueDescendantGrant(issuance)) =
-        tail.next_action().unwrap()
+    let Some(SpawnCompletionAction::IssueDescendantGrant(issuance)) = tail.next_action().unwrap()
     else {
         panic!("expected grant action");
     };
@@ -411,7 +410,10 @@ fn byte_identical_legacy_descendant_redelivery_is_inert_but_changed_bytes_corrup
     // Append a valid unknown protobuf field. The decoded grant is unchanged,
     // so this catches implementations that compare only semantic fields rather
     // than the canonical stored source envelope.
-    changed_bytes.payload.payload.extend_from_slice(&[0xf8, 0x07, 0x01]);
+    changed_bytes
+        .payload
+        .payload
+        .extend_from_slice(&[0xf8, 0x07, 0x01]);
     assert!(matches!(
         tail.observe(&changed_bytes),
         Err(AuthorityError::CorruptLog(_))

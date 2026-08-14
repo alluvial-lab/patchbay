@@ -8,10 +8,10 @@
 use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, AcceptedOperation, ActorId, ApprovalDecision, ApprovalResponsePayload, AuthorityDomainId,
-    CommandId, CommandTransition, Elicitation, ElicitationId, ElicitationState, Lsn, Operation,
-    OperationKind, OperationState, PayloadContentType, ResponseContract, StoredEventKind,
-    TypedCorrelation,
+    typed_correlation, AcceptedOperation, ActorId, ApprovalDecision, ApprovalResponsePayload,
+    AuthorityDomainId, CommandId, CommandTransition, Elicitation, ElicitationId, ElicitationState,
+    Lsn, Operation, OperationKind, OperationState, PayloadContentType, ResponseContract,
+    StoredEventKind, TypedCorrelation,
 };
 use prost::Message;
 
@@ -205,11 +205,12 @@ impl ElicitationSlotLayer {
     /// later correlated transitions can be confirmed as response Operations.
     fn observe_operation(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
         let (_, event_lsn) = event_identity(event)?;
-        let accepted = AcceptedOperation::decode(event.payload.payload.as_slice()).map_err(|error| {
-            AcceptanceError::CorruptRecord(format!(
-                "cannot decode accepted operation at LSN {event_lsn}: {error}"
-            ))
-        })?;
+        let accepted =
+            AcceptedOperation::decode(event.payload.payload.as_slice()).map_err(|error| {
+                AcceptanceError::CorruptRecord(format!(
+                    "cannot decode accepted operation at LSN {event_lsn}: {error}"
+                ))
+            })?;
         let operation = accepted.operation.ok_or_else(|| {
             AcceptanceError::CorruptRecord(format!(
                 "accepted operation at LSN {event_lsn} has no operation"
@@ -388,10 +389,7 @@ pub async fn rebuild_slots_from_log<S: Storage>(
     for event in events {
         let validated = validate_next_replay_event(authority_domain_id, previous_lsn, &event)
             .map_err(|error| {
-                error.map(
-                    AcceptanceError::CorruptRecord,
-                    AcceptanceError::CorruptLog,
-                )
+                error.map(AcceptanceError::CorruptRecord, AcceptanceError::CorruptLog)
             })?;
         layer.observe(&event)?;
         previous_lsn = validated.lsn;

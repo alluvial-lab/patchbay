@@ -11,16 +11,24 @@ use patchbay_core::{
 use prost::Message;
 
 fn domain() -> AuthorityDomainId {
-    AuthorityDomainId { value: "authority-main".to_owned() }
+    AuthorityDomainId {
+        value: "authority-main".to_owned(),
+    }
 }
 
 fn resource_scope(adapter: &str, kind: Option<&str>, id: &str) -> TargetScope {
     TargetScope {
         kind: TargetScopeKind::Resource as i32,
         resource: Some(ResourceIdentity {
-            adapter_id: Some(AdapterId { value: adapter.to_owned() }),
-            resource_id: Some(ResourceId { value: id.to_owned() }),
-            resource_kind: kind.map(|value| ResourceKind { value: value.to_owned() }),
+            adapter_id: Some(AdapterId {
+                value: adapter.to_owned(),
+            }),
+            resource_id: Some(ResourceId {
+                value: id.to_owned(),
+            }),
+            resource_kind: kind.map(|value| ResourceKind {
+                value: value.to_owned(),
+            }),
         }),
         ..TargetScope::default()
     }
@@ -32,12 +40,22 @@ fn recorded(lsn: u64, kind: StoredEventKind, payload: Vec<u8>) -> RecordedEvent 
             authority_domain_id: Some(domain()),
             lsn: Some(patchbay_contracts::patchbay::Lsn { value: lsn }),
         },
-        payload: StoredEventPayload { kind: kind as i32, payload },
+        payload: StoredEventPayload {
+            kind: kind as i32,
+            payload,
+        },
     }
 }
 
-fn running_command(index: &mut CommandIndex, command: &str, scope: TargetScope, next_lsn: &mut u64) {
-    let command_id = CommandId { value: command.to_owned() };
+fn running_command(
+    index: &mut CommandIndex,
+    command: &str,
+    scope: TargetScope,
+    next_lsn: &mut u64,
+) {
+    let command_id = CommandId {
+        value: command.to_owned(),
+    };
     let operation = Operation {
         command_id: Some(command_id.clone()),
         authority_domain_id: Some(domain()),
@@ -52,7 +70,9 @@ fn running_command(index: &mut CommandIndex, command: &str, scope: TargetScope, 
             StoredEventKind::Operation,
             AcceptedOperation {
                 operation: Some(operation),
-                authorizing_grant_id: Some(GrantId { value: "grant".to_owned() }),
+                authorizing_grant_id: Some(GrantId {
+                    value: "grant".to_owned(),
+                }),
             }
             .encode_to_vec(),
         ))
@@ -108,7 +128,9 @@ async fn disconnect_fails_only_running_commands_with_a_canonical_matching_resour
         &storage,
         &index,
         &domain(),
-        &AdapterId { value: "adapter-a".to_owned() },
+        &AdapterId {
+            value: "adapter-a".to_owned(),
+        },
     )
     .await
     .unwrap();
@@ -123,10 +145,23 @@ async fn disconnect_fails_only_running_commands_with_a_canonical_matching_resour
         .find(|event| event.payload.kind == StoredEventKind::CommandTransition as i32)
         .map(|event| CommandTransition::decode(event.payload.payload.as_slice()).unwrap())
         .expect("one failure transition");
-    assert_eq!(transition.command_id, Some(CommandId { value: "matching".to_owned() }));
+    assert_eq!(
+        transition.command_id,
+        Some(CommandId {
+            value: "matching".to_owned()
+        })
+    );
     assert_eq!(transition.from_state, OperationState::Running as i32);
     assert_eq!(transition.to_state, OperationState::Failed as i32);
-    assert_eq!(transition.failure_code, FailureCode::ExecutionOutcomeUnknown as i32);
-    assert_eq!(events.iter().filter(|event| event.payload.kind == StoredEventKind::CommandTransition as i32).count(), 1);
-
+    assert_eq!(
+        transition.failure_code,
+        FailureCode::ExecutionOutcomeUnknown as i32
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.payload.kind == StoredEventKind::CommandTransition as i32)
+            .count(),
+        1
+    );
 }

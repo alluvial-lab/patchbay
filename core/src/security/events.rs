@@ -1,8 +1,8 @@
 //! Constructors for the schema-owned security posture event family.
 
 use patchbay_contracts::patchbay::{
-    security_lockdown_event, AuthorityDomainId, SecurityLockdownEntered,
-    SecurityLockdownExited, StoredEventKind, StoredEventPayload,
+    security_lockdown_event, AuthorityDomainId, SecurityLockdownEntered, SecurityLockdownExited,
+    StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 

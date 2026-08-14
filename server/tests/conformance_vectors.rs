@@ -3,26 +3,29 @@ use std::{collections::BTreeMap, env, fs, path::PathBuf, sync::Arc};
 
 use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, AcceptedOperation,
-    ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRegistration, AuditEventKind,
-    AuditRecord,
-    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuthorityDomainId, CommandId,
-    DeviceId, EndpointId, FailureCode, Generation, Grant, GrantId, GrantProvenance,
-    GrantRevocationPolicy, LoadSnapshotRequest, Lsn, Observation, ObservationKind,
+    ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRegistration,
+    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind, AuditRecord,
+    AuthorityDomainId, CommandId, DeviceId, EndpointId, FailureCode, Generation, Grant, GrantId,
+    GrantProvenance, GrantRevocationPolicy, LoadSnapshotRequest, Lsn, Observation, ObservationKind,
     ObservationRequest, Operation, OperationKind, OperationState, OperatorRecord,
     PayloadContentType, PayloadEnvelope, PrincipalEnrollment, ReceiveRequest, ResourceCapability,
     ResourceId, ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
-    ResourceReportMutation, ResourceSnapshot, ResourceSnapshotReport, ResourceStateUnknown, ResourceStateUpsert,
-    ResourceViewReport, RuntimeSessionId, SchemaDescriptor, SessionActivityState,
-    SessionConnectivityState, SessionRegistered, SessionReport, SessionReportSourceCursor,
-    SessionSnapshot, SessionState, SnapshotViewKind,
-    StoredEventKind, StoredEventPayload, StoredSessionCheckpoint, SubmissionOutcome, SubmitRequest, TargetScope,
+    ResourceReportMutation, ResourceSnapshot, ResourceSnapshotReport, ResourceStateUnknown,
+    ResourceStateUpsert, ResourceViewReport, RuntimeSessionId, SchemaDescriptor,
+    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionReport,
+    SessionReportSourceCursor, SessionSnapshot, SessionState, SnapshotViewKind, StoredEventKind,
+    StoredEventPayload, StoredSessionCheckpoint, SubmissionOutcome, SubmitRequest, TargetScope,
     TargetScopeKind, TimeWindow, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
     authority::events as authority_events,
-    resource::{ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport},
+    resource::{
+        ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport,
+    },
     session::{self, events as session_events},
-    storage::{audit_draft_for_source, AuditedStorage, CoreGenerationStore, RusqliteStorage, Storage},
+    storage::{
+        audit_draft_for_source, AuditedStorage, CoreGenerationStore, RusqliteStorage, Storage,
+    },
     time::TestClock,
 };
 use patchbay_core_server::{
@@ -30,8 +33,13 @@ use patchbay_core_server::{
         AdapterControlServiceImpl, AdapterEvidenceVerifier, ADAPTER_ATTACHMENT_TOKEN_HEADER,
         ADAPTER_EVIDENCE_HEADER, ADAPTER_ID_HEADER,
     },
-    issuer::{OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER},
-    rpc::{adapter_control_service_server::AdapterControlService, control_service_server::ControlService},
+    issuer::{
+        OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER,
+    },
+    rpc::{
+        adapter_control_service_server::AdapterControlService,
+        control_service_server::ControlService,
+    },
     service::ControlServiceImpl,
     snapshot::{decode_compatible_session_checkpoint, encode_stored_session_checkpoint},
     state::ProjectionState,
@@ -69,47 +77,79 @@ struct ConformanceVector {
 }
 
 #[derive(Debug, Deserialize)]
-struct ImplementationCheck { runner: String, case: String }
+struct ImplementationCheck {
+    runner: String,
+    case: String,
+}
 #[derive(Debug, Deserialize)]
-struct MutationWitness { mutation_id: String, runner: String }
+struct MutationWitness {
+    mutation_id: String,
+    runner: String,
+}
 #[derive(Debug, Deserialize)]
-struct RequestedCheck { vector_id: String, case: String }
+struct RequestedCheck {
+    vector_id: String,
+    case: String,
+}
 #[derive(Debug, Deserialize)]
-struct RequestedMutation { vector_id: String, mutation_id: String }
+struct RequestedMutation {
+    vector_id: String,
+    mutation_id: String,
+}
 
 fn vectors() -> BTreeMap<String, ConformanceVector> {
     let vector_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/vectors");
     let mut files = fs::read_dir(vector_dir)
         .expect("conformance vector directory must be readable")
-        .map(|entry| entry.expect("vector directory entry must be readable").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
+        .map(|entry| {
+            entry
+                .expect("vector directory entry must be readable")
+                .path()
+        })
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
         .collect::<Vec<_>>();
     files.sort();
-    files.into_iter().map(|path| {
-        let vector: ConformanceVector = serde_json::from_slice(&fs::read(&path).expect("conformance vector must be readable"))
+    files
+        .into_iter()
+        .map(|path| {
+            let vector: ConformanceVector = serde_json::from_slice(
+                &fs::read(&path).expect("conformance vector must be readable"),
+            )
             .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        (vector.vector_id.clone(), vector)
-    }).collect()
+            (vector.vector_id.clone(), vector)
+        })
+        .collect()
 }
 
 fn requests() -> Vec<RequestedCheck> {
-    env::var("PATCHBAY_CONFORMANCE_REQUESTS").ok()
+    env::var("PATCHBAY_CONFORMANCE_REQUESTS")
+        .ok()
         .map(|raw| serde_json::from_str(&raw).expect("requested checks must be valid JSON"))
         .unwrap_or_default()
 }
 
 fn mutation_requests() -> Vec<RequestedMutation> {
-    env::var("PATCHBAY_CONFORMANCE_MUTATIONS").ok()
+    env::var("PATCHBAY_CONFORMANCE_MUTATIONS")
+        .ok()
         .map(|raw| serde_json::from_str(&raw).expect("requested mutations must be valid JSON"))
         .unwrap_or_default()
 }
 
 fn string<'a>(value: &'a Value, pointer: &str) -> Result<&'a str, String> {
-    value.pointer(pointer).and_then(Value::as_str).ok_or_else(|| format!("missing string field {pointer}"))
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("missing string field {pointer}"))
 }
 
 fn boolean(value: &Value, pointer: &str) -> Result<bool, String> {
-    value.pointer(pointer).and_then(Value::as_bool).ok_or_else(|| format!("missing boolean field {pointer}"))
+    value
+        .pointer(pointer)
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format!("missing boolean field {pointer}"))
 }
 
 fn unsigned(value: &Value, pointer: &str) -> Result<u64, String> {
@@ -120,19 +160,46 @@ fn unsigned(value: &Value, pointer: &str) -> Result<u64, String> {
 }
 
 fn tuple(value: &Value, pointer: &str) -> Result<ResourceIdentity, String> {
-    let values = value.pointer(pointer).and_then(Value::as_array).ok_or_else(|| format!("missing identity tuple {pointer}"))?;
-    if values.len() != 3 { return Err(format!("identity tuple {pointer} must have three fields")); }
+    let values = value
+        .pointer(pointer)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("missing identity tuple {pointer}"))?;
+    if values.len() != 3 {
+        return Err(format!("identity tuple {pointer} must have three fields"));
+    }
     Ok(ResourceIdentity {
-        adapter_id: Some(AdapterId { value: values[0].as_str().ok_or("adapter id must be string")?.to_owned() }),
-        resource_kind: Some(ResourceKind { value: values[1].as_str().ok_or("resource kind must be string")?.to_owned() }),
-        resource_id: Some(ResourceId { value: values[2].as_str().ok_or("resource id must be string")?.to_owned() }),
+        adapter_id: Some(AdapterId {
+            value: values[0]
+                .as_str()
+                .ok_or("adapter id must be string")?
+                .to_owned(),
+        }),
+        resource_kind: Some(ResourceKind {
+            value: values[1]
+                .as_str()
+                .ok_or("resource kind must be string")?
+                .to_owned(),
+        }),
+        resource_id: Some(ResourceId {
+            value: values[2]
+                .as_str()
+                .ok_or("resource id must be string")?
+                .to_owned(),
+        }),
     })
 }
 
-fn registration(domain: &AuthorityDomainId, adapter_id: &AdapterId, kind: &ResourceKind, generation: u64) -> AdapterRegistration {
+fn registration(
+    domain: &AuthorityDomainId,
+    adapter_id: &AdapterId,
+    kind: &ResourceKind,
+    generation: u64,
+) -> AdapterRegistration {
     AdapterRegistration {
         adapter_id: Some(adapter_id.clone()),
-        endpoint_id: Some(EndpointId { value: format!("{}-endpoint", adapter_id.value) }),
+        endpoint_id: Some(EndpointId {
+            value: format!("{}-endpoint", adapter_id.value),
+        }),
         authority_domain_id: Some(domain.clone()),
         adapter_generation: Some(Generation { value: generation }),
         capability: Some(AdapterCapability {
@@ -184,20 +251,45 @@ fn session_registration(
 }
 
 fn attachment_token<T>(response: &Response<T>) -> Result<String, String> {
-    response.metadata().get(ADAPTER_ATTACHMENT_TOKEN_HEADER)
+    response
+        .metadata()
+        .get(ADAPTER_ATTACHMENT_TOKEN_HEADER)
         .ok_or("attach response omitted attachment token")?
-        .to_str().map(str::to_owned).map_err(|error| error.to_string())
+        .to_str()
+        .map(str::to_owned)
+        .map_err(|error| error.to_string())
 }
 
 fn authenticated<T>(message: T, adapter_id: &str, token: &str) -> Result<Request<T>, String> {
     let mut request = Request::new(message);
-    request.metadata_mut().insert(ADAPTER_ID_HEADER, adapter_id.parse().map_err(|error| format!("bad adapter metadata: {error}"))?);
-    request.metadata_mut().insert(ADAPTER_EVIDENCE_HEADER, EVIDENCE.parse().map_err(|error| format!("bad evidence metadata: {error}"))?);
-    request.metadata_mut().insert(ADAPTER_ATTACHMENT_TOKEN_HEADER, token.parse().map_err(|error| format!("bad token metadata: {error}"))?);
+    request.metadata_mut().insert(
+        ADAPTER_ID_HEADER,
+        adapter_id
+            .parse()
+            .map_err(|error| format!("bad adapter metadata: {error}"))?,
+    );
+    request.metadata_mut().insert(
+        ADAPTER_EVIDENCE_HEADER,
+        EVIDENCE
+            .parse()
+            .map_err(|error| format!("bad evidence metadata: {error}"))?,
+    );
+    request.metadata_mut().insert(
+        ADAPTER_ATTACHMENT_TOKEN_HEADER,
+        token
+            .parse()
+            .map_err(|error| format!("bad token metadata: {error}"))?,
+    );
     Ok(request)
 }
 
-fn authenticated_control<T>(message: T, actor_id: &str, session_id: &str, principal_id: &str, principal_secret: &str) -> Result<Request<T>, String> {
+fn authenticated_control<T>(
+    message: T,
+    actor_id: &str,
+    session_id: &str,
+    principal_id: &str,
+    principal_secret: &str,
+) -> Result<Request<T>, String> {
     let mut request = Request::new(message);
     for (header, value) in [
         (OPERATOR_SESSION_HEADER, session_id),
@@ -205,7 +297,12 @@ fn authenticated_control<T>(message: T, actor_id: &str, session_id: &str, princi
         (PRINCIPAL_ID_HEADER, principal_id),
         (PRINCIPAL_SECRET_HEADER, principal_secret),
     ] {
-        request.metadata_mut().insert(header, value.parse().map_err(|error| format!("bad control metadata {header}: {error}"))?);
+        request.metadata_mut().insert(
+            header,
+            value
+                .parse()
+                .map_err(|error| format!("bad control metadata {header}: {error}"))?,
+        );
     }
     Ok(request)
 }
@@ -216,7 +313,10 @@ fn observation(
     identity: ResourceIdentity,
     sender: Option<ActorEndpointRef>,
 ) -> Result<ObservationRequest, String> {
-    let payload_claim = vector.input.pointer("/payload_claim").ok_or("missing payload claim")?;
+    let payload_claim = vector
+        .input
+        .pointer("/payload_claim")
+        .ok_or("missing payload claim")?;
     Ok(ObservationRequest {
         authority_domain_id: Some(domain.clone()),
         observation: Some(observation_request::Observation::Event(Observation {
@@ -814,85 +914,152 @@ async fn server_operation_scenario(
 }
 
 async fn disconnect_degrades_snapshot(vector: &ConformanceVector) -> Result<(), String> {
-    let domain = AuthorityDomainId { value: string(&vector.input, "/authority_domain_id")?.to_owned() };
-    let adapter_id = AdapterId { value: string(&vector.input, "/adapter_id")?.to_owned() };
-    let generation = vector.input.pointer("/adapter_generation").and_then(Value::as_u64).ok_or("missing adapter generation")?;
+    let domain = AuthorityDomainId {
+        value: string(&vector.input, "/authority_domain_id")?.to_owned(),
+    };
+    let adapter_id = AdapterId {
+        value: string(&vector.input, "/adapter_id")?.to_owned(),
+    };
+    let generation = vector
+        .input
+        .pointer("/adapter_generation")
+        .and_then(Value::as_u64)
+        .ok_or("missing adapter generation")?;
     let identity = tuple(&vector.input, "/resource_identity")?;
-    let kind = identity.resource_kind.clone().ok_or("resource identity missing kind")?;
+    let kind = identity
+        .resource_kind
+        .clone()
+        .ok_or("resource identity missing kind")?;
     if identity.adapter_id.as_ref() != Some(&adapter_id)
         || string(&vector.input, "/disconnect")? != "abnormal_delivery_stream_drop"
     {
         return Err("disconnect witness has inconsistent adapter identity or source".to_owned());
     }
-    let projection = vector.input.pointer("/current_projection").ok_or("missing projection")?;
+    let projection = vector
+        .input
+        .pointer("/current_projection")
+        .ok_or("missing projection")?;
     let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
     let service = AdapterControlServiceImpl::new(
-        storage.clone(), domain.clone(), evidence_verifier(&adapter_id)?,
-    ).await?;
-    let attached = service.attach(Request::new(AttachRequest {
-        registration: Some(registration(&domain, &adapter_id, &kind, generation)),
-        attachment_evidence: EVIDENCE.as_bytes().to_vec(),
-    })).await.map_err(|error| error.to_string())?;
+        storage.clone(),
+        domain.clone(),
+        evidence_verifier(&adapter_id)?,
+    )
+    .await?;
+    let attached = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(registration(&domain, &adapter_id, &kind, generation)),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .map_err(|error| error.to_string())?;
     let token = attachment_token(&attached)?;
     let projection_payload = serde_json::to_vec(projection).map_err(|error| error.to_string())?;
-    service.ingest_observation(authenticated(
-        ObservationRequest {
-            authority_domain_id: Some(domain.clone()),
-            observation: Some(observation_request::Observation::ResourceReport(ResourceReport {
-                adapter_id: Some(adapter_id.clone()),
-                adapter_generation: Some(Generation { value: generation }),
-                report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
-                    views: vec![ResourceViewReport {
-                        resource_kind: Some(kind.clone()),
-                        completeness: AdapterSnapshotSupport::Partial as i32,
-                        mutations: vec![ResourceReportMutation {
-                            identity: Some(identity.clone()),
-                            mutation: Some(resource_report_mutation::Mutation::Upsert(ResourceStateUpsert {
-                                resource_payload: Some(PayloadEnvelope {
-                                    payload: vec![1], content_type: PayloadContentType::Protobuf as i32,
-                                    schema_ref: format!("{}.payload.v1", kind.value),
-                                }),
-                                projection_payload: Some(PayloadEnvelope {
-                                    payload: projection_payload, content_type: PayloadContentType::Json as i32,
-                                    schema_ref: format!("{}.projection.v1", kind.value),
-                                }),
-                            })),
-                        }],
-                    }],
-                })),
-                observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
-            })),
-        },
-        &adapter_id.value,
-        &token,
-    )?).await.map_err(|error| error.to_string())?;
+    service
+        .ingest_observation(authenticated(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::ResourceReport(
+                    ResourceReport {
+                        adapter_id: Some(adapter_id.clone()),
+                        adapter_generation: Some(Generation { value: generation }),
+                        report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
+                            views: vec![ResourceViewReport {
+                                resource_kind: Some(kind.clone()),
+                                completeness: AdapterSnapshotSupport::Partial as i32,
+                                mutations: vec![ResourceReportMutation {
+                                    identity: Some(identity.clone()),
+                                    mutation: Some(resource_report_mutation::Mutation::Upsert(
+                                        ResourceStateUpsert {
+                                            resource_payload: Some(PayloadEnvelope {
+                                                payload: vec![1],
+                                                content_type: PayloadContentType::Protobuf as i32,
+                                                schema_ref: format!("{}.payload.v1", kind.value),
+                                            }),
+                                            projection_payload: Some(PayloadEnvelope {
+                                                payload: projection_payload,
+                                                content_type: PayloadContentType::Json as i32,
+                                                schema_ref: format!("{}.projection.v1", kind.value),
+                                            }),
+                                        },
+                                    )),
+                                }],
+                            }],
+                        })),
+                        observed_at: Some(Timestamp {
+                            seconds: 100,
+                            nanos: 0,
+                        }),
+                    },
+                )),
+            },
+            &adapter_id.value,
+            &token,
+        )?)
+        .await
+        .map_err(|error| error.to_string())?;
 
-    let stream = service.receive_deliveries(authenticated(
-        ReceiveRequest { adapter_id: Some(adapter_id.clone()), cursor: Some(Lsn { value: 0 }) },
-        &adapter_id.value,
-        &token,
-    )?).await.map_err(|error| error.to_string())?.into_inner();
+    let stream = service
+        .receive_deliveries(authenticated(
+            ReceiveRequest {
+                adapter_id: Some(adapter_id.clone()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &adapter_id.value,
+            &token,
+        )?)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_inner();
     drop(stream);
 
-    let expected_domain_identity = patchbay_core::resource::ResourceIdentity::try_from_wire(&identity).map_err(|error| error.to_string())?;
+    let expected_domain_identity =
+        patchbay_core::resource::ResourceIdentity::try_from_wire(&identity)
+            .map_err(|error| error.to_string())?;
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {
-            let rebuilt = patchbay_core::resource::rebuild_from_log(&storage, &domain).await.expect("resource replay");
-            if rebuilt.get(&expected_domain_identity).is_some_and(|record| record.freshness == patchbay_contracts::patchbay::ResourceFreshnessState::Stale) {
+            let rebuilt = patchbay_core::resource::rebuild_from_log(&storage, &domain)
+                .await
+                .expect("resource replay");
+            if rebuilt
+                .get(&expected_domain_identity)
+                .is_some_and(|record| {
+                    record.freshness == patchbay_contracts::patchbay::ResourceFreshnessState::Stale
+                })
+            {
                 break;
             }
             tokio::task::yield_now().await;
         }
-    }).await.map_err(|_| "disconnect degradation timed out".to_owned())?;
+    })
+    .await
+    .map_err(|_| "disconnect degradation timed out".to_owned())?;
     let state = ProjectionState::rebuild(&storage, &domain).await?;
-    let snapshot = state.materialize_resource_snapshot(domain, Timestamp { seconds: 101, nanos: 0 }).await;
-    let record = snapshot.resources.first().ok_or("degraded snapshot omitted resource")?;
-    if string(&vector.expected_outcome, "/snapshot_record/freshness")? != "RESOURCE_FRESHNESS_STATE_STALE"
+    let snapshot = state
+        .materialize_resource_snapshot(
+            domain,
+            Timestamp {
+                seconds: 101,
+                nanos: 0,
+            },
+        )
+        .await;
+    let record = snapshot
+        .resources
+        .first()
+        .ok_or("degraded snapshot omitted resource")?;
+    if string(&vector.expected_outcome, "/snapshot_record/freshness")?
+        != "RESOURCE_FRESHNESS_STATE_STALE"
         || record.freshness != patchbay_contracts::patchbay::ResourceFreshnessState::Stale as i32
-        || boolean(&vector.expected_outcome, "/snapshot_record/has_cached_payload")? != record.resource_payload.is_some()
+        || boolean(
+            &vector.expected_outcome,
+            "/snapshot_record/has_cached_payload",
+        )? != record.resource_payload.is_some()
         || boolean(&vector.expected_outcome, "/snapshot_record/tombstoned")? != record.tombstoned
     {
-        return Err("adapter disconnect did not produce honest stale cached resource snapshot".to_owned());
+        return Err(
+            "adapter disconnect did not produce honest stale cached resource snapshot".to_owned(),
+        );
     }
     Ok(())
 }
@@ -1102,7 +1269,9 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
             "/session_case/cached_snapshot/materialized_at",
         )? != "2026-07-06T00:02:00Z"
     {
-        return Err("session cached-checkpoint fixture is not the registered empty view".to_owned());
+        return Err(
+            "session cached-checkpoint fixture is not the registered empty view".to_owned(),
+        );
     }
     let cached_checkpoint = SessionSnapshot {
         authority_domain_id: Some(authority_domain_id.clone()),
@@ -1132,10 +1301,7 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
         .await
         .map_err(|error| error.to_string())?;
     let stored_checkpoint = storage
-        .load_latest_snapshot(
-            &authority_domain_id,
-            Some(Lsn { value: cached_lsn }),
-        )
+        .load_latest_snapshot(&authority_domain_id, Some(Lsn { value: cached_lsn }))
         .await
         .map_err(|error| error.to_string())?
         .ok_or("session stale checkpoint was not stored")?;
@@ -1147,10 +1313,12 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
         },
     )
     .map_err(|error| format!("seeded stale checkpoint is incompatible: {error}"))?
-        .snapshot
+    .snapshot
         != cached_checkpoint
     {
-        return Err("stored session checkpoint differs from the compatible stale witness".to_owned());
+        return Err(
+            "stored session checkpoint differs from the compatible stale witness".to_owned(),
+        );
     }
 
     let service = ControlServiceImpl::new_with_clock(
@@ -1261,28 +1429,62 @@ async fn session_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(
 
 async fn resource_snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), String> {
     let request_kind = string(&vector.input, "/resource_case/request/view_kind")?;
-    let expected_request_kind = string(&vector.expected_outcome, "/resource_case/requested_view_kind")?;
-    let expected_return_kind = string(&vector.expected_outcome, "/resource_case/returned_view_kind")?;
+    let expected_request_kind = string(
+        &vector.expected_outcome,
+        "/resource_case/requested_view_kind",
+    )?;
+    let expected_return_kind = string(
+        &vector.expected_outcome,
+        "/resource_case/returned_view_kind",
+    )?;
     if request_kind != "SNAPSHOT_VIEW_KIND_RESOURCE"
         || request_kind != expected_request_kind
         || request_kind != expected_return_kind
     {
         return Err("resource snapshot request/response discriminator disagrees".to_owned());
     }
-    let cached_lsn = vector.input.pointer("/resource_case/cached_snapshot/snapshot_lsn/value").and_then(Value::as_u64).ok_or("missing cached snapshot LSN")?;
-    let cached_core_generation = vector.input.pointer("/resource_case/cached_snapshot/core_generation/value").and_then(Value::as_u64).ok_or("missing cached resource core generation")?;
-    let expected_core_generation = vector.expected_outcome.pointer("/resource_case/replacement/core_generation/value").and_then(Value::as_u64).ok_or("missing expected resource core generation")?;
+    let cached_lsn = vector
+        .input
+        .pointer("/resource_case/cached_snapshot/snapshot_lsn/value")
+        .and_then(Value::as_u64)
+        .ok_or("missing cached snapshot LSN")?;
+    let cached_core_generation = vector
+        .input
+        .pointer("/resource_case/cached_snapshot/core_generation/value")
+        .and_then(Value::as_u64)
+        .ok_or("missing cached resource core generation")?;
+    let expected_core_generation = vector
+        .expected_outcome
+        .pointer("/resource_case/replacement/core_generation/value")
+        .and_then(Value::as_u64)
+        .ok_or("missing expected resource core generation")?;
     if cached_core_generation == 0 || cached_core_generation != expected_core_generation {
         return Err("resource vector core-generation anchors disagree".to_owned());
     }
-    let report = vector.input.pointer("/resource_case/current_report").ok_or("missing current resource report")?;
+    let report = vector
+        .input
+        .pointer("/resource_case/current_report")
+        .ok_or("missing current resource report")?;
     let identity = tuple(report, "/identity")?;
     let authority_domain_id = AuthorityDomainId {
-        value: string(&vector.input, "/resource_case/cached_snapshot/authority_domain_id/value")?.to_owned(),
+        value: string(
+            &vector.input,
+            "/resource_case/cached_snapshot/authority_domain_id/value",
+        )?
+        .to_owned(),
     };
-    let adapter_id = identity.adapter_id.clone().ok_or("identity missing adapter")?;
-    let resource_kind = identity.resource_kind.clone().ok_or("identity missing kind")?;
-    let generation = report.pointer("/source_adapter_generation").and_then(Value::as_u64).ok_or("missing source generation")?;
+    let adapter_id = identity
+        .adapter_id
+        .clone()
+        .ok_or("identity missing adapter")?;
+    let resource_kind = identity
+        .resource_kind
+        .clone()
+        .ok_or("identity missing kind")?;
+    let generation = report
+        .pointer("/source_adapter_generation")
+        .and_then(Value::as_u64)
+        .ok_or("missing source generation")?;
     if string(report, "/mode")? != "snapshot"
         || string(report, "/completeness")? != "ADAPTER_SNAPSHOT_SUPPORT_AUTHORITATIVE"
     {
@@ -1291,11 +1493,13 @@ async fn resource_snapshot_reconciliation(vector: &ConformanceVector) -> Result<
     let resource_payload = base64::Engine::decode(
         &base64::engine::general_purpose::STANDARD,
         string(report, "/resource_payload")?,
-    ).map_err(|error| error.to_string())?;
+    )
+    .map_err(|error| error.to_string())?;
     let projection_payload = base64::Engine::decode(
         &base64::engine::general_purpose::STANDARD,
         string(report, "/projection_payload")?,
-    ).map_err(|error| error.to_string())?;
+    )
+    .map_err(|error| error.to_string())?;
     let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
     storage
         .load_or_create_core_generation(
@@ -1318,40 +1522,62 @@ async fn resource_snapshot_reconciliation(vector: &ConformanceVector) -> Result<
             }.encode_to_vec(),
         },
     ).await.map_err(|error| error.to_string())?;
-    storage.append(
-        &authority_domain_id,
-        authority_events::grant(
-            authority_domain_id.clone(),
-            Grant {
-                grant_id: Some(GrantId { value: "resource-snapshot-exact-query".to_owned() }),
-                authority_domain_id: Some(authority_domain_id.clone()),
-                subject_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
-                target_scope: Some(TargetScope {
-                    kind: TargetScopeKind::Resource as i32,
-                    resource: Some(identity.clone()),
-                    ..TargetScope::default()
-                }),
-                allowed_operation_kinds: vec![OperationKind::Query as i32],
-                provenance: Some(GrantProvenance {
-                    reason: "resource snapshot conformance fixture".to_owned(),
-                    ..GrantProvenance::default()
-                }),
-                revocation_policy: GrantRevocationPolicy::Continue as i32,
-                ..Grant::default()
-            },
-        ),
-    ).await.map_err(|error| error.to_string())?;
+    storage
+        .append(
+            &authority_domain_id,
+            authority_events::grant(
+                authority_domain_id.clone(),
+                Grant {
+                    grant_id: Some(GrantId {
+                        value: "resource-snapshot-exact-query".to_owned(),
+                    }),
+                    authority_domain_id: Some(authority_domain_id.clone()),
+                    subject_actor_id: Some(ActorId {
+                        value: OPERATOR_ACTOR.to_owned(),
+                    }),
+                    target_scope: Some(TargetScope {
+                        kind: TargetScopeKind::Resource as i32,
+                        resource: Some(identity.clone()),
+                        ..TargetScope::default()
+                    }),
+                    allowed_operation_kinds: vec![OperationKind::Query as i32],
+                    provenance: Some(GrantProvenance {
+                        reason: "resource snapshot conformance fixture".to_owned(),
+                        ..GrantProvenance::default()
+                    }),
+                    revocation_policy: GrantRevocationPolicy::Continue as i32,
+                    ..Grant::default()
+                },
+            ),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
     let service = ControlServiceImpl::new(storage.clone(), authority_domain_id.clone()).await?;
-    let login = service.verify_operator_password(Request::new(VerifyOperatorPasswordRequest {
-        operator_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
-        password: OPERATOR_PASSWORD.to_owned(),
-        principal: Some(PrincipalEnrollment {
-            endpoint_id: Some(EndpointId { value: "conformance-snapshot".to_owned() }),
-            device_id: Some(DeviceId { value: "conformance-host".to_owned() }),
-            endpoint_generation: Some(Generation { value: 1 }),
-        }),
-    })).await.map_err(|error| error.to_string())?.into_inner();
-    let session_id = login.operator_session_id.as_ref().ok_or("snapshot login omitted operator session")?.value.clone();
+    let login = service
+        .verify_operator_password(Request::new(VerifyOperatorPasswordRequest {
+            operator_actor_id: Some(ActorId {
+                value: OPERATOR_ACTOR.to_owned(),
+            }),
+            password: OPERATOR_PASSWORD.to_owned(),
+            principal: Some(PrincipalEnrollment {
+                endpoint_id: Some(EndpointId {
+                    value: "conformance-snapshot".to_owned(),
+                }),
+                device_id: Some(DeviceId {
+                    value: "conformance-host".to_owned(),
+                }),
+                endpoint_generation: Some(Generation { value: 1 }),
+            }),
+        }))
+        .await
+        .map_err(|error| error.to_string())?
+        .into_inner();
+    let session_id = login
+        .operator_session_id
+        .as_ref()
+        .ok_or("snapshot login omitted operator session")?
+        .value
+        .clone();
     let principal = login.principal.ok_or("snapshot login omitted principal")?;
 
     let mut resources = ResourceRegistry::new();
@@ -1368,67 +1594,135 @@ async fn resource_snapshot_reconciliation(vector: &ConformanceVector) -> Result<
                 completeness: AdapterSnapshotSupport::Authoritative as i32,
                 mutations: vec![patchbay_contracts::patchbay::ResourceReportMutation {
                     identity: Some(identity.clone()),
-                    mutation: Some(patchbay_contracts::patchbay::resource_report_mutation::Mutation::Upsert(
-                        patchbay_contracts::patchbay::ResourceStateUpsert {
-                            resource_payload: Some(PayloadEnvelope {
-                                payload: resource_payload.clone(),
-                                content_type: PayloadContentType::Protobuf as i32,
-                                schema_ref: "provider_pool.payload.v1".to_owned(),
-                            }),
-                            projection_payload: Some(PayloadEnvelope {
-                                payload: projection_payload.clone(),
-                                content_type: PayloadContentType::Json as i32,
-                                schema_ref: "provider_pool.projection.v1".to_owned(),
-                            }),
-                        },
-                    )),
+                    mutation: Some(
+                        patchbay_contracts::patchbay::resource_report_mutation::Mutation::Upsert(
+                            patchbay_contracts::patchbay::ResourceStateUpsert {
+                                resource_payload: Some(PayloadEnvelope {
+                                    payload: resource_payload.clone(),
+                                    content_type: PayloadContentType::Protobuf as i32,
+                                    schema_ref: "provider_pool.payload.v1".to_owned(),
+                                }),
+                                projection_payload: Some(PayloadEnvelope {
+                                    payload: projection_payload.clone(),
+                                    content_type: PayloadContentType::Json as i32,
+                                    schema_ref: "provider_pool.projection.v1".to_owned(),
+                                }),
+                            },
+                        ),
+                    ),
                 }],
             }],
-            observed_at: Timestamp { seconds: 100, nanos: 0 },
+            observed_at: Timestamp {
+                seconds: 100,
+                nanos: 0,
+            },
         },
-    ).await.map_err(|error| error.to_string())?;
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     let requested_view_kind = match request_kind {
         "SNAPSHOT_VIEW_KIND_RESOURCE" => SnapshotViewKind::Resource,
-        _ => return Err(format!("unsupported snapshot request discriminator {request_kind}")),
+        _ => {
+            return Err(format!(
+                "unsupported snapshot request discriminator {request_kind}"
+            ))
+        }
     };
-    let response = service.load_snapshot(authenticated_control(
-        LoadSnapshotRequest {
-            authority_domain_id: Some(authority_domain_id.clone()),
-            at_or_before: Some(Lsn { value: cached_lsn }),
-            view_kind: requested_view_kind as i32,
-        },
-        OPERATOR_ACTOR,
-        &session_id,
-        &principal.principal_id,
-        &principal.secret,
-    )?).await.map_err(|error| error.to_string())?.into_inner();
+    let response = service
+        .load_snapshot(authenticated_control(
+            LoadSnapshotRequest {
+                authority_domain_id: Some(authority_domain_id.clone()),
+                at_or_before: Some(Lsn { value: cached_lsn }),
+                view_kind: requested_view_kind as i32,
+            },
+            OPERATOR_ACTOR,
+            &session_id,
+            &principal.principal_id,
+            &principal.secret,
+        )?)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_inner();
     let snapshot = ResourceSnapshot::decode(response.snapshot_payload.as_slice())
         .map_err(|error| format!("load_snapshot returned a non-resource payload: {error}"))?;
-    let current_lsn = snapshot.snapshot_lsn.as_ref().ok_or("RPC snapshot missing LSN")?.value;
-    let resource = snapshot.resources.first().ok_or("RPC snapshot missing resource")?;
+    let current_lsn = snapshot
+        .snapshot_lsn
+        .as_ref()
+        .ok_or("RPC snapshot missing LSN")?
+        .value;
+    let resource = snapshot
+        .resources
+        .first()
+        .ok_or("RPC snapshot missing resource")?;
     if response.view_kind != requested_view_kind as i32
         || expected_return_kind != "SNAPSHOT_VIEW_KIND_RESOURCE"
         || !response.present
-        || response.event_id.as_ref().and_then(|event| event.lsn.as_ref()).map(|lsn| lsn.value) != Some(current_lsn)
+        || response
+            .event_id
+            .as_ref()
+            .and_then(|event| event.lsn.as_ref())
+            .map(|lsn| lsn.value)
+            != Some(current_lsn)
         || cached_lsn >= current_lsn
-        || vector.expected_outcome.pointer("/resource_case/snapshot_decision/accepted").and_then(Value::as_bool) != Some(false)
-        || vector.expected_outcome.pointer("/resource_case/snapshot_decision/replacement_required_from_lsn/value").and_then(Value::as_u64).is_none_or(|lsn| lsn <= cached_lsn)
-        || vector.expected_outcome.pointer("/resource_case/replacement/resource_count").and_then(Value::as_u64) != Some(snapshot.resources.len() as u64)
-        || tuple(&vector.expected_outcome, "/resource_case/replacement/identity")? != identity
+        || vector
+            .expected_outcome
+            .pointer("/resource_case/snapshot_decision/accepted")
+            .and_then(Value::as_bool)
+            != Some(false)
+        || vector
+            .expected_outcome
+            .pointer("/resource_case/snapshot_decision/replacement_required_from_lsn/value")
+            .and_then(Value::as_u64)
+            .is_none_or(|lsn| lsn <= cached_lsn)
+        || vector
+            .expected_outcome
+            .pointer("/resource_case/replacement/resource_count")
+            .and_then(Value::as_u64)
+            != Some(snapshot.resources.len() as u64)
+        || tuple(
+            &vector.expected_outcome,
+            "/resource_case/replacement/identity",
+        )? != identity
         || resource.identity.as_ref() != Some(&identity)
-        || string(&vector.expected_outcome, "/resource_case/replacement/freshness")? != "RESOURCE_FRESHNESS_STATE_CURRENT"
-        || resource.freshness != patchbay_contracts::patchbay::ResourceFreshnessState::Current as i32
-        || resource.resource_payload.as_ref().map(|payload| payload.payload.as_slice()) != Some(resource_payload.as_slice())
-        || resource.projection_payload.as_ref().map(|payload| payload.payload.as_slice()) != Some(projection_payload.as_slice())
-        || vector.expected_outcome.pointer("/resource_case/replacement/record_revision_equals_snapshot_lsn").and_then(Value::as_bool) != Some(resource.revision_lsn.as_ref().is_some_and(|revision| revision.value == current_lsn))
-        || string(&vector.expected_outcome, "/resource_case/replacement/authority_domain_id")? != authority_domain_id.value
+        || string(
+            &vector.expected_outcome,
+            "/resource_case/replacement/freshness",
+        )? != "RESOURCE_FRESHNESS_STATE_CURRENT"
+        || resource.freshness
+            != patchbay_contracts::patchbay::ResourceFreshnessState::Current as i32
+        || resource
+            .resource_payload
+            .as_ref()
+            .map(|payload| payload.payload.as_slice())
+            != Some(resource_payload.as_slice())
+        || resource
+            .projection_payload
+            .as_ref()
+            .map(|payload| payload.payload.as_slice())
+            != Some(projection_payload.as_slice())
+        || vector
+            .expected_outcome
+            .pointer("/resource_case/replacement/record_revision_equals_snapshot_lsn")
+            .and_then(Value::as_bool)
+            != Some(
+                resource
+                    .revision_lsn
+                    .as_ref()
+                    .is_some_and(|revision| revision.value == current_lsn),
+            )
+        || string(
+            &vector.expected_outcome,
+            "/resource_case/replacement/authority_domain_id",
+        )? != authority_domain_id.value
         || snapshot.authority_domain_id.as_ref() != Some(&authority_domain_id)
         || snapshot.core_generation
             != Some(Generation {
                 value: expected_core_generation,
             })
     {
-        return Err("load_snapshot RPC did not return the vector's current resource replacement".to_owned());
+        return Err(
+            "load_snapshot RPC did not return the vector's current resource replacement".to_owned(),
+        );
     }
     Ok(())
 }
@@ -1439,69 +1733,146 @@ async fn snapshot_reconciliation(vector: &ConformanceVector) -> Result<(), Strin
 }
 
 async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
-    let domain = AuthorityDomainId { value: string(&vector.input, "/authority_domain_id")?.to_owned() };
-    let adapter_id = AdapterId { value: string(&vector.input, "/authenticated_adapter_id")?.to_owned() };
-    let generation = vector.input.pointer("/attachment_generation").and_then(Value::as_u64).ok_or("missing attachment generation")?;
-    if generation < 2 { return Err("source-binding witness needs a stale predecessor generation".to_owned()); }
+    let domain = AuthorityDomainId {
+        value: string(&vector.input, "/authority_domain_id")?.to_owned(),
+    };
+    let adapter_id = AdapterId {
+        value: string(&vector.input, "/authenticated_adapter_id")?.to_owned(),
+    };
+    let generation = vector
+        .input
+        .pointer("/attachment_generation")
+        .and_then(Value::as_u64)
+        .ok_or("missing attachment generation")?;
+    if generation < 2 {
+        return Err("source-binding witness needs a stale predecessor generation".to_owned());
+    }
     let exact = tuple(&vector.input, "/target_identity")?;
-    let kind = exact.resource_kind.clone().ok_or("target identity missing kind")?;
-    if exact.adapter_id.as_ref() != Some(&adapter_id) { return Err("target must belong to authenticated adapter".to_owned()); }
+    let kind = exact
+        .resource_kind
+        .clone()
+        .ok_or("target identity missing kind")?;
+    if exact.adapter_id.as_ref() != Some(&adapter_id) {
+        return Err("target must belong to authenticated adapter".to_owned());
+    }
 
     let inner = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
     let storage = AuditedStorage::new(inner.clone());
     let service = AdapterControlServiceImpl::new(
-        storage.clone(), domain.clone(), evidence_verifier(&adapter_id)?,
-    ).await.map_err(|error| error.to_string())?;
-    let old = service.attach(Request::new(AttachRequest {
-        registration: Some(registration(&domain, &adapter_id, &kind, generation - 1)),
-        attachment_evidence: EVIDENCE.as_bytes().to_vec(),
-    })).await.map_err(|error| error.to_string())?;
+        storage.clone(),
+        domain.clone(),
+        evidence_verifier(&adapter_id)?,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let old = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(registration(&domain, &adapter_id, &kind, generation - 1)),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .map_err(|error| error.to_string())?;
     let old_token = attachment_token(&old)?;
-    let current = service.attach(Request::new(AttachRequest {
-        registration: Some(registration(&domain, &adapter_id, &kind, generation)),
-        attachment_evidence: EVIDENCE.as_bytes().to_vec(),
-    })).await.map_err(|error| error.to_string())?;
+    let current = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(registration(&domain, &adapter_id, &kind, generation)),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .map_err(|error| error.to_string())?;
     let current_token = attachment_token(&current)?;
-    let before = storage.read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 }).await.map_err(|error| error.to_string())?;
+    let before = storage
+        .read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 })
+        .await
+        .map_err(|error| error.to_string())?;
 
-    let missing = service.ingest_observation(Request::new(observation(vector, &domain, exact.clone(), None)?)).await.expect_err("missing channel evidence must reject");
-    if missing.code() != Code::Unauthenticated || string(&vector.expected_outcome, "/unauthenticated/status")? != "UNAUTHENTICATED" {
+    let missing = service
+        .ingest_observation(Request::new(observation(
+            vector,
+            &domain,
+            exact.clone(),
+            None,
+        )?))
+        .await
+        .expect_err("missing channel evidence must reject");
+    if missing.code() != Code::Unauthenticated
+        || string(&vector.expected_outcome, "/unauthenticated/status")? != "UNAUTHENTICATED"
+    {
         return Err("missing attachment did not reject unauthenticated".to_owned());
     }
-    let stale = service.ingest_observation(authenticated(observation(vector, &domain, exact.clone(), None)?, &adapter_id.value, &old_token)?).await.expect_err("stale token must reject");
-    if stale.code() != Code::Unauthenticated || string(&vector.expected_outcome, "/stale_token/status")? != "UNAUTHENTICATED" {
+    let stale = service
+        .ingest_observation(authenticated(
+            observation(vector, &domain, exact.clone(), None)?,
+            &adapter_id.value,
+            &old_token,
+        )?)
+        .await
+        .expect_err("stale token must reject");
+    if stale.code() != Code::Unauthenticated
+        || string(&vector.expected_outcome, "/stale_token/status")? != "UNAUTHENTICATED"
+    {
         return Err("stale attachment token did not reject unauthenticated".to_owned());
     }
     if vector.property_id == "TokenCommuneCurrentGenerationSourceAuthenticated" {
-        let stale_generation = service.ingest_observation(authenticated(
-            ObservationRequest {
-                authority_domain_id: Some(domain.clone()),
-                observation: Some(observation_request::Observation::ResourceReport(ResourceReport {
-                    adapter_id: Some(adapter_id.clone()),
-                    adapter_generation: Some(Generation { value: generation - 1 }),
-                    report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
-                        views: vec![ResourceViewReport {
-                            resource_kind: Some(kind.clone()),
-                            completeness: AdapterSnapshotSupport::Partial as i32,
-                            mutations: Vec::new(),
-                        }],
-                    })),
-                    observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
-                })),
-            },
-            &adapter_id.value,
-            &current_token,
-        )?).await.expect_err("stale report generation must reject");
+        let stale_generation = service
+            .ingest_observation(authenticated(
+                ObservationRequest {
+                    authority_domain_id: Some(domain.clone()),
+                    observation: Some(observation_request::Observation::ResourceReport(
+                        ResourceReport {
+                            adapter_id: Some(adapter_id.clone()),
+                            adapter_generation: Some(Generation {
+                                value: generation - 1,
+                            }),
+                            report: Some(resource_report::Report::Snapshot(
+                                ResourceSnapshotReport {
+                                    views: vec![ResourceViewReport {
+                                        resource_kind: Some(kind.clone()),
+                                        completeness: AdapterSnapshotSupport::Partial as i32,
+                                        mutations: Vec::new(),
+                                    }],
+                                },
+                            )),
+                            observed_at: Some(Timestamp {
+                                seconds: 100,
+                                nanos: 0,
+                            }),
+                        },
+                    )),
+                },
+                &adapter_id.value,
+                &current_token,
+            )?)
+            .await
+            .expect_err("stale report generation must reject");
         if stale_generation.code() != Code::FailedPrecondition
-            || string(&vector.expected_outcome, "/stale_generation/status")? != "FAILED_PRECONDITION"
-            || boolean(&vector.expected_outcome, "/stale_generation/resource_state_appended")?
+            || string(&vector.expected_outcome, "/stale_generation/status")?
+                != "FAILED_PRECONDITION"
+            || boolean(
+                &vector.expected_outcome,
+                "/stale_generation/resource_state_appended",
+            )?
             || boolean(&vector.expected_outcome, "/stale_generation_appended")?
         {
             return Err("stale report generation was not fenced before resource append".to_owned());
         }
     }
-    let cross = service.ingest_observation(authenticated(observation(vector, &domain, tuple(&vector.input, "/cross_adapter_target")?, None)?, &adapter_id.value, &current_token)?).await.expect_err("cross-adapter target must reject");
-    if cross.code() != Code::PermissionDenied || string(&vector.expected_outcome, "/cross_adapter_target/status")? != "PERMISSION_DENIED" {
+    let cross = service
+        .ingest_observation(authenticated(
+            observation(
+                vector,
+                &domain,
+                tuple(&vector.input, "/cross_adapter_target")?,
+                None,
+            )?,
+            &adapter_id.value,
+            &current_token,
+        )?)
+        .await
+        .expect_err("cross-adapter target must reject");
+    if cross.code() != Code::PermissionDenied
+        || string(&vector.expected_outcome, "/cross_adapter_target/status")? != "PERMISSION_DENIED"
+    {
         return Err("cross-adapter resource Observation was not fenced".to_owned());
     }
 
@@ -1560,13 +1931,24 @@ async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
             .await
             .map_err(|error| error.to_string())?;
         if after_rejection.len() != before.len() {
-            return Err(format!("forged {claim} sender claim appended durable state"));
+            return Err(format!(
+                "forged {claim} sender claim appended durable state"
+            ));
         }
     }
 
-    service.ingest_observation(authenticated(observation(vector, &domain, exact, None)?, &adapter_id.value, &current_token)?)
-        .await.map_err(|error| error.to_string())?;
-    let after = storage.read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 }).await.map_err(|error| error.to_string())?;
+    service
+        .ingest_observation(authenticated(
+            observation(vector, &domain, exact, None)?,
+            &adapter_id.value,
+            &current_token,
+        )?)
+        .await
+        .map_err(|error| error.to_string())?;
+    let after = storage
+        .read_after(&domain, patchbay_contracts::patchbay::Lsn { value: 0 })
+        .await
+        .map_err(|error| error.to_string())?;
     let appended = &after[before.len()..];
     let source = appended
         .iter()
@@ -1574,32 +1956,81 @@ async fn source_binding(vector: &ConformanceVector) -> Result<(), String> {
         .ok_or("authenticated Observation source was not appended")?;
     let stored_observation = Observation::decode(source.payload.payload.as_slice())
         .map_err(|error| error.to_string())?;
-    let stored_sender = stored_observation.sender.as_ref().ok_or("stored Observation has no canonical sender")?;
+    let stored_sender = stored_observation
+        .sender
+        .as_ref()
+        .ok_or("stored Observation has no canonical sender")?;
     let audit = audit_draft_for_source(&source.payload).map_err(|error| error.to_string())?;
-    let expected_endpoint = EndpointId { value: format!("{}-endpoint", adapter_id.value) };
+    let expected_endpoint = EndpointId {
+        value: format!("{}-endpoint", adapter_id.value),
+    };
     if appended.len() != 1
-        || stored_sender.actor_id.as_ref() != Some(&ActorId { value: adapter_id.value.clone() })
+        || stored_sender.actor_id.as_ref()
+            != Some(&ActorId {
+                value: adapter_id.value.clone(),
+            })
         || stored_sender.endpoint_id.as_ref() != Some(&expected_endpoint)
         || stored_sender.device_id.is_some()
         || stored_sender.endpoint_generation.is_some()
         || audit.actor_id != stored_sender.actor_id
         || audit.endpoint_id != stored_sender.endpoint_id
         || audit.device_id.is_some()
-        || !boolean(&vector.expected_outcome, "/authenticated_owner/observation_appended")?
-        || !boolean(&vector.expected_outcome, "/authenticated_owner/audit_attribution_canonical")?
-        || string(&vector.expected_outcome, "/authenticated_owner/stored_event_kind")? != "STORED_EVENT_KIND_OBSERVATION"
-        || string(&vector.expected_outcome, "/authenticated_owner/canonical_actor_id")? != adapter_id.value
-        || string(&vector.expected_outcome, "/authenticated_owner/canonical_endpoint_id")? != expected_endpoint.value
-        || boolean(&vector.expected_outcome, "/authenticated_owner/device_id_present")?
-        || boolean(&vector.expected_outcome, "/unauthenticated/observation_appended")?
-        || boolean(&vector.expected_outcome, "/stale_token/observation_appended")?
-        || boolean(&vector.expected_outcome, "/cross_adapter_target/observation_appended")?
+        || !boolean(
+            &vector.expected_outcome,
+            "/authenticated_owner/observation_appended",
+        )?
+        || !boolean(
+            &vector.expected_outcome,
+            "/authenticated_owner/audit_attribution_canonical",
+        )?
+        || string(
+            &vector.expected_outcome,
+            "/authenticated_owner/stored_event_kind",
+        )? != "STORED_EVENT_KIND_OBSERVATION"
+        || string(
+            &vector.expected_outcome,
+            "/authenticated_owner/canonical_actor_id",
+        )? != adapter_id.value
+        || string(
+            &vector.expected_outcome,
+            "/authenticated_owner/canonical_endpoint_id",
+        )? != expected_endpoint.value
+        || boolean(
+            &vector.expected_outcome,
+            "/authenticated_owner/device_id_present",
+        )?
+        || boolean(
+            &vector.expected_outcome,
+            "/unauthenticated/observation_appended",
+        )?
+        || boolean(
+            &vector.expected_outcome,
+            "/stale_token/observation_appended",
+        )?
+        || boolean(
+            &vector.expected_outcome,
+            "/cross_adapter_target/observation_appended",
+        )?
         || boolean(&vector.expected_outcome, "/forged_claim/authority_changed")?
-        || boolean(&vector.expected_outcome, "/forged_claim/resource_state_changed")?
+        || boolean(
+            &vector.expected_outcome,
+            "/forged_claim/resource_state_changed",
+        )?
         || boolean(&vector.expected_outcome, "/forged_claim/operation_created")?
-        || after.iter().any(|event| matches!(StoredEventKind::try_from(event.payload.kind).ok(), Some(StoredEventKind::Grant | StoredEventKind::Operation | StoredEventKind::ResourceState)))
+        || after.iter().any(|event| {
+            matches!(
+                StoredEventKind::try_from(event.payload.kind).ok(),
+                Some(
+                    StoredEventKind::Grant
+                        | StoredEventKind::Operation
+                        | StoredEventKind::ResourceState
+                )
+            )
+        })
     {
-        return Err("authenticated Observation source/audit attribution disagrees with vector".to_owned());
+        return Err(
+            "authenticated Observation source/audit attribution disagrees with vector".to_owned(),
+        );
     }
     Ok(())
 }
@@ -1888,9 +2319,11 @@ async fn run_session_report_source_trace(
         )
         .await;
     let stale_event_id = stale
-        .map_err(|error| MutationExecutionError::oracle(format!(
-            "delayed report did not reach outer quarantine: {error}"
-        )))?
+        .map_err(|error| {
+            MutationExecutionError::oracle(format!(
+                "delayed report did not reach outer quarantine: {error}"
+            ))
+        })?
         .into_inner()
         .event_id
         .ok_or_else(|| MutationExecutionError::oracle("stale report returned no event id"))?;
@@ -2044,9 +2477,11 @@ async fn run_session_report_source_trace(
         )
         .await;
     let old_producer_event_id = old_producer
-        .map_err(|error| MutationExecutionError::oracle(format!(
-            "old adapter producer did not reach outer quarantine: {error}"
-        )))?
+        .map_err(|error| {
+            MutationExecutionError::oracle(format!(
+                "old adapter producer did not reach outer quarantine: {error}"
+            ))
+        })?
         .into_inner()
         .event_id
         .ok_or_else(|| MutationExecutionError::oracle("old producer returned no event id"))?;
@@ -2170,9 +2605,11 @@ async fn run_session_report_source_trace(
         )
         .await;
     let old_runtime_event_id = old_runtime
-        .map_err(|error| MutationExecutionError::oracle(format!(
-            "old runtime generation did not reach outer quarantine: {error}"
-        )))?
+        .map_err(|error| {
+            MutationExecutionError::oracle(format!(
+                "old runtime generation did not reach outer quarantine: {error}"
+            ))
+        })?
         .into_inner()
         .event_id
         .ok_or_else(|| MutationExecutionError::oracle("old runtime returned no event id"))?;
@@ -2246,12 +2683,9 @@ async fn session_report_source_ordering(vector: &ConformanceVector) -> Result<()
     let adapter = AdapterId {
         value: string(&vector.input, "/adapter_id")?.to_owned(),
     };
-    let service = AdapterControlServiceImpl::new(
-        storage.clone(),
-        domain,
-        evidence_verifier(&adapter)?,
-    )
-    .await?;
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain, evidence_verifier(&adapter)?)
+            .await?;
     run_session_report_source_trace(vector, &storage, &service)
         .await
         .map_err(|error| match error {
@@ -2563,7 +2997,9 @@ async fn run_token_degradation_trace(vector: &ConformanceVector) -> Result<(), S
     let service = AdapterControlServiceImpl::new(
         storage.clone(),
         domain,
-        evidence_verifier(&AdapterId { value: "token-commune".into() })?,
+        evidence_verifier(&AdapterId {
+            value: "token-commune".into(),
+        })?,
     )
     .await?;
     run_token_degradation_trace_with_service(vector, &storage, &service)
@@ -2641,7 +3077,9 @@ async fn kill_degradation_mutation(
     let service = AdapterControlServiceImpl::new_with_conformance_fault(
         storage.clone(),
         domain,
-        evidence_verifier(&AdapterId { value: "token-commune".into() })?,
+        evidence_verifier(&AdapterId {
+            value: "token-commune".into(),
+        })?,
         fault,
     )
     .await?;
@@ -2778,7 +3216,9 @@ async fn kill_source_ingress_mutation(
 }
 
 async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), String> {
-    if vector.property_id.is_empty() || !matches!(vector.promotion_status.as_str(), "draft" | "promoted") {
+    if vector.property_id.is_empty()
+        || !matches!(vector.promotion_status.as_str(), "draft" | "promoted")
+    {
         return Err("conformance vector has invalid property or promotion metadata".to_owned());
     }
     match case {
@@ -2788,8 +3228,12 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         "token_commune_degradation_projection" => run_token_degradation_trace(vector).await,
         "snapshot_reconciliation" => snapshot_reconciliation(vector).await,
         "session_report_source_ordering" => session_report_source_ordering(vector).await,
-        "resource_observation_source_binding" | "token_commune_current_generation_source_binding" => source_binding(vector).await,
-        _ => Err(format!("unhandled {RUNNER} conformance case {}:{case}", vector.vector_id)),
+        "resource_observation_source_binding"
+        | "token_commune_current_generation_source_binding" => source_binding(vector).await,
+        _ => Err(format!(
+            "unhandled {RUNNER} conformance case {}:{case}",
+            vector.vector_id
+        )),
     }
 }
 
@@ -2799,21 +3243,55 @@ async fn conformance_vector_runner() {
     let requested = if env::var("PATCHBAY_CONFORMANCE_REQUESTS").is_ok() {
         requests()
     } else {
-        vectors.values().flat_map(|vector| vector.implementation_checks.iter()
-            .filter(|check| check.runner == RUNNER)
-            .map(|check| RequestedCheck { vector_id: vector.vector_id.clone(), case: check.case.clone() }))
+        vectors
+            .values()
+            .flat_map(|vector| {
+                vector
+                    .implementation_checks
+                    .iter()
+                    .filter(|check| check.runner == RUNNER)
+                    .map(|check| RequestedCheck {
+                        vector_id: vector.vector_id.clone(),
+                        case: check.case.clone(),
+                    })
+            })
             .collect()
     };
     for request in requested {
-        let vector = vectors.get(&request.vector_id).unwrap_or_else(|| panic!("unknown vector id {}", request.vector_id));
-        assert!(vector.implementation_checks.iter().any(|check| check.runner == RUNNER && check.case == request.case), "unregistered requested check {}:{}", request.vector_id, request.case);
-        execute_case(vector, &request.case).await.unwrap_or_else(|error| panic!("{error}"));
-        println!("PATCHBAY_CONFORMANCE_EXECUTED={}:{}", request.vector_id, request.case);
+        let vector = vectors
+            .get(&request.vector_id)
+            .unwrap_or_else(|| panic!("unknown vector id {}", request.vector_id));
+        assert!(
+            vector
+                .implementation_checks
+                .iter()
+                .any(|check| check.runner == RUNNER && check.case == request.case),
+            "unregistered requested check {}:{}",
+            request.vector_id,
+            request.case
+        );
+        execute_case(vector, &request.case)
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        println!(
+            "PATCHBAY_CONFORMANCE_EXECUTED={}:{}",
+            request.vector_id, request.case
+        );
     }
     for request in mutation_requests() {
-        let vector = vectors.get(&request.vector_id).unwrap_or_else(|| panic!("unknown mutation vector id {}", request.vector_id));
-        assert!(vector.mutation_witnesses.iter().any(|witness| witness.runner == RUNNER && witness.mutation_id == request.mutation_id),
-            "unregistered requested mutation {}:{}", request.vector_id, request.mutation_id);
+        let vector = vectors
+            .get(&request.vector_id)
+            .unwrap_or_else(|| panic!("unknown mutation vector id {}", request.vector_id));
+        assert!(
+            vector
+                .mutation_witnesses
+                .iter()
+                .any(|witness| witness.runner == RUNNER
+                    && witness.mutation_id == request.mutation_id),
+            "unregistered requested mutation {}:{}",
+            request.vector_id,
+            request.mutation_id
+        );
         let result = if vector.property_id == "TokenCommuneDegradationHonesty" {
             kill_degradation_mutation(vector, &request.mutation_id).await
         } else if vector.property_id == "SessionReportSourceOrdering" {
@@ -2822,6 +3300,9 @@ async fn conformance_vector_runner() {
             kill_source_ingress_mutation(vector, &request.mutation_id).await
         };
         result.unwrap_or_else(|error| panic!("{error}"));
-        println!("PATCHBAY_CONFORMANCE_MUTATION_KILLED={}:{}", request.vector_id, request.mutation_id);
+        println!(
+            "PATCHBAY_CONFORMANCE_MUTATION_KILLED={}:{}",
+            request.vector_id, request.mutation_id
+        );
     }
 }

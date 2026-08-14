@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
     resource_report_mutation, resource_state_mutation, AdapterId, AdapterSnapshotSupport,
-    AuthorityDomainId, EventId, Generation, Lsn, ResourceFreshnessChanged,
-    ResourceFreshnessState, ResourceReportMutation, ResourceStateEvent, ResourceStateMutation,
-    ResourceStateTombstone, ResourceStateUnknown, ResourceViewReport, ResourceViewStateUpdate,
+    AuthorityDomainId, EventId, Generation, Lsn, ResourceFreshnessChanged, ResourceFreshnessState,
+    ResourceReportMutation, ResourceStateEvent, ResourceStateMutation, ResourceStateTombstone,
+    ResourceStateUnknown, ResourceViewReport, ResourceViewStateUpdate,
 };
 use prost_types::Timestamp;
 
@@ -58,7 +58,9 @@ pub async fn ingest_resource_report<S: Storage>(
     let touched_resources = event.mutations.len();
     let touched_views = event.views.len();
     let payload = events::encode(&event);
-    let event_id = storage.append(&authority_domain_id, payload.clone()).await?;
+    let event_id = storage
+        .append(&authority_domain_id, payload.clone())
+        .await?;
     if let Err(error) = validate_event_id(&event_id, &authority_domain_id) {
         *registry = replay::rebuild_from_log(storage, &authority_domain_id).await?;
         return Err(error);
@@ -67,13 +69,8 @@ pub async fn ingest_resource_report<S: Storage>(
         event_id: event_id.clone(),
         payload,
     };
-    if let Err(error) = replay::catch_up_through_event(
-        storage,
-        &authority_domain_id,
-        registry,
-        &recorded,
-    )
-    .await
+    if let Err(error) =
+        replay::catch_up_through_event(storage, &authority_domain_id, registry, &recorded).await
     {
         // The append is already authoritative. Never continue with a hot
         // projection that could not validate its complete committed suffix.
@@ -124,7 +121,13 @@ pub fn adapter_stale_event(
         .into_iter()
         .filter_map(|record| {
             stale_change(record).map(|mutation| ResourceStateMutation {
-                identity: Some(record.identity.to_scope().resource.expect("canonical resource")),
+                identity: Some(
+                    record
+                        .identity
+                        .to_scope()
+                        .resource
+                        .expect("canonical resource"),
+                ),
                 from_revision_lsn: Some(Lsn {
                     value: record.revision_lsn,
                 }),
@@ -194,9 +197,9 @@ pub fn adapter_redeclaration_event(
         let down_tiered = old.zip(next).is_some_and(|(old, next)| {
             snapshot_strength(next.snapshot_support()) < snapshot_strength(old.snapshot_support())
         });
-        let schema_incompatible = old.zip(next).is_some_and(|(old, next)| {
-            old.projection_contract() != next.projection_contract()
-        });
+        let schema_incompatible = old
+            .zip(next)
+            .is_some_and(|(old, next)| old.projection_contract() != next.projection_contract());
         if !(newer_generation || removed || down_tiered || schema_incompatible) {
             continue;
         }
@@ -240,7 +243,13 @@ pub fn adapter_redeclaration_event(
         .into_iter()
         .filter_map(|record| {
             stale_change(record).map(|mutation| ResourceStateMutation {
-                identity: Some(record.identity.to_scope().resource.expect("canonical resource")),
+                identity: Some(
+                    record
+                        .identity
+                        .to_scope()
+                        .resource
+                        .expect("canonical resource"),
+                ),
                 from_revision_lsn: Some(Lsn {
                     value: record.revision_lsn,
                 }),
@@ -337,9 +346,10 @@ fn normalize_report(
         mutation_by_identity.insert(identity, mutation);
     }
 
-    for record in registry.resources().filter(|record| {
-        record.identity.adapter_id() == &report.adapter_id && !record.tombstoned()
-    }) {
+    for record in registry
+        .resources()
+        .filter(|record| record.identity.adapter_id() == &report.adapter_id && !record.tombstoned())
+    {
         if mutation_by_identity.contains_key(&record.identity) {
             continue;
         }
@@ -352,11 +362,11 @@ fn normalize_report(
                 match AdapterSnapshotSupport::try_from(view.completeness)
                     .expect("validated completeness")
                 {
-                    AdapterSnapshotSupport::Authoritative => Some(
-                        resource_state_mutation::Mutation::Tombstone(ResourceStateTombstone {
-                            replaced_by: None,
-                        }),
-                    ),
+                    AdapterSnapshotSupport::Authoritative => {
+                        Some(resource_state_mutation::Mutation::Tombstone(
+                            ResourceStateTombstone { replaced_by: None },
+                        ))
+                    }
                     AdapterSnapshotSupport::Partial | AdapterSnapshotSupport::None => {
                         stale_change(record)
                     }
@@ -472,11 +482,10 @@ fn validate_report_shape(report: &ValidatedResourceReport) -> Result<(), Resourc
             ));
         }
         for mutation in &view.mutations {
-            let identity = ResourceIdentity::try_from_wire(
-                mutation.identity.as_ref().ok_or_else(|| {
+            let identity =
+                ResourceIdentity::try_from_wire(mutation.identity.as_ref().ok_or_else(|| {
                     ResourceError::InvalidReport("resource mutation is missing identity".into())
-                })?,
-            )?;
+                })?)?;
             if identity.adapter_id() != &report.adapter_id || identity.resource_kind() != kind {
                 return Err(ResourceError::InvalidReport(
                     "resource mutation identity does not match authenticated view".into(),
@@ -600,8 +609,7 @@ fn validate_event_id(
     event_id: &EventId,
     authority_domain_id: &AuthorityDomainId,
 ) -> Result<(), ResourceError> {
-    if event_id.authority_domain_id.as_ref() != Some(authority_domain_id)
-        || event_id.lsn.is_none()
+    if event_id.authority_domain_id.as_ref() != Some(authority_domain_id) || event_id.lsn.is_none()
     {
         return Err(ResourceError::CorruptRecord(
             "storage returned resource event with invalid identity".into(),
@@ -636,7 +644,10 @@ fn wire_identity_key(
 ) -> (&str, &str, &str) {
     identity.map_or(("", "", ""), |identity| {
         (
-            identity.adapter_id.as_ref().map_or("", |id| id.value.as_str()),
+            identity
+                .adapter_id
+                .as_ref()
+                .map_or("", |id| id.value.as_str()),
             identity
                 .resource_kind
                 .as_ref()

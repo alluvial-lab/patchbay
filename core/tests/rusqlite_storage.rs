@@ -16,8 +16,8 @@ use std::{fs, os::unix::fs::PermissionsExt};
 
 use patchbay_contracts::patchbay::{
     ActorId, AuditEventKind, AuthorityDomainId, DescendantGrant, Generation, Grant, GrantId,
-    GrantRevocationPolicy, IdempotencyKey, Lsn, OperationKind, StoredEventKind,
-    StoredEventPayload, TargetScope, TargetScopeKind,
+    GrantRevocationPolicy, IdempotencyKey, Lsn, OperationKind, StoredEventKind, StoredEventPayload,
+    TargetScope, TargetScopeKind,
 };
 use patchbay_core::storage::{
     validate_next_replay_event, AuditRecordDraft, CoreGenerationStore, DedupOutcome,
@@ -164,8 +164,12 @@ fn file_mode(path: &Path) -> u32 {
 #[tokio::test]
 async fn core_generation_is_insert_once_domain_scoped_and_lsn_free() {
     let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
-    let domain_a = AuthorityDomainId { value: "domain-a".to_owned() };
-    let domain_b = AuthorityDomainId { value: "domain-b".to_owned() };
+    let domain_a = AuthorityDomainId {
+        value: "domain-a".to_owned(),
+    };
+    let domain_b = AuthorityDomainId {
+        value: "domain-b".to_owned(),
+    };
 
     let first = storage
         .load_or_create_core_generation(&domain_a, Generation { value: 17 })
@@ -183,7 +187,11 @@ async fn core_generation_is_insert_once_domain_scoped_and_lsn_free() {
     assert_eq!(first, Generation { value: 17 });
     assert_eq!(repeated, first);
     assert_eq!(independent, Generation { value: 23 });
-    assert!(storage.read_after(&domain_a, Lsn { value: 0 }).await.unwrap().is_empty());
+    assert!(storage
+        .read_after(&domain_a, Lsn { value: 0 })
+        .await
+        .unwrap()
+        .is_empty());
     let event = storage
         .append(&domain_a, test_payload(StoredEventKind::Operation))
         .await
@@ -258,7 +266,8 @@ async fn core_generation_survives_file_reopen() {
     let path = directory.path().join("generation-reopen.sqlite3");
     let domain = test_domain();
     {
-        let storage = patchbay_core::storage::RusqliteStorage::open(path.to_str().unwrap()).unwrap();
+        let storage =
+            patchbay_core::storage::RusqliteStorage::open(path.to_str().unwrap()).unwrap();
         assert_eq!(
             storage
                 .load_or_create_core_generation(&domain, Generation { value: 41 })
@@ -501,10 +510,7 @@ async fn grant_identity_append_is_atomic_idempotent_and_shared_across_kinds() {
     };
     assert_eq!(first_append.source_event_id.lsn, Some(Lsn { value: 1 }));
     assert_eq!(first_append.audit_event_id.lsn, Some(Lsn { value: 2 }));
-    let prefix = storage
-        .read_after(&domain, Lsn { value: 0 })
-        .await
-        .unwrap();
+    let prefix = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
 
     let retry = storage
         .append_grant_audited(
@@ -520,10 +526,7 @@ async fn grant_identity_append_is_atomic_idempotent_and_shared_across_kinds() {
         GrantAppendOutcome::Existing(first_append.source_event_id.clone())
     );
     assert_eq!(
-        storage
-            .read_after(&domain, Lsn { value: 0 })
-            .await
-            .unwrap(),
+        storage.read_after(&domain, Lsn { value: 0 }).await.unwrap(),
         prefix,
         "an exact retry must write neither source nor creation audit"
     );
@@ -553,13 +556,13 @@ async fn grant_identity_append_is_atomic_idempotent_and_shared_across_kinds() {
         .await;
     assert!(matches!(
         cross_kind,
-        Err(StorageError::GrantIdentityConflict { existing_lsn: 1, .. })
+        Err(StorageError::GrantIdentityConflict {
+            existing_lsn: 1,
+            ..
+        })
     ));
     assert_eq!(
-        storage
-            .read_after(&domain, Lsn { value: 0 })
-            .await
-            .unwrap(),
+        storage.read_after(&domain, Lsn { value: 0 }).await.unwrap(),
         prefix,
         "conflicts must be rejected before append"
     );
@@ -806,10 +809,8 @@ async fn migration_and_open_reject_conflicting_or_inconsistent_grant_identity_hi
         &[grant_source("legacy", OperationKind::Spawn)],
     )
     .await;
-    let storage = patchbay_core::storage::RusqliteStorage::open(
-        inconsistent_path.to_str().unwrap(),
-    )
-    .unwrap();
+    let storage =
+        patchbay_core::storage::RusqliteStorage::open(inconsistent_path.to_str().unwrap()).unwrap();
     drop(storage);
     tokio::task::yield_now().await;
     let db = rusqlite::Connection::open(&inconsistent_path).unwrap();
@@ -883,7 +884,9 @@ async fn real_sqlite_reads_preserve_corrupt_kinds_for_shared_replay_classificati
         (i32::MAX, false),
     ] {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join(format!("corrupt-kind-{raw_kind}.sqlite3"));
+        let path = directory
+            .path()
+            .join(format!("corrupt-kind-{raw_kind}.sqlite3"));
         let path = path.to_str().unwrap();
         let storage = patchbay_core::storage::RusqliteStorage::open(path).unwrap();
         drop(storage);

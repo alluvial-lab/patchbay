@@ -20,8 +20,8 @@ pub use elicitation::{rebuild_slots_from_log, ElicitationRecord, ElicitationSlot
 pub use elicitation_response::{validate_response_payload, validate_response_responder};
 pub use index::CommandIndex;
 pub use observation::{
-    exact_command_correlation, ingest_observation, CommandSnapshot, CommandStateLookup,
-    IngestResult, TransitionCandidate,
+    derive_transition, exact_command_correlation, ingest_observation, CommandSnapshot,
+    CommandStateLookup, IngestResult, TransitionCandidate,
 };
 pub use pipeline::{
     submit, submit_with_clock, submit_with_clock_and_posture, target_key_for,

@@ -4,10 +4,7 @@ use patchbay_contracts::patchbay::{
 use patchbay_core::authority::IssuerContext;
 use tonic::{Request, Status};
 
-use crate::{
-    operator_session::OperatorSessionBinding,
-    state::ProjectionState,
-};
+use crate::{operator_session::OperatorSessionBinding, state::ProjectionState};
 
 pub const OPERATOR_SESSION_HEADER: &str = "x-patchbay-operator-session-id";
 pub const OPERATOR_ID_HEADER: &str = "x-patchbay-operator-id";
@@ -85,7 +82,10 @@ impl MetadataIssuerContext {
             device_id: verified_device.clone(),
             endpoint_generation,
         };
-        if !state.verify_operator_session(&operator_session_id, &binding).await {
+        if !state
+            .verify_operator_session(&operator_session_id, &binding)
+            .await
+        {
             return Err(Status::unauthenticated(
                 "invalid, expired, revoked, or actor-mismatched operator session",
             ));
@@ -223,8 +223,12 @@ mod tests {
         let session = state
             .issue_operator_session(OperatorSessionBinding {
                 actor_id: actor_id.clone(),
-                endpoint_id: EndpointId { value: "web".to_owned() },
-                device_id: DeviceId { value: "web-host".to_owned() },
+                endpoint_id: EndpointId {
+                    value: "web".to_owned(),
+                },
+                device_id: DeviceId {
+                    value: "web-host".to_owned(),
+                },
                 endpoint_generation: Generation { value: 3 },
             })
             .await;
@@ -235,8 +239,12 @@ mod tests {
         let cli_session = state
             .issue_operator_session(OperatorSessionBinding {
                 actor_id: actor_id.clone(),
-                endpoint_id: EndpointId { value: "cli".to_owned() },
-                device_id: DeviceId { value: "cli-host".to_owned() },
+                endpoint_id: EndpointId {
+                    value: "cli".to_owned(),
+                },
+                device_id: DeviceId {
+                    value: "cli-host".to_owned(),
+                },
                 endpoint_generation: Generation { value: 7 },
             })
             .await;
@@ -342,9 +350,15 @@ mod tests {
 
         let other_actor_session = state
             .issue_operator_session(OperatorSessionBinding {
-                actor_id: ActorId { value: "another-operator".to_owned() },
-                endpoint_id: EndpointId { value: "web".to_owned() },
-                device_id: DeviceId { value: "web-host".to_owned() },
+                actor_id: ActorId {
+                    value: "another-operator".to_owned(),
+                },
+                endpoint_id: EndpointId {
+                    value: "web".to_owned(),
+                },
+                device_id: DeviceId {
+                    value: "web-host".to_owned(),
+                },
                 endpoint_generation: Generation { value: 1 },
             })
             .await;
@@ -361,19 +375,30 @@ mod tests {
         let revoked_session = state
             .issue_operator_session(OperatorSessionBinding {
                 actor_id: actor_id.clone(),
-                endpoint_id: EndpointId { value: "web".to_owned() },
-                device_id: DeviceId { value: "web-host".to_owned() },
+                endpoint_id: EndpointId {
+                    value: "web".to_owned(),
+                },
+                device_id: DeviceId {
+                    value: "web-host".to_owned(),
+                },
                 endpoint_generation: Generation { value: 1 },
             })
             .await;
         assert!(
             state
-                .revoke_operator_session(&revoked_session.id, &OperatorSessionBinding {
-                    actor_id: actor_id.clone(),
-                    endpoint_id: EndpointId { value: "web".to_owned() },
-                    device_id: DeviceId { value: "web-host".to_owned() },
-                    endpoint_generation: Generation { value: 1 },
-                })
+                .revoke_operator_session(
+                    &revoked_session.id,
+                    &OperatorSessionBinding {
+                        actor_id: actor_id.clone(),
+                        endpoint_id: EndpointId {
+                            value: "web".to_owned()
+                        },
+                        device_id: DeviceId {
+                            value: "web-host".to_owned()
+                        },
+                        endpoint_generation: Generation { value: 1 },
+                    }
+                )
                 .await
         );
         let revoked = verified_request("web-principal", "web-secret", &revoked_session.id.value);
@@ -388,8 +413,12 @@ mod tests {
         let expired_session = state
             .issue_operator_session(OperatorSessionBinding {
                 actor_id,
-                endpoint_id: EndpointId { value: "web".to_owned() },
-                device_id: DeviceId { value: "web-host".to_owned() },
+                endpoint_id: EndpointId {
+                    value: "web".to_owned(),
+                },
+                device_id: DeviceId {
+                    value: "web-host".to_owned(),
+                },
                 endpoint_generation: Generation { value: 1 },
             })
             .await;

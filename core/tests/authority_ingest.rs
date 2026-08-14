@@ -7,17 +7,15 @@ use patchbay_contracts::patchbay::{
     session_state_event, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
     AdapterId, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
     DescendantGrantProvenance, DeviceId, EndpointId, EventId, FailureCode, Generation, Grant,
-    GrantId,
-    GrantProvenance, GrantRevocationPolicy, IdempotencyKey, Lsn, Observation, ObservationKind,
-    Operation,
-    OperationKind, OperationState, Revocation, RuntimeSessionId, SessionRegistered,
-    SessionStateEvent, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
-    TypedCorrelation,
+    GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, Lsn, Observation,
+    ObservationKind, Operation, OperationKind, OperationState, Revocation, RuntimeSessionId,
+    SessionRegistered, SessionStateEvent, StoredEventKind, StoredEventPayload, TargetScope,
+    TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     authority::{
-        ingest_descendant_grant, ingest_grant, ingest_revocation, rebuild_from_log,
-        AuthorityError, AuthorityRegistry, DESCENDANT_GRANT_ALLOWED_KINDS,
+        ingest_descendant_grant, ingest_grant, ingest_revocation, rebuild_from_log, AuthorityError,
+        AuthorityRegistry, DESCENDANT_GRANT_ALLOWED_KINDS,
     },
     storage::{
         AuditPageSpec, AuditRecordDraft, DedupOutcome, GrantAppendOutcome, GrantIdentityKey,
@@ -154,23 +152,28 @@ async fn valid_descendant_candidate(
             },
         )
         .await?;
+    let result = Observation {
+        authority_domain_id: Some(domain()),
+        kind: ObservationKind::Result as i32,
+        correlations: vec![correlation.clone()],
+        target_scope: Some(fleet_scope()),
+        failure_code: FailureCode::Unspecified as i32,
+        ..Observation::default()
+    };
+    let mut result_audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        AuditEventKind::CommandRunning,
+    );
+    result_audit.command_id = Some(command_id.clone());
+    result_audit.target_scope = result.target_scope.clone();
+    result_audit.reason_code = "spawn_completion_deferred".to_owned();
     let source_event_id = storage
-        .append(
-            &domain(),
-            StoredEventPayload {
-                kind: StoredEventKind::Observation as i32,
-                payload: Observation {
-                    authority_domain_id: Some(domain()),
-                    kind: ObservationKind::Result as i32,
-                    correlations: vec![correlation.clone()],
-                    target_scope: Some(fleet_scope()),
-                    failure_code: FailureCode::Unspecified as i32,
-                    ..Observation::default()
-                }
-                .encode_to_vec(),
-            },
-        )
-        .await?;
+        .append_spawn_result_deferred_audited(&domain(), result, result_audit)
+        .await?
+        .source_event_id;
     storage
         .append(
             &domain(),
@@ -436,25 +439,15 @@ async fn normal_grant_retry_returns_original_id_without_source_or_audit_duplicat
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let candidate = grant("retry");
     let mut warm = AuthorityRegistry::new();
-    let first = ingest_grant(
-        &storage,
-        &mut warm,
-        &domain(),
-        candidate.clone(),
-    )
-    .await
-    .unwrap();
+    let first = ingest_grant(&storage, &mut warm, &domain(), candidate.clone())
+        .await
+        .unwrap();
     let prefix = events(&storage).await;
     let warm_before = warm.clone();
     assert_eq!(
-        ingest_grant(
-            &storage,
-            &mut warm,
-            &domain(),
-            candidate.clone(),
-        )
-        .await
-        .unwrap(),
+        ingest_grant(&storage, &mut warm, &domain(), candidate.clone(),)
+            .await
+            .unwrap(),
         first
     );
     assert_eq!(warm, warm_before);
@@ -504,14 +497,9 @@ async fn normal_grant_retry_after_revocation_catches_a_fresh_projection_up_to_re
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let candidate = grant("retry-after-revocation");
     let mut warm = AuthorityRegistry::new();
-    let earliest_id = ingest_grant(
-        &storage,
-        &mut warm,
-        &domain(),
-        candidate.clone(),
-    )
-    .await
-    .unwrap();
+    let earliest_id = ingest_grant(&storage, &mut warm, &domain(), candidate.clone())
+        .await
+        .unwrap();
     ingest_revocation(
         &storage,
         &mut warm,
@@ -586,14 +574,9 @@ async fn committed_but_unacknowledged_normal_and_descendant_grants_retry_to_orig
         .clone();
     let mut normal_fresh = AuthorityRegistry::new();
     assert_eq!(
-        ingest_grant(
-            &normal_storage,
-            &mut normal_fresh,
-            &domain(),
-            normal,
-        )
-        .await
-        .unwrap(),
+        ingest_grant(&normal_storage, &mut normal_fresh, &domain(), normal,)
+            .await
+            .unwrap(),
         normal_source_id
     );
     assert_eq!(events(&normal_inner).await, normal_prefix);
@@ -608,12 +591,10 @@ async fn committed_but_unacknowledged_normal_and_descendant_grants_retry_to_orig
     )
     .await
     .unwrap();
-    let (descendant_id, descendant) =
-        valid_descendant_candidate(&descendant_inner, "parent")
-            .await
-            .unwrap();
-    let descendant_storage =
-        LoseFirstGrantAppendAcknowledgement::new(descendant_inner.clone());
+    let (descendant_id, descendant) = valid_descendant_candidate(&descendant_inner, "parent")
+        .await
+        .unwrap();
+    let descendant_storage = LoseFirstGrantAppendAcknowledgement::new(descendant_inner.clone());
     assert!(matches!(
         ingest_descendant_grant(
             &descendant_storage,
@@ -649,16 +630,8 @@ async fn committed_but_unacknowledged_normal_and_descendant_grants_retry_to_orig
     assert_eq!(events(&descendant_inner).await, descendant_prefix);
 
     for (storage, grant_id, reason) in [
-        (
-            &normal_inner,
-            grant_id("ambiguous-normal"),
-            "grant_created",
-        ),
-        (
-            &descendant_inner,
-            descendant_id,
-            "descendant_grant_created",
-        ),
+        (&normal_inner, grant_id("ambiguous-normal"), "grant_created"),
+        (&descendant_inner, descendant_id, "descendant_grant_created"),
     ] {
         let audits = storage
             .query_audit(
@@ -695,13 +668,7 @@ async fn independent_projections_race_through_storage_identity_not_a_process_gat
         exact_tasks.push(tokio::spawn(async move {
             let mut projection = AuthorityRegistry::new();
             barrier.wait().await;
-            ingest_grant(
-                &storage,
-                &mut projection,
-                &domain(),
-                grant("raced-exact"),
-            )
-            .await
+            ingest_grant(&storage, &mut projection, &domain(), grant("raced-exact")).await
         }));
     }
     exact_barrier.wait().await;
@@ -732,7 +699,10 @@ async fn independent_projections_race_through_storage_identity_not_a_process_gat
         conflict_tasks.remove(0).await.unwrap(),
     ];
     assert_eq!(
-        conflict_results.iter().filter(|result| result.is_ok()).count(),
+        conflict_results
+            .iter()
+            .filter(|result| result.is_ok())
+            .count(),
         1
     );
     assert_eq!(
@@ -824,7 +794,7 @@ async fn descendant_with_canonical_kind_set_succeeds() {
         .await
         .expect("the canonical descendant grant must be ingested");
 
-    assert_eq!(event_id.lsn, Some(Lsn { value: 8 }));
+    assert_eq!(event_id.lsn, Some(Lsn { value: 9 }));
     let record = registry
         .get_grant(&descendant_id)
         .expect("ingestion must warm the descendant projection");
@@ -845,14 +815,9 @@ async fn descendant_retry_reuses_original_source_and_rebuilds_a_fresh_projection
     let (descendant_id, candidate) = valid_descendant_candidate(&storage, "parent")
         .await
         .unwrap();
-    let first = ingest_descendant_grant(
-        &storage,
-        &mut registry,
-        &domain(),
-        candidate.clone(),
-    )
-    .await
-    .unwrap();
+    let first = ingest_descendant_grant(&storage, &mut registry, &domain(), candidate.clone())
+        .await
+        .unwrap();
     let prefix = events(&storage).await;
 
     let mut fresh = AuthorityRegistry::new();
@@ -912,40 +877,57 @@ async fn normal_and_descendant_grants_share_one_immutable_identity_namespace() {
     assert!(matches!(
         error,
         AuthorityError::CorruptLog(message)
-            if message.contains(&descendant_id.value) && message.contains("source LSN 8")
+            if message.contains(&descendant_id.value) && message.contains("source LSN 9")
     ));
     assert_eq!(events(&storage).await, prefix);
     assert_eq!(registry.get_grant(&descendant_id), Some(&first_identity));
-    assert_eq!(registry, rebuild_from_log(&storage, &domain()).await.unwrap());
+    assert_eq!(
+        registry,
+        rebuild_from_log(&storage, &domain()).await.unwrap()
+    );
 }
 
 #[tokio::test]
 async fn self_consistent_source_audit_and_grant_without_accepted_context_is_rejected() {
-    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("forged-descendant-prefix.sqlite3");
+    let storage = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
     let mut registry = AuthorityRegistry::new();
     let command_id = CommandId {
         value: "spawn-1".to_owned(),
     };
-    let source_event_id = storage
-        .append(
-            &domain(),
-            StoredEventPayload {
-                kind: StoredEventKind::Observation as i32,
-                payload: Observation {
-                    authority_domain_id: Some(domain()),
-                    kind: ObservationKind::Result as i32,
-                    correlations: vec![TypedCorrelation {
-                        r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
-                    }],
-                    target_scope: Some(fleet_scope()),
-                    failure_code: FailureCode::Unspecified as i32,
-                    ..Observation::default()
-                }
-                .encode_to_vec(),
-            },
+    let source = StoredEventPayload {
+        kind: StoredEventKind::Observation as i32,
+        payload: Observation {
+            authority_domain_id: Some(domain()),
+            kind: ObservationKind::Result as i32,
+            correlations: vec![TypedCorrelation {
+                r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
+            }],
+            target_scope: Some(fleet_scope()),
+            failure_code: FailureCode::Unspecified as i32,
+            ..Observation::default()
+        }
+        .encode_to_vec(),
+    };
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "INSERT INTO events (authority_domain_id, kind, payload) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                domain().value,
+                StoredEventKind::Observation as i32,
+                source.encode_to_vec()
+            ],
         )
-        .await
         .unwrap();
+    let source_event_id = EventId {
+        authority_domain_id: Some(domain()),
+        lsn: Some(Lsn {
+            value: connection.last_insert_rowid() as u64,
+        }),
+    };
+    drop(connection);
     let occurred_at = Timestamp {
         seconds: 10,
         nanos: 0,
@@ -1001,7 +983,7 @@ async fn revoking_parent_does_not_cascade_to_descendant() {
         .get_grant(&descendant_id)
         .expect("non-cascade retains the descendant record")
         .is_live());
-    assert_eq!(events(&storage).await.len(), 11);
+    assert_eq!(events(&storage).await.len(), 12);
 }
 
 #[tokio::test]

@@ -4,14 +4,12 @@ use patchbay_contracts::patchbay::{
     resource_report_mutation, resource_state_mutation, AcceptedOperation, ActorEndpointRef,
     ActorId, AdapterId, AdapterSnapshotSupport, AuthorityDomainId, CommandId, DeviceId, EndpointId,
     FailureCode, Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Lsn,
-    Observation,
-    ObservationKind, Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
-    ResourceId, ResourceFreshnessState, ResourceKind, ResourceReportMutation, ResourceStateEvent,
-    ResourceStateMutation, ResourceStateTombstone, ResourceStateUnknown, ResourceStateUpsert,
-    ResourceViewReport,
-    ResourceViewStateUpdate, RuntimeSessionId, SessionActivityState, SessionConnectivityState,
-    SessionRegistered, SessionState, StoredEventKind, SubmissionOutcome, TargetScope,
-    TargetScopeKind, TimeWindow,
+    Observation, ObservationKind, Operation, OperationKind, OperationState, PayloadContentType,
+    PayloadEnvelope, ResourceFreshnessState, ResourceId, ResourceKind, ResourceReportMutation,
+    ResourceStateEvent, ResourceStateMutation, ResourceStateTombstone, ResourceStateUnknown,
+    ResourceStateUpsert, ResourceViewReport, ResourceViewStateUpdate, RuntimeSessionId,
+    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionState,
+    StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind, TimeWindow,
 };
 use patchbay_core::{
     acceptance::{
@@ -62,8 +60,15 @@ fn vectors() -> BTreeMap<String, ConformanceVector> {
     let vector_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../contracts/vectors");
     let mut files = fs::read_dir(vector_dir)
         .expect("conformance vector directory must be readable")
-        .map(|entry| entry.expect("vector directory entry must be readable").path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
+        .map(|entry| {
+            entry
+                .expect("vector directory entry must be readable")
+                .path()
+        })
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
         .collect::<Vec<_>>();
     files.sort();
     files
@@ -108,27 +113,53 @@ fn tuple(value: &Value, pointer: &str) -> Result<ResourceIdentity, String> {
         return Err(format!("identity tuple {pointer} must have three fields"));
     }
     ResourceIdentity::new(
-        AdapterId { value: values[0].as_str().ok_or_else(|| format!("{pointer}[0] must be a string"))?.to_owned() },
-        ResourceKind { value: values[1].as_str().ok_or_else(|| format!("{pointer}[1] must be a string"))?.to_owned() },
-        ResourceId { value: values[2].as_str().ok_or_else(|| format!("{pointer}[2] must be a string"))?.to_owned() },
+        AdapterId {
+            value: values[0]
+                .as_str()
+                .ok_or_else(|| format!("{pointer}[0] must be a string"))?
+                .to_owned(),
+        },
+        ResourceKind {
+            value: values[1]
+                .as_str()
+                .ok_or_else(|| format!("{pointer}[1] must be a string"))?
+                .to_owned(),
+        },
+        ResourceId {
+            value: values[2]
+                .as_str()
+                .ok_or_else(|| format!("{pointer}[2] must be a string"))?
+                .to_owned(),
+        },
     )
     .map_err(|error| error.to_string())
 }
 
 fn wire_identity(value: &Value, pointer: &str) -> Result<ResourceIdentity, String> {
     ResourceIdentity::new(
-        AdapterId { value: string(value, &format!("{pointer}/adapter_id/value"))?.to_owned() },
-        ResourceKind { value: string(value, &format!("{pointer}/resource_kind/value"))?.to_owned() },
-        ResourceId { value: string(value, &format!("{pointer}/resource_id/value"))?.to_owned() },
+        AdapterId {
+            value: string(value, &format!("{pointer}/adapter_id/value"))?.to_owned(),
+        },
+        ResourceKind {
+            value: string(value, &format!("{pointer}/resource_kind/value"))?.to_owned(),
+        },
+        ResourceId {
+            value: string(value, &format!("{pointer}/resource_id/value"))?.to_owned(),
+        },
     )
     .map_err(|error| error.to_string())
 }
 
 fn domain(value: &Value, pointer: &str) -> Result<AuthorityDomainId, String> {
-    Ok(AuthorityDomainId { value: string(value, pointer)?.to_owned() })
+    Ok(AuthorityDomainId {
+        value: string(value, pointer)?.to_owned(),
+    })
 }
 
-fn resource_registry(authority_domain_id: &AuthorityDomainId, identities: &[ResourceIdentity]) -> ResourceRegistry {
+fn resource_registry(
+    authority_domain_id: &AuthorityDomainId,
+    identities: &[ResourceIdentity],
+) -> ResourceRegistry {
     let mut registry = ResourceRegistry::new();
     for (index, identity) in identities.iter().enumerate() {
         let state = ResourceStateEvent {
@@ -142,12 +173,17 @@ fn resource_registry(authority_domain_id: &AuthorityDomainId, identities: &[Reso
             mutations: vec![ResourceStateMutation {
                 identity: Some(identity.to_scope().resource.expect("resource scope")),
                 from_revision_lsn: None,
-                mutation: Some(resource_state_mutation::Mutation::Upsert(ResourceStateUpsert {
-                    resource_payload: Some(envelope("resource.schema", vec![1])),
-                    projection_payload: Some(envelope("projection.schema", vec![2])),
-                })),
+                mutation: Some(resource_state_mutation::Mutation::Upsert(
+                    ResourceStateUpsert {
+                        resource_payload: Some(envelope("resource.schema", vec![1])),
+                        projection_payload: Some(envelope("projection.schema", vec![2])),
+                    },
+                )),
             }],
-            observed_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+            observed_at: Some(Timestamp {
+                seconds: 1,
+                nanos: 0,
+            }),
         };
         registry
             .observe(&RecordedEvent {
@@ -176,11 +212,21 @@ struct Issuer {
 }
 
 impl IssuerContext for Issuer {
-    fn verified_actor(&self) -> Option<&ActorId> { Some(&self.actor) }
-    fn verified_endpoint(&self) -> Option<&EndpointId> { Some(&self.endpoint) }
-    fn verified_device(&self) -> Option<&DeviceId> { Some(&self.device) }
-    fn endpoint_generation(&self) -> Option<Generation> { Some(Generation { value: 1 }) }
-    fn authority_domain_id(&self) -> &AuthorityDomainId { &self.domain }
+    fn verified_actor(&self) -> Option<&ActorId> {
+        Some(&self.actor)
+    }
+    fn verified_endpoint(&self) -> Option<&EndpointId> {
+        Some(&self.endpoint)
+    }
+    fn verified_device(&self) -> Option<&DeviceId> {
+        Some(&self.device)
+    }
+    fn endpoint_generation(&self) -> Option<Generation> {
+        Some(Generation { value: 1 })
+    }
+    fn authority_domain_id(&self) -> &AuthorityDomainId {
+        &self.domain
+    }
 }
 
 struct NoContracts;
@@ -194,7 +240,9 @@ impl ElicitationContractLookup for NoContracts {
 }
 
 impl CommandStateLookup for NoContracts {
-    async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> { None }
+    async fn current_state(&self, _command_id: &CommandId) -> Option<CommandSnapshot> {
+        None
+    }
 }
 
 fn case_pointer(case_name: &str, suffix: &str) -> String {
@@ -444,8 +492,8 @@ fn session_registry(
             source_cursor: None,
         },
     );
-    let mut sessions = SessionRegistry::new(authority_domain_id.clone())
-        .map_err(|error| error.to_string())?;
+    let mut sessions =
+        SessionRegistry::new(authority_domain_id.clone()).map_err(|error| error.to_string())?;
     sessions
         .observe(&RecordedEvent {
             event_id: event_id(authority_domain_id.clone(), 1),
@@ -477,8 +525,7 @@ async fn operation_case(
             return Err("registered resource differs from Operation target".to_owned());
         }
         (
-            SessionRegistry::new(authority_domain_id.clone())
-                .map_err(|error| error.to_string())?,
+            SessionRegistry::new(authority_domain_id.clone()).map_err(|error| error.to_string())?,
             resource_registry(&authority_domain_id, std::slice::from_ref(&identity)),
         )
     };
@@ -716,7 +763,10 @@ fn validated_report(
             completeness: tier as i32,
             mutations,
         }],
-        observed_at: Timestamp { seconds: 100, nanos: 0 },
+        observed_at: Timestamp {
+            seconds: 100,
+            nanos: 0,
+        },
     }
 }
 
@@ -728,7 +778,10 @@ async fn assert_resource_revisions_match_committed_lsns(
     let mut expected_records = std::collections::HashMap::new();
     let mut expected_views = std::collections::HashMap::new();
     for event in storage
-        .read_after(authority_domain_id, patchbay_contracts::patchbay::Lsn { value: 0 })
+        .read_after(
+            authority_domain_id,
+            patchbay_contracts::patchbay::Lsn { value: 0 },
+        )
         .await
         .map_err(|error| error.to_string())?
     {
@@ -743,14 +796,24 @@ async fn assert_resource_revisions_match_committed_lsns(
             .value;
         let state = ResourceStateEvent::decode(event.payload.payload.as_slice())
             .map_err(|error| format!("committed resource event did not decode: {error}"))?;
-        let adapter_id = state.source_adapter_id.ok_or("committed resource event missing adapter")?;
+        let adapter_id = state
+            .source_adapter_id
+            .ok_or("committed resource event missing adapter")?;
         for view in state.views {
-            let resource_kind = view.resource_kind.ok_or("committed resource view missing kind")?;
-            expected_views.insert((adapter_id.value.clone(), resource_kind.value), committed_lsn);
+            let resource_kind = view
+                .resource_kind
+                .ok_or("committed resource view missing kind")?;
+            expected_views.insert(
+                (adapter_id.value.clone(), resource_kind.value),
+                committed_lsn,
+            );
         }
         for mutation in state.mutations {
             let identity = ResourceIdentity::try_from_wire(
-                mutation.identity.as_ref().ok_or("committed resource mutation missing identity")?,
+                mutation
+                    .identity
+                    .as_ref()
+                    .ok_or("committed resource mutation missing identity")?,
             )
             .map_err(|error| error.to_string())?;
             expected_records.insert(identity, committed_lsn);
@@ -764,24 +827,44 @@ async fn assert_resource_revisions_match_committed_lsns(
         })
         || registry.views().any(|view| {
             expected_views
-                .get(&(view.key.adapter_id.value.clone(), view.key.resource_kind.value.clone()))
+                .get(&(
+                    view.key.adapter_id.value.clone(),
+                    view.key.resource_kind.value.clone(),
+                ))
                 .copied()
                 != Some(view.revision_lsn)
         })
     {
-        return Err("production resource record/view revisions do not equal their committed event LSNs".to_owned());
+        return Err(
+            "production resource record/view revisions do not equal their committed event LSNs"
+                .to_owned(),
+        );
     }
     Ok(())
 }
 
 async fn completeness(vector: &ConformanceVector) -> Result<(), String> {
-    let authority_domain_id = AuthorityDomainId { value: string(&vector.input, "/authority_domain_id")?.to_owned() };
-    let adapter_id = AdapterId { value: string(&vector.input, "/adapter_id")?.to_owned() };
-    let resource_kind = ResourceKind { value: string(&vector.input, "/resource_kind")?.to_owned() };
-    let generation = vector.input.pointer("/adapter_generation").and_then(Value::as_u64).ok_or("missing adapter generation")?;
+    let authority_domain_id = AuthorityDomainId {
+        value: string(&vector.input, "/authority_domain_id")?.to_owned(),
+    };
+    let adapter_id = AdapterId {
+        value: string(&vector.input, "/adapter_id")?.to_owned(),
+    };
+    let resource_kind = ResourceKind {
+        value: string(&vector.input, "/resource_kind")?.to_owned(),
+    };
+    let generation = vector
+        .input
+        .pointer("/adapter_generation")
+        .and_then(Value::as_u64)
+        .ok_or("missing adapter generation")?;
     let cached = tuple(&vector.input, "/baseline/cached_identity")?;
     let unknown = tuple(&vector.input, "/baseline/unknown_identity")?;
-    let cases = vector.input.pointer("/cases").and_then(Value::as_array).ok_or("missing completeness cases")?;
+    let cases = vector
+        .input
+        .pointer("/cases")
+        .and_then(Value::as_array)
+        .ok_or("missing completeness cases")?;
 
     for case in cases {
         let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
@@ -796,14 +879,24 @@ async fn completeness(vector: &ConformanceVector) -> Result<(), String> {
                 generation,
                 ResourceReportMode::Delta,
                 AdapterSnapshotSupport::Partial,
-                vec![report_mutation(&cached, true), report_mutation(&unknown, false)],
+                vec![
+                    report_mutation(&cached, true),
+                    report_mutation(&unknown, false),
+                ],
             ),
         )
         .await
         .map_err(|error| error.to_string())?;
-        assert_resource_revisions_match_committed_lsns(&storage, &authority_domain_id, &registry).await?;
-        let before_cached = registry.get(&cached).cloned().ok_or("cached baseline missing")?;
-        let before_unknown = registry.get(&unknown).cloned().ok_or("unknown baseline missing")?;
+        assert_resource_revisions_match_committed_lsns(&storage, &authority_domain_id, &registry)
+            .await?;
+        let before_cached = registry
+            .get(&cached)
+            .cloned()
+            .ok_or("cached baseline missing")?;
+        let before_unknown = registry
+            .get(&unknown)
+            .cloned()
+            .ok_or("unknown baseline missing")?;
         let mode_name = string(case, "/mode")?;
         let mode = match mode_name {
             "snapshot" => ResourceReportMode::Snapshot,
@@ -817,7 +910,11 @@ async fn completeness(vector: &ConformanceVector) -> Result<(), String> {
             "none" => AdapterSnapshotSupport::None,
             _ => return Err(format!("unknown snapshot tier {tier_name}")),
         };
-        if case.pointer("/listed").and_then(Value::as_array).is_none_or(|listed| !listed.is_empty()) {
+        if case
+            .pointer("/listed")
+            .and_then(Value::as_array)
+            .is_none_or(|listed| !listed.is_empty())
+        {
             return Err("deterministic omission cases must list no identities".to_owned());
         }
         ingest_resource_report(
@@ -835,15 +932,19 @@ async fn completeness(vector: &ConformanceVector) -> Result<(), String> {
         )
         .await
         .map_err(|error| error.to_string())?;
-        assert_resource_revisions_match_committed_lsns(&storage, &authority_domain_id, &registry).await?;
+        assert_resource_revisions_match_committed_lsns(&storage, &authority_domain_id, &registry)
+            .await?;
         let cached_record = registry.get(&cached).ok_or("cached record disappeared")?;
         let unknown_record = registry.get(&unknown).ok_or("unknown record disappeared")?;
         match string(case, "/name")? {
             "authoritative-omission" => {
                 if string(&vector.expected_outcome, "/authoritative_omission")? != "tombstoned"
-                    || !cached_record.tombstoned() || !unknown_record.tombstoned()
+                    || !cached_record.tombstoned()
+                    || !unknown_record.tombstoned()
                 {
-                    return Err("authoritative omission did not tombstone baseline identities".to_owned());
+                    return Err(
+                        "authoritative omission did not tombstone baseline identities".to_owned(),
+                    );
                 }
             }
             "partial-omission" => {
@@ -876,27 +977,48 @@ async fn completeness(vector: &ConformanceVector) -> Result<(), String> {
             }
             name => return Err(format!("unknown completeness case {name}")),
         }
-        if string(&vector.expected_outcome, "/no_payload_omission")? != "unknown" && !unknown_record.tombstoned() {
+        if string(&vector.expected_outcome, "/no_payload_omission")? != "unknown"
+            && !unknown_record.tombstoned()
+        {
             return Err("no-payload omission expectation is not unknown".to_owned());
         }
-        let replayed = rebuild_from_log(&storage, &authority_domain_id).await.map_err(|error| error.to_string())?;
+        let replayed = rebuild_from_log(&storage, &authority_domain_id)
+            .await
+            .map_err(|error| error.to_string())?;
         if boolean(&vector.expected_outcome, "/hot_equals_replay")? && replayed != registry {
             return Err("hot resource registry diverges from durable replay".to_owned());
         }
-        let events = storage.read_after(&authority_domain_id, patchbay_contracts::patchbay::Lsn { value: 0 }).await.map_err(|error| error.to_string())?;
-        if events.iter().filter(|event| event.payload.kind == StoredEventKind::ResourceState as i32).count() != 2
-            || vector.expected_outcome.pointer("/accepted_report_append_count").and_then(Value::as_u64) != Some(1)
-            || !boolean(&vector.expected_outcome, "/record_and_view_revisions_equal_committed_lsn")?
+        let events = storage
+            .read_after(
+                &authority_domain_id,
+                patchbay_contracts::patchbay::Lsn { value: 0 },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        if events
+            .iter()
+            .filter(|event| event.payload.kind == StoredEventKind::ResourceState as i32)
+            .count()
+            != 2
+            || vector
+                .expected_outcome
+                .pointer("/accepted_report_append_count")
+                .and_then(Value::as_u64)
+                != Some(1)
+            || !boolean(
+                &vector.expected_outcome,
+                "/record_and_view_revisions_equal_committed_lsn",
+            )?
         {
-            return Err("accepted report did not produce exactly one durable resource event".to_owned());
+            return Err(
+                "accepted report did not produce exactly one durable resource event".to_owned(),
+            );
         }
     }
     Ok(())
 }
 
-async fn resource_replay_prefix_idempotent(
-    vector: &ConformanceVector,
-) -> Result<(), String> {
+async fn resource_replay_prefix_idempotent(vector: &ConformanceVector) -> Result<(), String> {
     let authority_domain_id = AuthorityDomainId {
         value: string(&vector.input, "/authority_domain_id")?.to_owned(),
     };
@@ -1080,18 +1202,13 @@ async fn resource_replay_prefix_idempotent(
             .pointer("/sibling_prefix_probe/lsn")
             .and_then(Value::as_u64)
             != Some(3)
-        || string(
-            &vector.input,
-            "/sibling_prefix_probe/stored_event_kind",
-        )? != "STORED_EVENT_KIND_OBSERVATION"
+        || string(&vector.input, "/sibling_prefix_probe/stored_event_kind")?
+            != "STORED_EVENT_KIND_OBSERVATION"
         || registry == after_replacement
         || registry.get(&old).cloned() != old_before_sibling
         || registry.get(&replacement).cloned() != replacement_before_sibling
         || registry.views().cloned().collect::<Vec<_>>() != views_before_sibling
-        || !boolean(
-            &vector.expected_outcome,
-            "/sibling_probe_advanced_prefix",
-        )?
+        || !boolean(&vector.expected_outcome, "/sibling_probe_advanced_prefix")?
         || !boolean(
             &vector.expected_outcome,
             "/sibling_probe_resource_state_unchanged",
@@ -1112,14 +1229,8 @@ async fn resource_replay_prefix_idempotent(
         return Err("covered sibling prefix probe was not idempotent".into());
     }
 
-    let failed_tombstone = tuple(
-        &vector.input,
-        "/failed_replacement/tombstone_identity",
-    )?;
-    let failed_upsert = tuple(
-        &vector.input,
-        "/failed_replacement/paired_upsert_identity",
-    )?;
+    let failed_tombstone = tuple(&vector.input, "/failed_replacement/tombstone_identity")?;
+    let failed_upsert = tuple(&vector.input, "/failed_replacement/paired_upsert_identity")?;
     let failed_lsn = vector
         .input
         .pointer("/failed_replacement/lsn")
@@ -1146,12 +1257,12 @@ async fn resource_replay_prefix_idempotent(
         || failed_generation != 2
         || tombstone_from != 2
         || upsert_from != 2
-        || !registry.get(&failed_tombstone).is_some_and(|record| {
-            !record.tombstoned() && record.revision_lsn == tombstone_from
-        })
-        || !registry.get(&failed_upsert).is_some_and(|record| {
-            record.tombstoned() && record.revision_lsn == upsert_from
-        })
+        || !registry
+            .get(&failed_tombstone)
+            .is_some_and(|record| !record.tombstoned() && record.revision_lsn == tombstone_from)
+        || !registry
+            .get(&failed_upsert)
+            .is_some_and(|record| record.tombstoned() && record.revision_lsn == upsert_from)
     {
         return Err(
             "failed replacement fixture does not start with an applicable tombstone and terminal upsert target"
@@ -1238,10 +1349,7 @@ async fn resource_replay_prefix_idempotent(
             &vector.expected_outcome,
             "/failed_replacement_error_identity",
         )?
-        || string(
-            &vector.expected_outcome,
-            "/failed_replacement_result",
-        )? != "terminal_tombstone"
+        || string(&vector.expected_outcome, "/failed_replacement_result")? != "terminal_tombstone"
         || vector
             .expected_outcome
             .pointer("/failed_replacement_applied_through_lsn")
@@ -1283,7 +1391,10 @@ async fn resource_replay_prefix_idempotent(
         return Err("retired mutation inputs and expectations differ".into());
     }
     for mutation in mutation_names {
-        let mutation = match mutation.as_str().ok_or("retired mutation must be a string")? {
+        let mutation = match mutation
+            .as_str()
+            .ok_or("retired mutation must be a string")?
+        {
             "upsert" => report_mutation(&old, true),
             "unknown" => report_mutation(&old, false),
             "tombstone" => ResourceReportMutation {
@@ -1345,10 +1456,7 @@ async fn resource_replay_prefix_idempotent(
         || replay_a != replay_b
         || covered_replay != replay_a
         || !boolean(&vector.expected_outcome, "/initial_applied")?
-        || !boolean(
-            &vector.expected_outcome,
-            "/replacement_applied_atomically",
-        )?
+        || !boolean(&vector.expected_outcome, "/replacement_applied_atomically")?
         || !boolean(&vector.expected_outcome, "/retired_identity_tombstoned")?
         || !boolean(&vector.expected_outcome, "/replacement_identity_active")?
         || !boolean(
@@ -1378,16 +1486,25 @@ fn collision(vector: &ConformanceVector) -> Result<(), String> {
         ("exact", true, "/exact_tuple_authorized"),
         ("changed_adapter", false, "/changed_adapter_authorized"),
         ("changed_kind", false, "/changed_kind_authorized"),
-        ("changed_resource_id", false, "/changed_resource_id_authorized"),
+        (
+            "changed_resource_id",
+            false,
+            "/changed_resource_id_authorized",
+        ),
     ];
     let mut keys = std::collections::HashSet::new();
     for (name, oracle, expected_pointer) in cases {
         let requested = tuple(&vector.input, &format!("/requests/{name}"))?;
         let actual = target_scope_matches(&grant.to_scope(), &requested.to_scope());
         if actual != oracle || actual != boolean(&vector.expected_outcome, expected_pointer)? {
-            return Err(format!("identity collision case {name} disagrees with exact-tuple oracle"));
+            return Err(format!(
+                "identity collision case {name} disagrees with exact-tuple oracle"
+            ));
         }
-        let operation = Operation { target_scope: Some(requested.to_scope()), ..Operation::default() };
+        let operation = Operation {
+            target_scope: Some(requested.to_scope()),
+            ..Operation::default()
+        };
         keys.insert(target_key_for(&operation).map_err(|error| error.to_string())?);
     }
     if boolean(&vector.expected_outcome, "/target_keys_all_distinct")? != (keys.len() == 4) {
@@ -1397,30 +1514,64 @@ fn collision(vector: &ConformanceVector) -> Result<(), String> {
 }
 
 async fn injection(vector: &ConformanceVector) -> Result<(), String> {
-    let authority_domain_id = AuthorityDomainId { value: "auth-main".to_owned() };
-    let claimed = tuple(&vector.input, "/opaque_payload/encoded_claim/resource_identity")?;
-    let forged_domain = AuthorityDomainId { value: string(&vector.input, "/opaque_payload/encoded_claim/authority_domain_id")?.to_owned() };
+    let authority_domain_id = AuthorityDomainId {
+        value: "auth-main".to_owned(),
+    };
+    let claimed = tuple(
+        &vector.input,
+        "/opaque_payload/encoded_claim/resource_identity",
+    )?;
+    let forged_domain = AuthorityDomainId {
+        value: string(
+            &vector.input,
+            "/opaque_payload/encoded_claim/authority_domain_id",
+        )?
+        .to_owned(),
+    };
     let forged_state = ResourceStateEvent {
         authority_domain_id: Some(forged_domain),
-        source_adapter_id: Some(AdapterId { value: string(&vector.input, "/opaque_payload/encoded_claim/source_adapter_id")?.to_owned() }),
-        source_adapter_generation: Some(Generation { value: vector.input.pointer("/opaque_payload/encoded_claim/source_adapter_generation").and_then(Value::as_u64).ok_or("missing forged generation")? }),
-        views: vec![ResourceViewStateUpdate { resource_kind: Some(claimed.resource_kind().clone()), completeness: AdapterSnapshotSupport::Authoritative as i32 }],
+        source_adapter_id: Some(AdapterId {
+            value: string(
+                &vector.input,
+                "/opaque_payload/encoded_claim/source_adapter_id",
+            )?
+            .to_owned(),
+        }),
+        source_adapter_generation: Some(Generation {
+            value: vector
+                .input
+                .pointer("/opaque_payload/encoded_claim/source_adapter_generation")
+                .and_then(Value::as_u64)
+                .ok_or("missing forged generation")?,
+        }),
+        views: vec![ResourceViewStateUpdate {
+            resource_kind: Some(claimed.resource_kind().clone()),
+            completeness: AdapterSnapshotSupport::Authoritative as i32,
+        }],
         mutations: vec![ResourceStateMutation {
             identity: Some(claimed.to_scope().resource.expect("resource identity")),
             from_revision_lsn: None,
-            mutation: Some(resource_state_mutation::Mutation::Upsert(ResourceStateUpsert {
-                resource_payload: Some(envelope("resource.schema", vec![1])),
-                projection_payload: Some(envelope("projection.schema", vec![2])),
-            })),
+            mutation: Some(resource_state_mutation::Mutation::Upsert(
+                ResourceStateUpsert {
+                    resource_payload: Some(envelope("resource.schema", vec![1])),
+                    projection_payload: Some(envelope("projection.schema", vec![2])),
+                },
+            )),
         }],
-        observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+        observed_at: Some(Timestamp {
+            seconds: 100,
+            nanos: 0,
+        }),
     };
     let target = tuple(&vector.input, "/observation_target")?;
     let observation = Observation {
         authority_domain_id: Some(authority_domain_id.clone()),
         kind: ObservationKind::Event as i32,
         target_scope: Some(target.to_scope()),
-        payload: Some(envelope(string(&vector.input, "/opaque_payload/schema_ref")?, forged_state.encode_to_vec())),
+        payload: Some(envelope(
+            string(&vector.input, "/opaque_payload/schema_ref")?,
+            forged_state.encode_to_vec(),
+        )),
         ..Observation::default()
     };
     if string(&vector.input, "/opaque_payload/content_type")? != "PAYLOAD_CONTENT_TYPE_PROTOBUF" {
@@ -1430,16 +1581,29 @@ async fn injection(vector: &ConformanceVector) -> Result<(), String> {
     ingest_observation(&storage, &NoContracts, observation)
         .await
         .map_err(|error| error.to_string())?;
-    let events = storage.read_after(&authority_domain_id, patchbay_contracts::patchbay::Lsn { value: 0 }).await.map_err(|error| error.to_string())?;
-    let registry = rebuild_from_log(&storage, &authority_domain_id).await.map_err(|error| error.to_string())?;
+    let events = storage
+        .read_after(
+            &authority_domain_id,
+            patchbay_contracts::patchbay::Lsn { value: 0 },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    let registry = rebuild_from_log(&storage, &authority_domain_id)
+        .await
+        .map_err(|error| error.to_string())?;
     if events.len() != 1
         || events[0].payload.kind != StoredEventKind::Observation as i32
-        || string(&vector.expected_outcome, "/stored_event_kind")? != "STORED_EVENT_KIND_OBSERVATION"
+        || string(&vector.expected_outcome, "/stored_event_kind")?
+            != "STORED_EVENT_KIND_OBSERVATION"
         || registry.contains(&claimed)
         || boolean(&vector.expected_outcome, "/resource_registry_changed")?
         || boolean(&vector.expected_outcome, "/resource_resolved")?
         || boolean(&vector.expected_outcome, "/adapter_assigned_lsn_accepted")?
-        || vector.input.pointer("/opaque_payload/encoded_claim/adapter_assigned_lsn").and_then(Value::as_u64).is_none()
+        || vector
+            .input
+            .pointer("/opaque_payload/encoded_claim/adapter_assigned_lsn")
+            .and_then(Value::as_u64)
+            .is_none()
     {
         return Err("opaque Observation payload crossed into core resource state".to_owned());
     }
@@ -1447,7 +1611,9 @@ async fn injection(vector: &ConformanceVector) -> Result<(), String> {
 }
 
 async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), String> {
-    if vector.property_id.is_empty() || !matches!(vector.promotion_status.as_str(), "draft" | "promoted") {
+    if vector.property_id.is_empty()
+        || !matches!(vector.promotion_status.as_str(), "draft" | "promoted")
+    {
         return Err("conformance vector has invalid property or promotion metadata".to_owned());
     }
     match case {
@@ -1457,7 +1623,10 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         "resource_replay_prefix_idempotent" => resource_replay_prefix_idempotent(vector).await,
         "resource_identity_collision_fenced" => collision(vector),
         "opaque_observation_cannot_fold_resource_state" => injection(vector).await,
-        _ => Err(format!("unhandled {RUNNER} conformance case {}:{case}", vector.vector_id)),
+        _ => Err(format!(
+            "unhandled {RUNNER} conformance case {}:{case}",
+            vector.vector_id
+        )),
     }
 }
 
@@ -1467,18 +1636,39 @@ async fn conformance_vector_runner() {
     let requested = if env::var("PATCHBAY_CONFORMANCE_REQUESTS").is_ok() {
         requests()
     } else {
-        vectors.values().flat_map(|vector| vector.implementation_checks.iter()
-            .filter(|check| check.runner == RUNNER)
-            .map(|check| RequestedCheck { vector_id: vector.vector_id.clone(), case: check.case.clone() }))
+        vectors
+            .values()
+            .flat_map(|vector| {
+                vector
+                    .implementation_checks
+                    .iter()
+                    .filter(|check| check.runner == RUNNER)
+                    .map(|check| RequestedCheck {
+                        vector_id: vector.vector_id.clone(),
+                        case: check.case.clone(),
+                    })
+            })
             .collect()
     };
     for request in requested {
-        let vector = vectors.get(&request.vector_id).unwrap_or_else(|| panic!("unknown vector id {}", request.vector_id));
+        let vector = vectors
+            .get(&request.vector_id)
+            .unwrap_or_else(|| panic!("unknown vector id {}", request.vector_id));
         assert!(
-            vector.implementation_checks.iter().any(|check| check.runner == RUNNER && check.case == request.case),
-            "unregistered requested check {}:{}", request.vector_id, request.case,
+            vector
+                .implementation_checks
+                .iter()
+                .any(|check| check.runner == RUNNER && check.case == request.case),
+            "unregistered requested check {}:{}",
+            request.vector_id,
+            request.case,
         );
-        execute_case(vector, &request.case).await.unwrap_or_else(|error| panic!("{error}"));
-        println!("PATCHBAY_CONFORMANCE_EXECUTED={}:{}", request.vector_id, request.case);
+        execute_case(vector, &request.case)
+            .await
+            .unwrap_or_else(|error| panic!("{error}"));
+        println!(
+            "PATCHBAY_CONFORMANCE_EXECUTED={}:{}",
+            request.vector_id, request.case
+        );
     }
 }

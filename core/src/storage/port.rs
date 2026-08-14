@@ -391,6 +391,18 @@ pub enum StorageError {
         existing_lsn: u64,
     },
 
+    /// A transition-producing Observation retry disagrees with the canonical
+    /// durable evidence already recorded for the same command and target.
+    /// Dedicated Observation boundaries return this before another source,
+    /// transition, or audit can become durable.
+    #[error(
+        "observation evidence for command {command_id} conflicts with existing source LSN {existing_lsn}"
+    )]
+    ObservationEvidenceConflict {
+        command_id: String,
+        existing_lsn: u64,
+    },
+
     /// The requested snapshot LSN does not correspond to a committed event.
     /// A snapshot must materialize at a real committed LSN.
     #[error("snapshot LSN {0} does not correspond to a committed event")]
@@ -627,9 +639,11 @@ pub trait Storage: Send + Sync {
     }
 
     /// Atomically append one status/Result Observation, its already-validated
-    /// derived command transition, and the transition's audit record. This
-    /// removes the source-without-transition crash prefix; implementations
-    /// must validate the typed pair and must not split this into generic calls.
+    /// derived command transition, and the transition's audit record. The
+    /// implementation must rebuild the exact durable command prefix inside the
+    /// writer transaction, validate and stage the candidate pair before insert,
+    /// and return the canonical source for an exact retry. Generic append paths
+    /// must reject every Observation shape admitted here.
     fn append_observation_transition_audited(
         &self,
         _authority_domain_id: &AuthorityDomainId,
@@ -638,6 +652,34 @@ pub trait Storage: Send + Sync {
         _audit: AuditRecordDraft,
     ) -> impl std::future::Future<Output = Result<ObservationTransitionAppend, StorageError>> + Send
     {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    /// Atomically append one qualifying successful spawn Result plus its
+    /// bounded deferred-completion audit, or reconcile an exact retry to the
+    /// original pair. Implementations must validate the durable command
+    /// pre-state and target inside the writer transaction. Changed evidence for
+    /// the same command/target fails before durability; generic Observation
+    /// routes must reject this shape.
+    fn append_spawn_result_deferred_audited(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _observation: Observation,
+        _audit: AuditRecordDraft,
+    ) -> impl std::future::Future<Output = Result<AuditedAppend, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    /// Reconcile a byte/semantic-exact status/Result retry against the
+    /// canonical qualified durable source. This is serialized through the
+    /// backend writer boundary and never appends. `Ok(None)` means the
+    /// candidate is not an exact retry and must follow the caller's normal
+    /// stale/conflict rejection path.
+    fn reconcile_observation_retry(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _observation: Observation,
+    ) -> impl std::future::Future<Output = Result<Option<EventId>, StorageError>> + Send {
         async { Err(StorageError::UnsupportedOperation) }
     }
 

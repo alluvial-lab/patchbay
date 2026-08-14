@@ -8,23 +8,24 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, resource_report, resource_report_mutation, ActorEndpointRef, ActorId,
-    AdapterCapability, AdapterId, AdapterRegistration, AdapterSnapshotSupport,
-    AdapterTargetCategory, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId,
-    CommandTransition, ControlSurfacePrincipalRecord, ControlSurfaceRevocation, DeviceId, EndpointId, EventId, EnterSecurityLockdownRequest, ExitSecurityLockdownRequest, FailureCode, Generation, Grant,
-    GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LoadSnapshotRequest, Lsn,
-    AuditQuery, DiagnosticsQuery, Operation, OperationKind, OperationState, OperatorRecord,
-    RevokeAllOperatorSessionsRequest, RevokeControlSurfaceEndpointRequest,
-    RevokeControlSurfacePrincipalRequest, RevokeGrantRequest,
-    PayloadEnvelope, PrincipalEnrollment, PayloadContentType, QueryDiagnosticsRequest, RuntimeSessionId,
-    ObservationRequest, ResourceCapability, ResourceFreshnessState, ResourceId, ResourceKind,
+    diagnostics_query, observation_request, query_diagnostics_response, resource_report,
+    resource_report_mutation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
+    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
+    AuditEventKind, AuditQuery, AuthorityDomainId, CommandId, CommandTransition,
+    ControlSurfacePrincipalRecord, ControlSurfaceRevocation, DeviceId, DiagnosticsQuery,
+    EndpointId, EnterSecurityLockdownRequest, EventId, ExitSecurityLockdownRequest, FailureCode,
+    Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey,
+    LoadSnapshotRequest, Lsn, ObservationRequest, Operation, OperationKind, OperationState,
+    OperatorRecord, PayloadContentType, PayloadEnvelope, PrincipalEnrollment,
+    QueryDiagnosticsRequest, ResourceCapability, ResourceFreshnessState, ResourceId, ResourceKind,
     ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshot,
-    ResourceSnapshotReport, ResourceStateUpsert, ResourceViewReport, SchemaDescriptor,
-    SessionActivityState,
-    SessionConnectivityState, SessionRegistered, SessionSnapshot, SessionState, SnapshotViewKind,
-    StoredEventKind, StoredEventPayload, StoredSessionCheckpoint, SubmissionOutcome,
-    SubmitRequest, SubscribeRequest, TargetScope, TargetScopeKind, TimeWindow,
-    VerifyOperatorPasswordRequest, diagnostics_query, query_diagnostics_response,
+    ResourceSnapshotReport, ResourceStateUpsert, ResourceViewReport,
+    RevokeAllOperatorSessionsRequest, RevokeControlSurfaceEndpointRequest,
+    RevokeControlSurfacePrincipalRequest, RevokeGrantRequest, RuntimeSessionId, SchemaDescriptor,
+    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionSnapshot,
+    SessionState, SnapshotViewKind, StoredEventKind, StoredEventPayload, StoredSessionCheckpoint,
+    SubmissionOutcome, SubmitRequest, SubscribeRequest, TargetScope, TargetScopeKind, TimeWindow,
+    VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
@@ -32,12 +33,12 @@ use patchbay_core::{
         events as authority_events, hash_principal_credential, ingest_grant, AuthorityRegistry,
     },
     session::events as session_events,
-    time::{Clock, TestClock},
     storage::{
         AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDedupOutcome, AuditedStorage,
         CoreGenerationStore, DedupOutcome, RecordedEvent, RusqliteStorage, Storage, StorageError,
         StoredSnapshot, TargetKey,
     },
+    time::{Clock, TestClock},
 };
 use patchbay_core_server::{
     adapter_service::{
@@ -46,14 +47,15 @@ use patchbay_core_server::{
     },
     admin_service::{AdminServiceImpl, SetupSecret},
     decision_gate::CoreDecisionGate,
-    login_security::{LoginLimiter, StderrLoginAuditSink},
-    operator_session::OperatorSessionBinding,
     issuer::{
         OPERATOR_ID_HEADER, OPERATOR_SESSION_HEADER, PRINCIPAL_ID_HEADER, PRINCIPAL_SECRET_HEADER,
     },
+    login_security::{LoginLimiter, StderrLoginAuditSink},
+    operator_session::OperatorSessionBinding,
     rpc::{
         adapter_control_service_server::AdapterControlService,
-        admin_service_server::AdminService, control_service_client::ControlServiceClient,
+        admin_service_server::AdminService,
+        control_service_client::ControlServiceClient,
         control_service_server::{ControlService, ControlServiceServer},
     },
     service::{
@@ -205,7 +207,10 @@ impl Storage for FailPostAppendReadOnceStorage {
         audit: AuditRecordDraft,
     ) -> Result<EventId, StorageError> {
         if self.fail_next_decision.swap(false, Ordering::SeqCst) {
-            return Err(StorageError::WriteFailed { message: "injected decision failure".to_owned(), retryable: true });
+            return Err(StorageError::WriteFailed {
+                message: "injected decision failure".to_owned(),
+                retryable: true,
+            });
         }
         self.inner
             .append_audited(authority_domain_id, source, audit)
@@ -219,7 +224,9 @@ impl Storage for FailPostAppendReadOnceStorage {
         source: StoredEventPayload,
         audit: AuditRecordDraft,
     ) -> Result<AuditedAppend, StorageError> {
-        self.inner.append_audited(authority_domain_id, source, audit).await
+        self.inner
+            .append_audited(authority_domain_id, source, audit)
+            .await
     }
 
     async fn append_dedup_audited(
@@ -289,7 +296,10 @@ async fn revoke_all_survives_restart_and_forces_a_higher_generation_login() {
         .expect("revoke-all must commit through the gRPC boundary")
         .into_inner();
     assert!(revoked.revoked_session_count > 0);
-    assert_eq!(revoked.invalidated_through_generation.unwrap().value, old_auth.session_generation);
+    assert_eq!(
+        revoked.invalidated_through_generation.unwrap().value,
+        old_auth.session_generation
+    );
 
     server.task.abort();
     let (mut client, task, fresh_auth) = serve(server.storage.clone()).await;
@@ -344,7 +354,10 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
         .expect("a distinct endpoint can revoke the target principal")
         .into_inner();
     assert!(principal_revocation.revoked_session_count > 0);
-    assert_eq!(operation_event_count(&server.storage).await, before_principal);
+    assert_eq!(
+        operation_event_count(&server.storage).await,
+        before_principal
+    );
     let principal_repeat = server
         .client
         .revoke_control_surface_principal(authenticated_request(
@@ -382,7 +395,10 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
         .expect("a distinct endpoint can revoke the target endpoint")
         .into_inner();
     assert!(endpoint_revocation.revoked_session_count > 0);
-    assert_eq!(operation_event_count(&server.storage).await, before_endpoint);
+    assert_eq!(
+        operation_event_count(&server.storage).await,
+        before_endpoint
+    );
     let endpoint_repeat = server
         .client
         .revoke_control_surface_endpoint(authenticated_request(
@@ -448,7 +464,9 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
             AuditPageSpec {
                 kinds: vec![AuditEventKind::AuthorizationFailed],
                 actor_id: None,
-                endpoint_id: Some(EndpointId { value: "fourth-endpoint".to_owned() }),
+                endpoint_id: Some(EndpointId {
+                    value: "fourth-endpoint".to_owned(),
+                }),
                 command_id: None,
                 grant_id: None,
                 target: None,
@@ -471,7 +489,9 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
             AuditPageSpec {
                 kinds: vec![AuditEventKind::ControlSurfacePrincipalRevoked],
                 actor_id: None,
-                endpoint_id: Some(EndpointId { value: "second-endpoint".to_owned() }),
+                endpoint_id: Some(EndpointId {
+                    value: "second-endpoint".to_owned(),
+                }),
                 command_id: None,
                 grant_id: None,
                 target: None,
@@ -488,7 +508,10 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
     assert_eq!(principal_audits.records.len(), 2);
     assert!(principal_audits.records.iter().all(|record| {
         record.endpoint_id.as_ref().map(|id| id.value.as_str()) == Some("second-endpoint")
-            && record.target_scope.as_ref().map(|scope| scope.legacy_audit_resource_id.as_str())
+            && record
+                .target_scope
+                .as_ref()
+                .map(|scope| scope.legacy_audit_resource_id.as_str())
                 == Some(first.principal_id.as_str())
     }));
 
@@ -499,7 +522,9 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
             AuditPageSpec {
                 kinds: vec![AuditEventKind::ControlSurfaceEndpointRevoked],
                 actor_id: None,
-                endpoint_id: Some(EndpointId { value: "third-endpoint".to_owned() }),
+                endpoint_id: Some(EndpointId {
+                    value: "third-endpoint".to_owned(),
+                }),
                 command_id: None,
                 grant_id: None,
                 target: None,
@@ -516,7 +541,10 @@ async fn scope_revocations_reject_operations_and_subscriptions_before_acceptance
     assert_eq!(endpoint_audits.records.len(), 2);
     assert!(endpoint_audits.records.iter().all(|record| {
         record.endpoint_id.as_ref().map(|id| id.value.as_str()) == Some("third-endpoint")
-            && record.target_scope.as_ref().map(|scope| scope.legacy_audit_resource_id.as_str())
+            && record
+                .target_scope
+                .as_ref()
+                .map(|scope| scope.legacy_audit_resource_id.as_str())
                 == Some("second-endpoint")
     }));
 
@@ -791,7 +819,10 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
             .as_ref()
             .and_then(|event_id| event_id.lsn)
     );
-    assert!(materialized.snapshot_lsn.as_ref().unwrap().value >= accepted.accepted_lsn.as_ref().unwrap().value);
+    assert!(
+        materialized.snapshot_lsn.as_ref().unwrap().value
+            >= accepted.accepted_lsn.as_ref().unwrap().value
+    );
     assert_eq!(
         materialized.sessions[0].state,
         Some(SessionState {
@@ -832,9 +863,15 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
         .expect("corrupt/older checkpoint is repaired by the current session projection");
 
     let resource_identity = patchbay_contracts::patchbay::ResourceIdentity {
-        adapter_id: Some(AdapterId { value: "resource-adapter".into() }),
-        resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
-        resource_id: Some(ResourceId { value: "pool-1".into() }),
+        adapter_id: Some(AdapterId {
+            value: "resource-adapter".into(),
+        }),
+        resource_kind: Some(ResourceKind {
+            value: "provider_pool".into(),
+        }),
+        resource_id: Some(ResourceId {
+            value: "pool-1".into(),
+        }),
     };
     let adapter_service = AdapterControlServiceImpl::new(
         server.storage.clone(),
@@ -846,14 +883,20 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
     let attached = adapter_service
         .attach(Request::new(AttachRequest {
             registration: Some(AdapterRegistration {
-                adapter_id: Some(AdapterId { value: "resource-adapter".into() }),
-                endpoint_id: Some(EndpointId { value: "resource-endpoint".into() }),
+                adapter_id: Some(AdapterId {
+                    value: "resource-adapter".into(),
+                }),
+                endpoint_id: Some(EndpointId {
+                    value: "resource-endpoint".into(),
+                }),
                 authority_domain_id: Some(domain()),
                 adapter_generation: Some(Generation { value: 3 }),
                 capability: Some(AdapterCapability {
                     target_categories: vec![AdapterTargetCategory::OperationalResource as i32],
                     resource_capabilities: vec![ResourceCapability {
-                        resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
+                        resource_kind: Some(ResourceKind {
+                            value: "provider_pool".into(),
+                        }),
                         snapshot_support: AdapterSnapshotSupport::Partial as i32,
                         projection_contract: Some(ResourceProjectionContract {
                             target_category: AdapterTargetCategory::OperationalResource as i32,
@@ -884,37 +927,51 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
         .to_owned();
     let mut report = Request::new(ObservationRequest {
         authority_domain_id: Some(domain()),
-        observation: Some(observation_request::Observation::ResourceReport(ResourceReport {
-            adapter_id: Some(AdapterId { value: "resource-adapter".into() }),
-            adapter_generation: Some(Generation { value: 3 }),
-            report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
-                views: vec![ResourceViewReport {
-                    resource_kind: Some(ResourceKind { value: "provider_pool".into() }),
-                    completeness: AdapterSnapshotSupport::Partial as i32,
-                    mutations: vec![ResourceReportMutation {
-                        identity: Some(resource_identity.clone()),
-                        mutation: Some(resource_report_mutation::Mutation::Upsert(
-                            ResourceStateUpsert {
-                                resource_payload: Some(PayloadEnvelope {
-                                    payload: vec![1],
-                                    content_type: PayloadContentType::Protobuf as i32,
-                                    schema_ref: "provider_pool.payload.v1".into(),
-                                }),
-                                projection_payload: Some(PayloadEnvelope {
-                                    payload: br#"{\"state\":\"ok\"}"#.to_vec(),
-                                    content_type: PayloadContentType::Json as i32,
-                                    schema_ref: "provider_pool.projection.v1".into(),
-                                }),
-                            },
-                        )),
+        observation: Some(observation_request::Observation::ResourceReport(
+            ResourceReport {
+                adapter_id: Some(AdapterId {
+                    value: "resource-adapter".into(),
+                }),
+                adapter_generation: Some(Generation { value: 3 }),
+                report: Some(resource_report::Report::Snapshot(ResourceSnapshotReport {
+                    views: vec![ResourceViewReport {
+                        resource_kind: Some(ResourceKind {
+                            value: "provider_pool".into(),
+                        }),
+                        completeness: AdapterSnapshotSupport::Partial as i32,
+                        mutations: vec![ResourceReportMutation {
+                            identity: Some(resource_identity.clone()),
+                            mutation: Some(resource_report_mutation::Mutation::Upsert(
+                                ResourceStateUpsert {
+                                    resource_payload: Some(PayloadEnvelope {
+                                        payload: vec![1],
+                                        content_type: PayloadContentType::Protobuf as i32,
+                                        schema_ref: "provider_pool.payload.v1".into(),
+                                    }),
+                                    projection_payload: Some(PayloadEnvelope {
+                                        payload: br#"{\"state\":\"ok\"}"#.to_vec(),
+                                        content_type: PayloadContentType::Json as i32,
+                                        schema_ref: "provider_pool.projection.v1".into(),
+                                    }),
+                                },
+                            )),
+                        }],
                     }],
-                }],
-            })),
-            observed_at: Some(Timestamp { seconds: 100, nanos: 0 }),
-        })),
+                })),
+                observed_at: Some(Timestamp {
+                    seconds: 100,
+                    nanos: 0,
+                }),
+            },
+        )),
     });
-    report.metadata_mut().insert(ADAPTER_ID_HEADER, "resource-adapter".parse().unwrap());
-    report.metadata_mut().insert(ADAPTER_EVIDENCE_HEADER, "resource-evidence".parse().unwrap());
+    report
+        .metadata_mut()
+        .insert(ADAPTER_ID_HEADER, "resource-adapter".parse().unwrap());
+    report.metadata_mut().insert(
+        ADAPTER_EVIDENCE_HEADER,
+        "resource-evidence".parse().unwrap(),
+    );
     report.metadata_mut().insert(
         ADAPTER_ATTACHMENT_TOKEN_HEADER,
         attachment_token.parse().unwrap(),
@@ -957,7 +1014,10 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
         .await
         .expect("resource snapshot loads")
         .into_inner();
-    assert_eq!(resource_response.view_kind, SnapshotViewKind::Resource as i32);
+    assert_eq!(
+        resource_response.view_kind,
+        SnapshotViewKind::Resource as i32
+    );
     let resources = ResourceSnapshot::decode(resource_response.snapshot_payload.as_slice())
         .expect("resource response contains ResourceSnapshot");
     assert_eq!(resources.resources.len(), 1);
@@ -982,7 +1042,11 @@ async fn diagnostics_query_uses_query_lifecycle_and_replays_result() {
         })),
     };
     let request = QueryDiagnosticsRequest {
-        operation: Some(diagnostic_query_operation("diagnostic-query", "diagnostic-query-key", query)),
+        operation: Some(diagnostic_query_operation(
+            "diagnostic-query",
+            "diagnostic-query-key",
+            query,
+        )),
     };
     let first = server
         .client
@@ -997,7 +1061,10 @@ async fn diagnostics_query_uses_query_lifecycle_and_replays_result() {
     let submission = first.submission.expect("query has submission");
     assert_eq!(submission.outcome, SubmissionOutcome::Accepted as i32);
     assert_eq!(submission.operation_state, OperationState::Completed as i32);
-    let result_event_id = first.result_event_id.clone().expect("query has durable result");
+    let result_event_id = first
+        .result_event_id
+        .clone()
+        .expect("query has durable result");
     assert!(matches!(
         first.result,
         Some(query_diagnostics_response::Result::Audit(_))
@@ -1045,7 +1112,9 @@ async fn lockdown_entry_decision_failure_leaves_posture_and_operations_usable() 
 
     let submitted = client
         .submit(authenticated_request(
-            SubmitRequest { operation: Some(operation("post-failure-command", "post-failure-key")) },
+            SubmitRequest {
+                operation: Some(operation("post-failure-command", "post-failure-key")),
+            },
             SECRET,
             &auth,
         ))
@@ -1072,11 +1141,17 @@ async fn lockdown_exit_decision_failure_keeps_the_posture_active() {
     .expect("control service initializes");
     let login = control
         .verify_operator_password(core_request(VerifyOperatorPasswordRequest {
-            operator_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+            operator_actor_id: Some(ActorId {
+                value: OPERATOR_ACTOR.to_owned(),
+            }),
             password: "correct-password".to_owned(),
             principal: Some(PrincipalEnrollment {
-                endpoint_id: Some(EndpointId { value: "exit-test".to_owned() }),
-                device_id: Some(DeviceId { value: "exit-host".to_owned() }),
+                endpoint_id: Some(EndpointId {
+                    value: "exit-test".to_owned(),
+                }),
+                device_id: Some(DeviceId {
+                    value: "exit-host".to_owned(),
+                }),
                 endpoint_generation: Some(Generation { value: 1 }),
             }),
         }))
@@ -1086,13 +1161,19 @@ async fn lockdown_exit_decision_failure_keeps_the_posture_active() {
     let principal = login.principal.expect("login principal");
     let auth = TestAuth {
         session_id: login.operator_session_id.expect("login session").value,
-        session_generation: login.operator_session_generation.expect("login generation").value,
+        session_generation: login
+            .operator_session_generation
+            .expect("login generation")
+            .value,
         principal_id: principal.principal_id,
         principal_secret: principal.secret,
     };
     control
         .enter_security_lockdown(authenticated_request(
-            EnterSecurityLockdownRequest { authority_domain_id: Some(domain()), reason_code: "exit_failure".to_owned() },
+            EnterSecurityLockdownRequest {
+                authority_domain_id: Some(domain()),
+                reason_code: "exit_failure".to_owned(),
+            },
             SECRET,
             &auth,
         ))
@@ -1136,12 +1217,16 @@ async fn lockdown_and_submit_race_is_ordered_by_the_shared_decision_gate() {
             &entry_auth,
         )),
         submit_client.submit(authenticated_request(
-            SubmitRequest { operation: Some(operation("race-command", "race-key")) },
+            SubmitRequest {
+                operation: Some(operation("race-command", "race-key"))
+            },
             SECRET,
             &submit_auth,
         )),
     );
-    let entry = entry.expect("lockdown writer must not fail in the race").into_inner();
+    let entry = entry
+        .expect("lockdown writer must not fail in the race")
+        .into_inner();
     assert!(entry.lockdown.expect("entry posture").active);
     match submit {
         Ok(response) => {
@@ -1155,7 +1240,10 @@ async fn lockdown_and_submit_race_is_ordered_by_the_shared_decision_gate() {
         }
         Err(status) => assert_eq!(status.code(), Code::Unauthenticated),
     }
-    let events = storage.read_after(&domain(), Lsn { value: 0 }).await.expect("race log is readable");
+    let events = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .expect("race log is readable");
     let entry_lsn = events
         .iter()
         .find(|event| event.payload.kind == StoredEventKind::SecurityLockdown as i32)
@@ -1168,7 +1256,10 @@ async fn lockdown_and_submit_race_is_ordered_by_the_shared_decision_gate() {
         .and_then(|event| event.event_id.lsn.as_ref())
         .map(|lsn| lsn.value)
     {
-        assert!(operation_lsn < entry_lsn, "accepted submit must commit before lockdown");
+        assert!(
+            operation_lsn < entry_lsn,
+            "accepted submit must commit before lockdown"
+        );
     }
     task.abort();
 }
@@ -1181,28 +1272,51 @@ async fn lockdown_rejects_every_operation_kind_and_query_retry_before_typed_vali
             "lockdown-query-retry",
             "lockdown-query-retry-key",
             DiagnosticsQuery {
-                query: Some(diagnostics_query::Query::Audit(AuditQuery { limit: Some(1), ..Default::default() })),
+                query: Some(diagnostics_query::Query::Audit(AuditQuery {
+                    limit: Some(1),
+                    ..Default::default()
+                })),
             },
         )),
     };
     let before = server
         .client
-        .query_diagnostics(authenticated_request(exact_query.clone(), SECRET, &server.operator_session))
+        .query_diagnostics(authenticated_request(
+            exact_query.clone(),
+            SECRET,
+            &server.operator_session,
+        ))
         .await
         .expect("query before lockdown must complete")
         .into_inner();
-    assert_eq!(before.submission.expect("query submission").outcome, SubmissionOutcome::Accepted as i32);
+    assert_eq!(
+        before.submission.expect("query submission").outcome,
+        SubmissionOutcome::Accepted as i32
+    );
 
     let mut enter = Request::new(patchbay_contracts::patchbay::EnterSecurityLockdownRequest {
         authority_domain_id: Some(domain()),
         reason_code: "test_lockdown".to_owned(),
     });
     // The helper uses the same compound issuer headers as Submit.
-    enter.metadata_mut().insert(CORE_SECRET_HEADER, SECRET.parse().unwrap());
-    enter.metadata_mut().insert(OPERATOR_SESSION_HEADER, server.operator_session.session_id.parse().unwrap());
-    enter.metadata_mut().insert(OPERATOR_ID_HEADER, OPERATOR_ACTOR.parse().unwrap());
-    enter.metadata_mut().insert(PRINCIPAL_ID_HEADER, server.operator_session.principal_id.parse().unwrap());
-    enter.metadata_mut().insert(PRINCIPAL_SECRET_HEADER, server.operator_session.principal_secret.parse().unwrap());
+    enter
+        .metadata_mut()
+        .insert(CORE_SECRET_HEADER, SECRET.parse().unwrap());
+    enter.metadata_mut().insert(
+        OPERATOR_SESSION_HEADER,
+        server.operator_session.session_id.parse().unwrap(),
+    );
+    enter
+        .metadata_mut()
+        .insert(OPERATOR_ID_HEADER, OPERATOR_ACTOR.parse().unwrap());
+    enter.metadata_mut().insert(
+        PRINCIPAL_ID_HEADER,
+        server.operator_session.principal_id.parse().unwrap(),
+    );
+    enter.metadata_mut().insert(
+        PRINCIPAL_SECRET_HEADER,
+        server.operator_session.principal_secret.parse().unwrap(),
+    );
     server
         .client
         .enter_security_lockdown(enter)
@@ -1225,7 +1339,10 @@ async fn lockdown_rejects_every_operation_kind_and_query_retry_before_typed_vali
         .into_inner()
         .submission
         .expect("malformed query has a rejection result");
-    assert_eq!(malformed_result.failure_code, FailureCode::AuthorizationDenied as i32);
+    assert_eq!(
+        malformed_result.failure_code,
+        FailureCode::AuthorizationDenied as i32
+    );
     assert_eq!(malformed_result.reason_code, "security_lockdown_active");
 
     let retry_result = server
@@ -1236,7 +1353,10 @@ async fn lockdown_rejects_every_operation_kind_and_query_retry_before_typed_vali
         .into_inner()
         .submission
         .expect("retry has a rejection result");
-    assert_eq!(retry_result.failure_code, FailureCode::AuthorizationDenied as i32);
+    assert_eq!(
+        retry_result.failure_code,
+        FailureCode::AuthorizationDenied as i32
+    );
     assert_eq!(retry_result.reason_code, "security_lockdown_active");
 
     let kinds = [
@@ -1252,19 +1372,40 @@ async fn lockdown_rejects_every_operation_kind_and_query_retry_before_typed_vali
         OperationKind::SessionManagement,
     ];
     for (index, kind) in kinds.into_iter().enumerate() {
-        let mut candidate = operation(&format!("lockdown-kind-{index}"), &format!("lockdown-kind-key-{index}"));
+        let mut candidate = operation(
+            &format!("lockdown-kind-{index}"),
+            &format!("lockdown-kind-key-{index}"),
+        );
         candidate.kind = kind as i32;
         let result = server
             .client
-            .submit(authenticated_request(SubmitRequest { operation: Some(candidate) }, SECRET, &fresh))
+            .submit(authenticated_request(
+                SubmitRequest {
+                    operation: Some(candidate),
+                },
+                SECRET,
+                &fresh,
+            ))
             .await
             .expect("lockdown operation rejection is a protocol result")
             .into_inner();
-        assert_eq!(result.outcome, SubmissionOutcome::Rejected as i32, "{kind:?}");
-        assert_eq!(result.failure_code, FailureCode::AuthorizationDenied as i32, "{kind:?}");
+        assert_eq!(
+            result.outcome,
+            SubmissionOutcome::Rejected as i32,
+            "{kind:?}"
+        );
+        assert_eq!(
+            result.failure_code,
+            FailureCode::AuthorizationDenied as i32,
+            "{kind:?}"
+        );
         assert_eq!(result.reason_code, "security_lockdown_active", "{kind:?}");
     }
-    assert_eq!(operation_event_count(&server.storage).await, 1, "lockdown rejects must append no command events");
+    assert_eq!(
+        operation_event_count(&server.storage).await,
+        1,
+        "lockdown rejects must append no command events"
+    );
 }
 
 #[tokio::test]
@@ -1301,8 +1442,14 @@ async fn diagnostics_materialization_failure_terminalizes_and_retry_reconciles()
         .into_inner();
     let first_submission = first.submission.expect("failed query has submission");
     assert_eq!(first_submission.outcome, SubmissionOutcome::Accepted as i32);
-    assert_eq!(first_submission.operation_state, OperationState::Failed as i32);
-    assert_eq!(first_submission.failure_code, FailureCode::ExecutionFailed as i32);
+    assert_eq!(
+        first_submission.operation_state,
+        OperationState::Failed as i32
+    );
+    assert_eq!(
+        first_submission.failure_code,
+        FailureCode::ExecutionFailed as i32
+    );
 
     let transitions = inner
         .read_after(&domain(), Lsn { value: 0 })
@@ -1310,7 +1457,10 @@ async fn diagnostics_materialization_failure_terminalizes_and_retry_reconciles()
         .expect("durable query log must remain readable")
         .into_iter()
         .filter(|event| event.payload.kind == StoredEventKind::CommandTransition as i32)
-        .map(|event| CommandTransition::decode(event.payload.payload.as_slice()).expect("transition must decode"))
+        .map(|event| {
+            CommandTransition::decode(event.payload.payload.as_slice())
+                .expect("transition must decode")
+        })
         .filter(|transition| {
             transition
                 .command_id
@@ -1319,7 +1469,10 @@ async fn diagnostics_materialization_failure_terminalizes_and_retry_reconciles()
         })
         .collect::<Vec<_>>();
     assert_eq!(
-        transitions.iter().map(|transition| transition.to_state).collect::<Vec<_>>(),
+        transitions
+            .iter()
+            .map(|transition| transition.to_state)
+            .collect::<Vec<_>>(),
         vec![
             OperationState::Delivered as i32,
             OperationState::Failed as i32,
@@ -1356,25 +1509,36 @@ async fn diagnostics_materialization_failure_terminalizes_and_retry_reconciles()
         .expect("failure audit must be queryable");
     assert_eq!(failure_audit.records.len(), 1);
     let failure_audit_record = &failure_audit.records[0];
-    assert_eq!(failure_audit_record.reason_code, "diagnostics_materialization_failed");
-    assert_eq!(failure_audit_record.failure_code, FailureCode::ExecutionFailed as i32);
+    assert_eq!(
+        failure_audit_record.reason_code,
+        "diagnostics_materialization_failed"
+    );
+    assert_eq!(
+        failure_audit_record.failure_code,
+        FailureCode::ExecutionFailed as i32
+    );
     assert!(failure_audit_record.correlation_id.is_empty());
 
     let retry = client
-        .query_diagnostics(authenticated_request(
-            request,
-            SECRET,
-            &operator_session,
-        ))
+        .query_diagnostics(authenticated_request(request, SECRET, &operator_session))
         .await
         .expect("retry must reconcile the durable failed terminal state")
         .into_inner();
     let retry_submission = retry.submission.expect("retry has submission");
     assert_eq!(retry_submission.outcome, SubmissionOutcome::Accepted as i32);
     assert!(retry_submission.deduplicated);
-    assert_eq!(retry_submission.operation_state, OperationState::Failed as i32);
-    assert_eq!(retry_submission.failure_code, FailureCode::ExecutionFailed as i32);
-    assert!(retry.result.is_none(), "a failed query has no materialized result");
+    assert_eq!(
+        retry_submission.operation_state,
+        OperationState::Failed as i32
+    );
+    assert_eq!(
+        retry_submission.failure_code,
+        FailureCode::ExecutionFailed as i32
+    );
+    assert!(
+        retry.result.is_none(),
+        "a failed query has no materialized result"
+    );
 
     task.abort();
 }
@@ -1410,7 +1574,9 @@ async fn revoke_grant_rpc_is_authorized_durable_and_audited() {
         .revoke_grant(authenticated_request(
             RevokeGrantRequest {
                 authority_domain_id: Some(domain()),
-                grant_id: Some(GrantId { value: "missing-grant".to_owned() }),
+                grant_id: Some(GrantId {
+                    value: "missing-grant".to_owned(),
+                }),
                 reason: "test_missing".to_owned(),
             },
             SECRET,
@@ -1427,12 +1593,19 @@ async fn revoke_grant_rpc_is_authorized_durable_and_audited() {
             authority_events::grant(
                 domain(),
                 Grant {
-                    grant_id: Some(GrantId { value: "foreign-grant".to_owned() }),
+                    grant_id: Some(GrantId {
+                        value: "foreign-grant".to_owned(),
+                    }),
                     authority_domain_id: Some(domain()),
-                    subject_actor_id: Some(ActorId { value: "another-actor".to_owned() }),
+                    subject_actor_id: Some(ActorId {
+                        value: "another-actor".to_owned(),
+                    }),
                     target_scope: Some(target_scope()),
                     allowed_operation_kinds: vec![OperationKind::Cancel as i32],
-                    provenance: Some(GrantProvenance { reason: "foreign fixture".to_owned(), ..GrantProvenance::default() }),
+                    provenance: Some(GrantProvenance {
+                        reason: "foreign fixture".to_owned(),
+                        ..GrantProvenance::default()
+                    }),
                     revocation_policy: GrantRevocationPolicy::Continue as i32,
                     ..Grant::default()
                 },
@@ -1445,7 +1618,9 @@ async fn revoke_grant_rpc_is_authorized_durable_and_audited() {
         .revoke_grant(authenticated_request(
             RevokeGrantRequest {
                 authority_domain_id: Some(domain()),
-                grant_id: Some(GrantId { value: "foreign-grant".to_owned() }),
+                grant_id: Some(GrantId {
+                    value: "foreign-grant".to_owned(),
+                }),
                 reason: "test_foreign".to_owned(),
             },
             SECRET,
@@ -1462,13 +1637,22 @@ async fn revoke_grant_rpc_is_authorized_durable_and_audited() {
             authority_events::grant(
                 domain(),
                 Grant {
-                    grant_id: Some(GrantId { value: "endpoint-grant".to_owned() }),
+                    grant_id: Some(GrantId {
+                        value: "endpoint-grant".to_owned(),
+                    }),
                     authority_domain_id: Some(domain()),
-                    subject_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
-                    subject_endpoint_id: Some(EndpointId { value: "different-endpoint".to_owned() }),
+                    subject_actor_id: Some(ActorId {
+                        value: OPERATOR_ACTOR.to_owned(),
+                    }),
+                    subject_endpoint_id: Some(EndpointId {
+                        value: "different-endpoint".to_owned(),
+                    }),
                     target_scope: Some(target_scope()),
                     allowed_operation_kinds: vec![OperationKind::Cancel as i32],
-                    provenance: Some(GrantProvenance { reason: "endpoint fixture".to_owned(), ..GrantProvenance::default() }),
+                    provenance: Some(GrantProvenance {
+                        reason: "endpoint fixture".to_owned(),
+                        ..GrantProvenance::default()
+                    }),
                     revocation_policy: GrantRevocationPolicy::Continue as i32,
                     ..Grant::default()
                 },
@@ -1481,7 +1665,9 @@ async fn revoke_grant_rpc_is_authorized_durable_and_audited() {
         .revoke_grant(authenticated_request(
             RevokeGrantRequest {
                 authority_domain_id: Some(domain()),
-                grant_id: Some(GrantId { value: "endpoint-grant".to_owned() }),
+                grant_id: Some(GrantId {
+                    value: "endpoint-grant".to_owned(),
+                }),
                 reason: "test_endpoint".to_owned(),
             },
             SECRET,
@@ -1493,31 +1679,39 @@ async fn revoke_grant_rpc_is_authorized_durable_and_audited() {
 
     let denied_audits = server
         .storage
-        .query_audit(&domain(), AuditPageSpec {
-            kinds: vec![AuditEventKind::AuthorizationFailed],
-            actor_id: None,
-            endpoint_id: None,
-            command_id: None,
-            grant_id: None,
-            target: None,
-            failure_codes: vec![],
-            reason_codes: vec!["grant_revocation_authorization_denied".to_owned()],
-            occurred_from: None,
-            occurred_before: None,
-            before_lsn: None,
-            limit: 50,
-        })
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::AuthorizationFailed],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: None,
+                grant_id: None,
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec!["grant_revocation_authorization_denied".to_owned()],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 50,
+            },
+        )
         .await
         .expect("denied revocation must be queryable");
     assert_eq!(denied_audits.records.len(), 3);
-    assert!(denied_audits.records.iter().all(|record| record.grant_id.is_none()));
+    assert!(denied_audits
+        .records
+        .iter()
+        .all(|record| record.grant_id.is_none()));
 
     let revoked = server
         .client
         .revoke_grant(authenticated_request(
             RevokeGrantRequest {
                 authority_domain_id: Some(domain()),
-                grant_id: Some(GrantId { value: "operator-grant".to_owned() }),
+                grant_id: Some(GrantId {
+                    value: "operator-grant".to_owned(),
+                }),
                 reason: "test_revocation".to_owned(),
             },
             SECRET,
@@ -1528,24 +1722,36 @@ async fn revoke_grant_rpc_is_authorized_durable_and_audited() {
         .into_inner();
     assert!(revoked.changed);
     assert!(!revoked.already_revoked);
-    assert_eq!(revoked.applied_policy, GrantRevocationPolicy::Continue as i32);
+    assert_eq!(
+        revoked.applied_policy,
+        GrantRevocationPolicy::Continue as i32
+    );
     assert!(revoked.revocation_event_id.is_some());
     let success_audits = server
         .storage
-        .query_audit(&domain(), AuditPageSpec {
-            kinds: vec![AuditEventKind::GrantRevoked],
-            actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
-            endpoint_id: Some(EndpointId { value: "grpc-smoke-login".to_owned() }),
-            command_id: None,
-            grant_id: Some(GrantId { value: "operator-grant".to_owned() }),
-            target: None,
-            failure_codes: vec![],
-            reason_codes: vec!["grant_revoked".to_owned()],
-            occurred_from: None,
-            occurred_before: None,
-            before_lsn: None,
-            limit: 10,
-        })
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::GrantRevoked],
+                actor_id: Some(ActorId {
+                    value: OPERATOR_ACTOR.to_owned(),
+                }),
+                endpoint_id: Some(EndpointId {
+                    value: "grpc-smoke-login".to_owned(),
+                }),
+                command_id: None,
+                grant_id: Some(GrantId {
+                    value: "operator-grant".to_owned(),
+                }),
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec!["grant_revoked".to_owned()],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
         .await
         .expect("successful revocation audit must be queryable");
     assert_eq!(success_audits.records.len(), 1);
@@ -1563,7 +1769,10 @@ async fn revoke_grant_rpc_is_authorized_durable_and_audited() {
         .expect("authorization denial is a typed submission result")
         .into_inner();
     assert_eq!(rejected.outcome, SubmissionOutcome::Rejected as i32);
-    assert_eq!(rejected.failure_code, FailureCode::AuthorizationDenied as i32);
+    assert_eq!(
+        rejected.failure_code,
+        FailureCode::AuthorizationDenied as i32
+    );
 }
 
 #[tokio::test]
@@ -1574,7 +1783,9 @@ async fn last_recovery_authority_grant_refusal_is_typed_and_audited() {
         .revoke_grant(authenticated_request(
             RevokeGrantRequest {
                 authority_domain_id: Some(domain()),
-                grant_id: Some(GrantId { value: "operator-lockdown-grant".to_owned() }),
+                grant_id: Some(GrantId {
+                    value: "operator-lockdown-grant".to_owned(),
+                }),
                 reason: "test_last_recovery_grant".to_owned(),
             },
             SECRET,
@@ -1587,20 +1798,25 @@ async fn last_recovery_authority_grant_refusal_is_typed_and_audited() {
 
     let audits = server
         .storage
-        .query_audit(&domain(), AuditPageSpec {
-            kinds: vec![AuditEventKind::AuthorizationFailed],
-            actor_id: None,
-            endpoint_id: None,
-            command_id: None,
-            grant_id: Some(GrantId { value: "operator-lockdown-grant".to_owned() }),
-            target: None,
-            failure_codes: vec![FailureCode::AuthorizationDenied],
-            reason_codes: vec!["last_recovery_authority_grant".to_owned()],
-            occurred_from: None,
-            occurred_before: None,
-            before_lsn: None,
-            limit: 10,
-        })
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::AuthorizationFailed],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: None,
+                grant_id: Some(GrantId {
+                    value: "operator-lockdown-grant".to_owned(),
+                }),
+                target: None,
+                failure_codes: vec![FailureCode::AuthorizationDenied],
+                reason_codes: vec!["last_recovery_authority_grant".to_owned()],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 10,
+            },
+        )
         .await
         .expect("last-grant refusal must be queryable");
     assert_eq!(audits.records.len(), 1);
@@ -1616,13 +1832,23 @@ async fn grant_expiry_is_enforced_at_rpc_boundary_and_audited() {
             authority_events::grant(
                 domain(),
                 Grant {
-                    grant_id: Some(GrantId { value: "expired-grant".to_owned() }),
+                    grant_id: Some(GrantId {
+                        value: "expired-grant".to_owned(),
+                    }),
                     authority_domain_id: Some(domain()),
-                    subject_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+                    subject_actor_id: Some(ActorId {
+                        value: OPERATOR_ACTOR.to_owned(),
+                    }),
                     target_scope: Some(target_scope()),
                     allowed_operation_kinds: vec![OperationKind::Cancel as i32],
-                    expires_at: Some(Timestamp { seconds: 100, nanos: 0 }),
-                    provenance: Some(GrantProvenance { reason: "expired grant fixture".to_owned(), ..GrantProvenance::default() }),
+                    expires_at: Some(Timestamp {
+                        seconds: 100,
+                        nanos: 0,
+                    }),
+                    provenance: Some(GrantProvenance {
+                        reason: "expired grant fixture".to_owned(),
+                        ..GrantProvenance::default()
+                    }),
                     revocation_policy: GrantRevocationPolicy::Continue as i32,
                     ..Grant::default()
                 },
@@ -1630,7 +1856,10 @@ async fn grant_expiry_is_enforced_at_rpc_boundary_and_audited() {
         )
         .await
         .expect("expired grant fixture must append");
-    let clock: Arc<dyn Clock> = Arc::new(TestClock::new(Timestamp { seconds: 100, nanos: 0 }));
+    let clock: Arc<dyn Clock> = Arc::new(TestClock::new(Timestamp {
+        seconds: 100,
+        nanos: 0,
+    }));
     let (mut client, task, operator_session) = serve_with_clock(storage.clone(), clock).await;
     let before = operation_event_count(&storage).await;
 
@@ -1650,24 +1879,35 @@ async fn grant_expiry_is_enforced_at_rpc_boundary_and_audited() {
     assert_eq!(result.outcome, SubmissionOutcome::Rejected as i32);
     assert_eq!(result.failure_code, FailureCode::Expired as i32);
     assert_eq!(result.reason_code, "grant_expired");
-    assert_eq!(result.decision_grant_id.as_ref().map(|id| id.value.as_str()), Some("expired-grant"));
+    assert_eq!(
+        result
+            .decision_grant_id
+            .as_ref()
+            .map(|id| id.value.as_str()),
+        Some("expired-grant")
+    );
     assert_eq!(operation_event_count(&storage).await, before);
 
     let audits = storage
-        .query_audit(&domain(), AuditPageSpec {
-            kinds: vec![AuditEventKind::GrantExpired],
-            actor_id: None,
-            endpoint_id: None,
-            command_id: None,
-            grant_id: Some(GrantId { value: "expired-grant".to_owned() }),
-            target: None,
-            failure_codes: vec![],
-            reason_codes: vec!["grant_expired".to_owned()],
-            occurred_from: None,
-            occurred_before: None,
-            before_lsn: None,
-            limit: 50,
-        })
+        .query_audit(
+            &domain(),
+            AuditPageSpec {
+                kinds: vec![AuditEventKind::GrantExpired],
+                actor_id: None,
+                endpoint_id: None,
+                command_id: None,
+                grant_id: Some(GrantId {
+                    value: "expired-grant".to_owned(),
+                }),
+                target: None,
+                failure_codes: vec![],
+                reason_codes: vec!["grant_expired".to_owned()],
+                occurred_from: None,
+                occurred_before: None,
+                before_lsn: None,
+                limit: 50,
+            },
+        )
         .await
         .expect("expired grant audit must be queryable");
     assert_eq!(audits.records.len(), 1);
@@ -1680,7 +1920,9 @@ async fn subscribe_denies_initial_and_resume_establishment_after_query_grant_rev
     let accepted = server
         .client
         .submit(authenticated_request(
-            SubmitRequest { operation: Some(operation("subscription-cursor", "subscription-cursor-key")) },
+            SubmitRequest {
+                operation: Some(operation("subscription-cursor", "subscription-cursor-key")),
+            },
             SECRET,
             &server.operator_session,
         ))
@@ -1691,21 +1933,31 @@ async fn subscribe_denies_initial_and_resume_establishment_after_query_grant_rev
     let mut initial = server
         .client
         .subscribe(authenticated_request(
-            SubscribeRequest { authority_domain_id: Some(domain()), cursor: Some(Lsn { value: 0 }) },
+            SubscribeRequest {
+                authority_domain_id: Some(domain()),
+                cursor: Some(Lsn { value: 0 }),
+            },
             SECRET,
             &server.operator_session,
         ))
         .await
         .expect("live Query grant establishes the initial stream")
         .into_inner();
-    while initial.message().await.expect("initial stream must decode").is_some() {}
+    while initial
+        .message()
+        .await
+        .expect("initial stream must decode")
+        .is_some()
+    {}
 
     server
         .client
         .revoke_grant(authenticated_request(
             RevokeGrantRequest {
                 authority_domain_id: Some(domain()),
-                grant_id: Some(GrantId { value: "operator-query-grant".to_owned() }),
+                grant_id: Some(GrantId {
+                    value: "operator-query-grant".to_owned(),
+                }),
                 reason: "test_query_revocation".to_owned(),
             },
             SECRET,
@@ -1804,12 +2056,17 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
     let path = directory.path().join("checkpoint-restart.sqlite3");
     let storage = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
     seed_authority_and_session(&storage).await;
-    let service = ControlServiceImpl::new(storage.clone(), domain()).await.unwrap();
+    let service = ControlServiceImpl::new(storage.clone(), domain())
+        .await
+        .unwrap();
     let checkpoint = service
         .projection_state()
         .materialize_session_snapshot(
             domain(),
-            Timestamp { seconds: 500, nanos: 0 },
+            Timestamp {
+                seconds: 500,
+                nanos: 0,
+            },
         )
         .await;
     let checkpoint_lsn = checkpoint.snapshot_lsn.unwrap();
@@ -1829,7 +2086,9 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
     tokio::task::yield_now().await;
 
     let reopened = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
-    let restarted = ControlServiceImpl::new(reopened.clone(), domain()).await.unwrap();
+    let restarted = ControlServiceImpl::new(reopened.clone(), domain())
+        .await
+        .unwrap();
     assert_eq!(
         restarted.projection_state().core_generation(),
         &persisted_generation
@@ -1837,9 +2096,15 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
     let operator_session = restarted
         .projection_state()
         .issue_operator_session(OperatorSessionBinding {
-            actor_id: ActorId { value: OPERATOR_ACTOR.to_owned() },
-            endpoint_id: EndpointId { value: "patchbay-web-server".to_owned() },
-            device_id: DeviceId { value: "web-host".to_owned() },
+            actor_id: ActorId {
+                value: OPERATOR_ACTOR.to_owned(),
+            },
+            endpoint_id: EndpointId {
+                value: "patchbay-web-server".to_owned(),
+            },
+            device_id: DeviceId {
+                value: "web-host".to_owned(),
+            },
             endpoint_generation: Generation { value: 1 },
         })
         .await;
@@ -1906,7 +2171,11 @@ async fn core_generation_checkpoint_survives_reopen_and_mismatch_repairs() {
     for incompatible_generation in [
         None,
         Some(Generation {
-            value: if persisted_generation.value == 1 { 2 } else { 1 },
+            value: if persisted_generation.value == 1 {
+                2
+            } else {
+                1
+            },
         }),
     ] {
         let mut incompatible = checkpoint.clone();
@@ -2072,11 +2341,17 @@ async fn login_surface(
 ) -> TestAuth {
     let login = client
         .verify_operator_password(core_request(VerifyOperatorPasswordRequest {
-            operator_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+            operator_actor_id: Some(ActorId {
+                value: OPERATOR_ACTOR.to_owned(),
+            }),
             password: "correct-password".to_owned(),
             principal: Some(PrincipalEnrollment {
-                endpoint_id: Some(EndpointId { value: endpoint_id.to_owned() }),
-                device_id: Some(DeviceId { value: device_id.to_owned() }),
+                endpoint_id: Some(EndpointId {
+                    value: endpoint_id.to_owned(),
+                }),
+                device_id: Some(DeviceId {
+                    value: device_id.to_owned(),
+                }),
                 endpoint_generation: Some(Generation { value: 1 }),
             }),
         }))
@@ -2085,7 +2360,10 @@ async fn login_surface(
         .into_inner();
     let principal = login.principal.expect("test login returns a principal");
     TestAuth {
-        session_id: login.operator_session_id.expect("test login returns a session").value,
+        session_id: login
+            .operator_session_id
+            .expect("test login returns a session")
+            .value,
         session_generation: login
             .operator_session_generation
             .expect("test login returns a session generation")
@@ -2227,11 +2505,17 @@ where
         .expect("test client must connect");
     let login = client
         .verify_operator_password(core_request(VerifyOperatorPasswordRequest {
-            operator_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+            operator_actor_id: Some(ActorId {
+                value: OPERATOR_ACTOR.to_owned(),
+            }),
             password: "correct-password".to_owned(),
             principal: Some(PrincipalEnrollment {
-                endpoint_id: Some(EndpointId { value: "grpc-smoke-login".to_owned() }),
-                device_id: Some(DeviceId { value: "grpc-smoke-host".to_owned() }),
+                endpoint_id: Some(EndpointId {
+                    value: "grpc-smoke-login".to_owned(),
+                }),
+                device_id: Some(DeviceId {
+                    value: "grpc-smoke-host".to_owned(),
+                }),
                 endpoint_generation: Some(Generation { value: 1 }),
             }),
         }))
@@ -2354,15 +2638,22 @@ async fn seed_authority_and_session(storage: &RusqliteStorage) {
         .await
         .expect("grant fixture must append");
     let query_grant = Grant {
-        grant_id: Some(GrantId { value: "operator-query-grant".to_owned() }),
+        grant_id: Some(GrantId {
+            value: "operator-query-grant".to_owned(),
+        }),
         authority_domain_id: Some(domain()),
-        subject_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
+        subject_actor_id: Some(ActorId {
+            value: OPERATOR_ACTOR.to_owned(),
+        }),
         target_scope: Some(TargetScope {
             kind: TargetScopeKind::AuthorityDomain as i32,
             ..TargetScope::default()
         }),
         allowed_operation_kinds: vec![OperationKind::Query as i32],
-        provenance: Some(GrantProvenance { reason: "diagnostics fixture".to_owned(), ..GrantProvenance::default() }),
+        provenance: Some(GrantProvenance {
+            reason: "diagnostics fixture".to_owned(),
+            ..GrantProvenance::default()
+        }),
         revocation_policy: GrantRevocationPolicy::Continue as i32,
         ..Grant::default()
     };
@@ -2370,12 +2661,22 @@ async fn seed_authority_and_session(storage: &RusqliteStorage) {
         .await
         .expect("query grant fixture must append");
     let lockdown_grant = Grant {
-        grant_id: Some(GrantId { value: "operator-lockdown-grant".to_owned() }),
+        grant_id: Some(GrantId {
+            value: "operator-lockdown-grant".to_owned(),
+        }),
         authority_domain_id: Some(domain()),
-        subject_actor_id: Some(ActorId { value: OPERATOR_ACTOR.to_owned() }),
-        target_scope: Some(TargetScope { kind: TargetScopeKind::AuthorityDomain as i32, ..TargetScope::default() }),
+        subject_actor_id: Some(ActorId {
+            value: OPERATOR_ACTOR.to_owned(),
+        }),
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::AuthorityDomain as i32,
+            ..TargetScope::default()
+        }),
         allowed_operation_kinds: vec![OperationKind::SessionManagement as i32],
-        provenance: Some(GrantProvenance { reason: "lockdown fixture".to_owned(), ..GrantProvenance::default() }),
+        provenance: Some(GrantProvenance {
+            reason: "lockdown fixture".to_owned(),
+            ..GrantProvenance::default()
+        }),
         revocation_policy: GrantRevocationPolicy::Continue as i32,
         ..Grant::default()
     };
@@ -2501,14 +2802,23 @@ fn authenticated_request<T>(message: T, secret: &str, operator_session: &TestAut
     request
 }
 
-fn diagnostic_query_operation(command_id: &str, idempotency_key: &str, query: DiagnosticsQuery) -> Operation {
+fn diagnostic_query_operation(
+    command_id: &str,
+    idempotency_key: &str,
+    query: DiagnosticsQuery,
+) -> Operation {
     Operation {
-        command_id: Some(CommandId { value: command_id.to_owned() }),
+        command_id: Some(CommandId {
+            value: command_id.to_owned(),
+        }),
         authority_domain_id: Some(domain()),
         sender: Some(ActorEndpointRef::default()),
         recipient: Some(ActorEndpointRef::default()),
         kind: OperationKind::Query as i32,
-        target_scope: Some(TargetScope { kind: TargetScopeKind::AuthorityDomain as i32, ..TargetScope::default() }),
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::AuthorityDomain as i32,
+            ..TargetScope::default()
+        }),
         idempotency_key: idempotency_key.to_owned(),
         payload: Some(PayloadEnvelope {
             payload: query.encode_to_vec(),
@@ -2516,10 +2826,19 @@ fn diagnostic_query_operation(command_id: &str, idempotency_key: &str, query: Di
             schema_ref: "patchbay.DiagnosticsQuery".to_owned(),
         }),
         validity_window: Some(TimeWindow {
-            starts_at: Some(Timestamp { seconds: 1, nanos: 0 }),
-            expires_at: Some(Timestamp { seconds: 253_402_300_799, nanos: 0 }),
+            starts_at: Some(Timestamp {
+                seconds: 1,
+                nanos: 0,
+            }),
+            expires_at: Some(Timestamp {
+                seconds: 253_402_300_799,
+                nanos: 0,
+            }),
         }),
-        submitted_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+        submitted_at: Some(Timestamp {
+            seconds: 1,
+            nanos: 0,
+        }),
         ..Operation::default()
     }
 }

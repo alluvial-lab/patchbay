@@ -85,10 +85,7 @@ impl AdapterRegistry {
 
     pub fn observe(&mut self, event: &RecordedEvent) -> Result<(), AdapterError> {
         let kind = StoredEventKind::try_from(event.payload.kind).map_err(|_| {
-            AdapterError::CorruptRecord(format!(
-                "unknown stored event kind {}",
-                event.payload.kind
-            ))
+            AdapterError::CorruptRecord(format!("unknown stored event kind {}", event.payload.kind))
         })?;
         if kind == StoredEventKind::Unspecified {
             return Err(AdapterError::CorruptLog(
@@ -192,9 +189,7 @@ pub async fn rebuild_from_log<S: Storage>(
         .await?
     {
         let validated = validate_next_replay_event(authority_domain_id, previous_lsn, &event)
-            .map_err(|error| {
-                error.map(AdapterError::CorruptRecord, AdapterError::CorruptLog)
-            })?;
+            .map_err(|error| error.map(AdapterError::CorruptRecord, AdapterError::CorruptLog))?;
         registry.observe(&event)?;
         previous_lsn = validated.lsn;
     }
@@ -233,15 +228,16 @@ pub async fn ingest_registration_with_resources<S: Storage>(
     registry
         .preflight(&registration)
         .map_err(RegistrationIngestError::PreCommit)?;
-    let adapter_id = registration.adapter_id.clone().expect("validated adapter id");
+    let adapter_id = registration
+        .adapter_id
+        .clone()
+        .expect("validated adapter id");
     let incoming_generation = registration
         .adapter_generation
         .expect("validated adapter generation");
-    let incoming_capability = validate_registration(
-        &registration,
-        CapabilityValidationContext::Attach,
-    )
-    .map_err(RegistrationIngestError::PreCommit)?;
+    let incoming_capability =
+        validate_registration(&registration, CapabilityValidationContext::Attach)
+            .map_err(RegistrationIngestError::PreCommit)?;
     let current = registry.get(&adapter_id).cloned();
     let prepared = prepare_registration(registration);
     let degradation = current

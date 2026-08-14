@@ -1564,7 +1564,9 @@ mod tests {
             encode_staged_successor(&staged),
         ];
         let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
-        for (index, payload) in prefix.into_iter().enumerate() {
+        let mut expected_lsn = 1;
+        for payload in prefix {
+            let source_lsn = expected_lsn;
             let appended = if payload.kind == StoredEventKind::SpawnSuccessorEvidenceStaged as i32 {
                 storage
                     .append_spawn_successor_staged_idempotent(
@@ -1573,13 +1575,38 @@ mod tests {
                     )
                     .await
                     .unwrap()
+            } else if payload.kind == StoredEventKind::Observation as i32
+                && Observation::decode(payload.payload.as_slice())
+                    .ok()
+                    .is_some_and(|observation| observation.kind == ObservationKind::Result as i32)
+            {
+                let observation =
+                    Observation::decode(payload.payload.as_slice()).expect("Result fixture");
+                let mut audit = AuditRecordDraft::new(
+                    Timestamp {
+                        seconds: 10,
+                        nanos: 0,
+                    },
+                    AuditEventKind::CommandRunning,
+                );
+                audit.command_id = Some(command.clone());
+                audit.target_scope = observation.target_scope.clone();
+                audit.reason_code = "spawn_completion_deferred".to_owned();
+                let committed = storage
+                    .append_spawn_result_deferred_audited(&domain, observation, audit)
+                    .await
+                    .unwrap();
+                assert_eq!(committed.audit_event_id, event_id(expected_lsn + 1));
+                expected_lsn += 1;
+                committed.source_event_id
             } else {
                 storage.append(&domain, payload).await.unwrap()
             };
-            assert_eq!(appended, event_id(index as u64 + 1));
+            assert_eq!(appended, event_id(source_lsn));
+            expected_lsn += 1;
         }
         let live = ProjectionState::rebuild(&storage, &domain).await.unwrap();
-        assert_eq!(live.current_lsn().await, 9);
+        assert_eq!(live.current_lsn().await, 10);
         assert_eq!(live.current_runtime_session_count().await, 0);
 
         let timestamp = Timestamp {
@@ -1614,7 +1641,7 @@ mod tests {
                 observed_at: Some(timestamp),
             }),
             staged_successor: Some(SpawnPromotionStagedEvidence {
-                event_id: Some(event_id(9)),
+                event_id: Some(event_id(10)),
                 staged: Some(staged),
             }),
             promoted_runtime: Some(promoted),
@@ -1671,7 +1698,7 @@ mod tests {
             .unwrap();
 
         live.catch_up(&storage, &domain).await.unwrap();
-        assert_eq!(live.current_lsn().await, 11);
+        assert_eq!(live.current_lsn().await, 12);
         assert_eq!(live.current_runtime_session_count().await, 1);
         assert!(live
             .grant_check
@@ -1702,7 +1729,7 @@ mod tests {
         );
 
         let restarted = ProjectionState::rebuild(&storage, &domain).await.unwrap();
-        assert_eq!(restarted.current_lsn().await, 11);
+        assert_eq!(restarted.current_lsn().await, 12);
         assert_eq!(restarted.current_runtime_session_count().await, 1);
         assert!(restarted
             .grant_check

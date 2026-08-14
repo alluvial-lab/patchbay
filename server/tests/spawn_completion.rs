@@ -33,9 +33,9 @@ use patchbay_core::{
         DESCENDANT_GRANT_ALLOWED_KINDS,
     },
     storage::{
-        AuditPageSpec, AuditRecordDraft, AuditedStorage, CoreGenerationStore, DedupOutcome,
-        GrantAppendOutcome, GrantIdentityKey, RecordedEvent, RusqliteStorage, Storage,
-        StorageError, StoredSnapshot, TargetKey,
+        AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedStorage, CoreGenerationStore,
+        DedupOutcome, GrantAppendOutcome, GrantIdentityKey, RecordedEvent, RusqliteStorage,
+        Storage, StorageError, StoredSnapshot, TargetKey,
     },
     time::TestClock,
 };
@@ -192,24 +192,29 @@ async fn seed_evidence<S: Storage>(storage: &S) -> EventId {
         )
         .await
         .unwrap();
+    let result = Observation {
+        authority_domain_id: Some(domain()),
+        kind: ObservationKind::Result as i32,
+        correlations: vec![correlation()],
+        target_scope: Some(fleet_scope()),
+        failure_code: FailureCode::Unspecified as i32,
+        ..Observation::default()
+    };
+    let mut result_audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 1_000,
+            nanos: 0,
+        },
+        AuditEventKind::CommandRunning,
+    );
+    result_audit.command_id = Some(command_id());
+    result_audit.target_scope = result.target_scope.clone();
+    result_audit.reason_code = "spawn_completion_deferred".to_owned();
     let result_id = storage
-        .append(
-            &domain(),
-            StoredEventPayload {
-                kind: StoredEventKind::Observation as i32,
-                payload: Observation {
-                    authority_domain_id: Some(domain()),
-                    kind: ObservationKind::Result as i32,
-                    correlations: vec![correlation()],
-                    target_scope: Some(fleet_scope()),
-                    failure_code: FailureCode::Unspecified as i32,
-                    ..Observation::default()
-                }
-                .encode_to_vec(),
-            },
-        )
+        .append_spawn_result_deferred_audited(&domain(), result, result_audit)
         .await
-        .unwrap();
+        .unwrap()
+        .source_event_id;
     storage
         .append(
             &domain(),
@@ -812,6 +817,27 @@ impl Storage for LoseFirstDescendantAppendAcknowledgement {
             .await
     }
 
+    async fn append_spawn_result_deferred_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        observation: Observation,
+        audit: AuditRecordDraft,
+    ) -> Result<AuditedAppend, StorageError> {
+        self.inner
+            .append_spawn_result_deferred_audited(authority_domain_id, observation, audit)
+            .await
+    }
+
+    async fn reconcile_observation_retry(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        observation: Observation,
+    ) -> Result<Option<EventId>, StorageError> {
+        self.inner
+            .reconcile_observation_retry(authority_domain_id, observation)
+            .await
+    }
+
     async fn append_grant_audited(
         &self,
         authority_domain_id: &AuthorityDomainId,
@@ -1179,6 +1205,27 @@ impl Storage for BlockingTransitionStorage {
             .await
     }
 
+    async fn append_spawn_result_deferred_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        observation: Observation,
+        audit: AuditRecordDraft,
+    ) -> Result<AuditedAppend, StorageError> {
+        self.inner
+            .append_spawn_result_deferred_audited(authority_domain_id, observation, audit)
+            .await
+    }
+
+    async fn reconcile_observation_retry(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        observation: Observation,
+    ) -> Result<Option<EventId>, StorageError> {
+        self.inner
+            .reconcile_observation_retry(authority_domain_id, observation)
+            .await
+    }
+
     async fn append_grant_audited(
         &self,
         authority_domain_id: &AuthorityDomainId,
@@ -1313,9 +1360,9 @@ async fn managed_evidence_retries_complete_once_and_restart_as_a_replayable_pref
 
     let earliest_result = report_successful_spawn(&service, &token).await;
     let result_retry_before_staging = report_successful_spawn(&service, &token).await;
-    assert_ne!(
+    assert_eq!(
         result_retry_before_staging, earliest_result,
-        "Result retries remain durable evidence records"
+        "exact Result retries reuse the canonical durable source"
     );
     let staged = report_session(&service, &token, 1, Some(correlation())).await;
     let staged_retry = report_session(&service, &token, 1, Some(correlation())).await;
@@ -1324,7 +1371,7 @@ async fn managed_evidence_retries_complete_once_and_restart_as_a_replayable_pref
         "SessionReport retries reuse the one staged-successor record"
     );
     let result_retry_after_staging = report_successful_spawn(&service, &token).await;
-    assert_ne!(result_retry_after_staging, earliest_result);
+    assert_eq!(result_retry_after_staging, earliest_result);
 
     let before_completion = all_events(&storage).await;
     assert_eq!(
@@ -1349,7 +1396,7 @@ async fn managed_evidence_retries_complete_once_and_restart_as_a_replayable_pref
                         })
             })
             .count(),
-        3
+        1
     );
 
     let driver = SpawnCompletionDriver::bootstrap(
@@ -1363,6 +1410,11 @@ async fn managed_evidence_retries_complete_once_and_restart_as_a_replayable_pref
     .expect("completion driver accepts exact durable retries");
     drop(driver);
     assert_eq!(completion_counts(&all_events(&storage).await), (1, 1, 1));
+    assert_eq!(
+        report_successful_spawn(&service, &token).await,
+        earliest_result,
+        "terminal exact Result retry still returns the canonical source"
+    );
 
     let post_promotion_retry = report_session(&service, &token, 1, Some(correlation())).await;
     assert_eq!(
@@ -1383,6 +1435,83 @@ async fn managed_evidence_retries_complete_once_and_restart_as_a_replayable_pref
     .expect("completion driver restart remains quiescent");
     drop(restarted);
     assert_eq!(completion_counts(&all_events(&storage).await), (1, 1, 1));
+}
+
+#[tokio::test]
+async fn authenticated_failed_result_retry_reuses_canonical_source_across_driver_restart() {
+    let storage = AuditedStorage::new(RusqliteStorage::open_in_memory().unwrap());
+    seed_parent_grant(&storage).await;
+    let gate = CoreDecisionGate::default();
+    let service = AdapterControlServiceImpl::new_with_decision_gate(
+        storage.clone(),
+        domain(),
+        AdapterEvidenceVerifier::new([("pi", "adapter-test-secret")]).unwrap(),
+        gate.clone(),
+    )
+    .await
+    .unwrap();
+    let token = attach_adapter(&service).await;
+    {
+        let _guard = gate.acquire().await;
+        seed_adapter_scoped_spawn(&storage).await;
+    }
+
+    let submit = |observation| {
+        service.ingest_observation(authenticated(
+            ObservationRequest {
+                authority_domain_id: Some(domain()),
+                observation: Some(observation_request::Observation::Event(observation)),
+            },
+            &token,
+        ))
+    };
+    let first = submit(spawn_result(FailureCode::ExecutionFailed))
+        .await
+        .expect("first authenticated failed Result commits")
+        .into_inner()
+        .event_id
+        .expect("failed Result has a canonical source id");
+    let before_retry = all_events(&storage).await;
+    let retry = submit(spawn_result(FailureCode::ExecutionFailed))
+        .await
+        .expect("exact authenticated failed Result retry reconciles")
+        .into_inner()
+        .event_id;
+    assert_eq!(retry, Some(first));
+    assert_eq!(all_events(&storage).await, before_retry);
+
+    let changed_error = submit(spawn_result(FailureCode::ExecutionOutcomeUnknown))
+        .await
+        .expect_err("changed terminal evidence must remain rejected");
+    assert_eq!(changed_error.code(), tonic::Code::Internal);
+    assert_eq!(all_events(&storage).await, before_retry);
+    assert_eq!(completion_counts(&before_retry), (0, 0, 0));
+
+    ProjectionState::rebuild(&storage, &domain())
+        .await
+        .expect("failed retry prefix rebuilds every projection");
+    let driver = SpawnCompletionDriver::bootstrap(
+        storage.clone(),
+        domain(),
+        gate,
+        production_audit(storage.clone()),
+        clock(),
+    )
+    .await
+    .expect("completion driver remains quiescent on canonical failure evidence");
+    drop(driver);
+    assert_eq!(completion_counts(&all_events(&storage).await), (0, 0, 0));
+    let restarted = SpawnCompletionDriver::bootstrap(
+        storage.clone(),
+        domain(),
+        CoreDecisionGate::default(),
+        production_audit(storage.clone()),
+        clock(),
+    )
+    .await
+    .expect("completion driver restart remains quiescent");
+    drop(restarted);
+    assert_eq!(completion_counts(&all_events(&storage).await), (0, 0, 0));
 }
 
 #[tokio::test]
@@ -1450,16 +1579,26 @@ async fn transition_fault_cannot_strand_authenticated_result_and_legacy_strand_f
         endpoint_id: adapter_registration().endpoint_id,
         ..ActorEndpointRef::default()
     });
-    let stranded_event_id = storage
-        .append(
-            &domain(),
-            StoredEventPayload {
-                kind: StoredEventKind::Observation as i32,
-                payload: stranded_failure.encode_to_vec(),
-            },
+    let stranded_payload = StoredEventPayload {
+        kind: StoredEventKind::Observation as i32,
+        payload: stranded_failure.encode_to_vec(),
+    };
+    connection
+        .execute(
+            "INSERT INTO events (authority_domain_id, kind, payload) VALUES (?1, ?2, ?3)",
+            rusqlite::params![
+                domain().value,
+                StoredEventKind::Observation as i32,
+                stranded_payload.encode_to_vec()
+            ],
         )
-        .await
-        .expect("the legacy source commits before its separately faulted transition");
+        .expect("backend-only SQL fixture inserts the historical stranded source");
+    let stranded_event_id = EventId {
+        authority_domain_id: Some(domain()),
+        lsn: Some(Lsn {
+            value: connection.last_insert_rowid() as u64,
+        }),
+    };
     let transition_error = storage
         .append(
             &domain(),

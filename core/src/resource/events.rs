@@ -1,6 +1,4 @@
-use patchbay_contracts::patchbay::{
-    ResourceStateEvent, StoredEventKind, StoredEventPayload,
-};
+use patchbay_contracts::patchbay::{ResourceStateEvent, StoredEventKind, StoredEventPayload};
 use prost::Message;
 
 /// Encode one normalized resource-state update in the schema-owned durable

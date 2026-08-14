@@ -3,6 +3,9 @@ name = "patchbay-core"
 version = "0.2.1"
 edition = "2021"
 
+[features]
+proptest = []
+
 [dependencies]
 patchbay-contracts = { path = "../contracts/rust" }
 async-trait = "0.1"

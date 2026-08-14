@@ -126,10 +126,6 @@ where
     // Resolve the command before persistence. The resulting decision is the
     // only authority allowed to select the audit kind; a raw Observation
     // envelope cannot distinguish a completion from a stale late result.
-    let observation_payload = StoredEventPayload {
-        kind: StoredEventKind::Observation as i32,
-        payload: observation.encode_to_vec(),
-    };
     let snapshot = match state_lookup.current_state(&candidate.command_id).await {
         Some(snapshot) => snapshot,
         None => {
@@ -149,11 +145,18 @@ where
         )));
     }
     if snapshot.state.is_terminal() {
+        if let Some(event_id) = storage
+            .reconcile_observation_retry(&authority_domain_id, observation.clone())
+            .await?
+        {
+            validate_event_id(&event_id, &authority_domain_id, "observation retry")?;
+            return Ok(IngestResult::Recorded { event_id });
+        }
         // This boundary does not possess authenticated attachment/generation
         // context, so it cannot truthfully construct QuarantinedRuntimeEvidence.
         // The production adapter ingress classifies runtime-targeted candidates
-        // first and uses the dedicated typed quarantine append. Fail closed here
-        // rather than persisting the forbidden raw-Observation replay shape.
+        // first and uses the dedicated typed quarantine append. Changed late
+        // evidence fails closed rather than overwriting the canonical outcome.
         return Err(AcceptanceError::CorruptRecord(format!(
             "late terminal observation for command {:?} requires authenticated runtime quarantine",
             candidate.command_id
@@ -180,22 +183,42 @@ where
         audit.command_id = Some(candidate.command_id);
         audit.target_scope = observation.target_scope.clone();
         audit.reason_code = "spawn_completion_deferred".to_owned();
-        let observation_event_id = storage
-            .append_decision(&authority_domain_id, observation_payload, audit)
+        let committed = storage
+            .append_spawn_result_deferred_audited(&authority_domain_id, observation, audit)
             .await?;
-        validate_event_id(&observation_event_id, &authority_domain_id, "observation")?;
+        validate_event_id(
+            &committed.source_event_id,
+            &authority_domain_id,
+            "observation",
+        )?;
+        validate_event_id(
+            &committed.audit_event_id,
+            &authority_domain_id,
+            "deferred spawn audit",
+        )?;
         return Ok(IngestResult::CompletionDeferred {
-            observation_event_id,
+            observation_event_id: committed.source_event_id,
         });
     }
 
-    // Repeated status reports are useful evidence but do not represent a new
-    // lifecycle transition.
+    // A repeated status/Result can only be an exact transport retry of the
+    // canonical source that established the current state. Changed evidence is
+    // not a new generic fact and must fail before durability.
     if snapshot.state == candidate.to_state {
         let observation_event_id = storage
-            .append(&authority_domain_id, observation_payload)
-            .await?;
-        validate_event_id(&observation_event_id, &authority_domain_id, "observation")?;
+            .reconcile_observation_retry(&authority_domain_id, observation)
+            .await?
+            .ok_or_else(|| {
+                AcceptanceError::CorruptRecord(format!(
+                    "changed repeated observation for command {:?} is not an exact durable retry",
+                    candidate.command_id
+                ))
+            })?;
+        validate_event_id(
+            &observation_event_id,
+            &authority_domain_id,
+            "observation retry",
+        )?;
         return Ok(IngestResult::Recorded {
             event_id: observation_event_id,
         });
@@ -249,12 +272,7 @@ where
         (candidate.failure_code != FailureCode::Unspecified).then_some(candidate.failure_code);
     audit.reason_code = "command_state_transition".to_owned();
     let committed = storage
-        .append_observation_transition_audited(
-            &authority_domain_id,
-            observation,
-            transition,
-            audit,
-        )
+        .append_observation_transition_audited(&authority_domain_id, observation, transition, audit)
         .await?;
     validate_event_id(
         &committed.observation_event_id,

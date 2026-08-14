@@ -10,8 +10,8 @@ use patchbay_contracts::patchbay::{
 use patchbay_core::{
     acceptance::COMMITTED_OPERATION_KINDS,
     authority::{validate_operator_record, AuthorityError},
-    storage::{CoreGenerationStore, Storage},
     security,
+    storage::{CoreGenerationStore, Storage},
 };
 use tokio::sync::Mutex;
 use tonic::{Request, Response, Status};
@@ -85,16 +85,14 @@ where
             } else {
                 patchbay_contracts::patchbay::AuditEventKind::BootstrapStarted
             };
-            let mut draft = patchbay_core::storage::AuditRecordDraft::new(
-                now_timestamp()?,
-                kind,
-            );
-            draft.reason_code = if kind == patchbay_contracts::patchbay::AuditEventKind::BootstrapExpired {
-                "bootstrap_expired"
-            } else {
-                "bootstrap_setup_secret_rejected"
-            }
-            .to_owned();
+            let mut draft = patchbay_core::storage::AuditRecordDraft::new(now_timestamp()?, kind);
+            draft.reason_code =
+                if kind == patchbay_contracts::patchbay::AuditEventKind::BootstrapExpired {
+                    "bootstrap_expired"
+                } else {
+                    "bootstrap_setup_secret_rejected"
+                }
+                .to_owned();
             self.control.record_audit(draft).await?;
             return Err(error);
         }
@@ -210,7 +208,11 @@ where
                 .endpoint_generation
                 .ok_or_else(|| Status::internal("issued principal has no endpoint generation"))?,
         };
-        let session = self.control.state.issue_operator_session(session_binding).await;
+        let session = self
+            .control
+            .state
+            .issue_operator_session(session_binding)
+            .await;
         let mut session_audit = patchbay_core::storage::AuditRecordDraft::new(
             now_timestamp()?,
             patchbay_contracts::patchbay::AuditEventKind::OperatorSessionCreated,
@@ -236,16 +238,22 @@ where
             .authority_domain_id
             .ok_or_else(|| Status::invalid_argument("authority_domain_id is required"))?;
         if authority_domain_id.value.is_empty() {
-            return Err(Status::invalid_argument("authority_domain_id must not be empty"));
+            return Err(Status::invalid_argument(
+                "authority_domain_id must not be empty",
+            ));
         }
-        self.control.require_configured_domain(&authority_domain_id)?;
+        self.control
+            .require_configured_domain(&authority_domain_id)?;
         if !request.reason_code.is_empty()
             && (request.reason_code.len() > 64
-                || !request.reason_code.bytes().all(|byte| {
-                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
-                }))
+                || !request
+                    .reason_code
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'))
         {
-            return Err(Status::invalid_argument("reason_code must match [a-z0-9_]{1,64}"));
+            return Err(Status::invalid_argument(
+                "reason_code must match [a-z0-9_]{1,64}",
+            ));
         }
 
         // This is the bootstrap trust boundary: no operator credential or
@@ -299,7 +307,8 @@ where
                 reason_code: reason_code.clone(),
                 occurred_at: Some(occurred_at),
                 entered_event_id: Some(entered_event_id.clone()),
-                bootstrap_channel: patchbay_contracts::patchbay::BootstrapChannelKind::LoopbackAdmin as i32,
+                bootstrap_channel: patchbay_contracts::patchbay::BootstrapChannelKind::LoopbackAdmin
+                    as i32,
             },
         );
         let mut audit = patchbay_core::storage::AuditRecordDraft::new(
@@ -314,7 +323,11 @@ where
         let event_id = self
             .control
             .storage
-            .append_decision(&authority_domain_id, security::events::encode(&source), audit)
+            .append_decision(
+                &authority_domain_id,
+                security::events::encode(&source),
+                audit,
+            )
             .await
             .map_err(map_storage_error_to_status)?;
         self.control
@@ -324,7 +337,9 @@ where
             .map_err(map_storage_error_to_status)?;
         let lockdown = self.control.state.lockdown_state().await;
         if lockdown.active {
-            return Err(Status::internal("committed lockdown exit did not clear posture"));
+            return Err(Status::internal(
+                "committed lockdown exit did not clear posture",
+            ));
         }
         Ok(Response::new(
             patchbay_contracts::patchbay::ExitSecurityLockdownResult {

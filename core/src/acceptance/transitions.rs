@@ -1,6 +1,8 @@
 //! Canonical command lifecycle transitions and transition-event application.
 
-use patchbay_contracts::patchbay::{CommandTransition, FailureCode, GrantRevocationEffect, OperationState};
+use patchbay_contracts::patchbay::{
+    CommandTransition, FailureCode, GrantRevocationEffect, OperationState,
+};
 
 use crate::storage::StorageError;
 
@@ -87,34 +89,50 @@ pub fn apply_grant_revocation_effect(
     })?;
     if command_id != &record.command_id {
         return Err(AcceptanceError::CorruptLog(format!(
-            "grant revocation effect targets {:?}, record is {:?}", command_id, record.command_id
+            "grant revocation effect targets {:?}, record is {:?}",
+            command_id, record.command_id
         )));
     }
     let from = OperationState::try_from(effect.from_state).map_err(|_| {
-        AcceptanceError::CorruptLog(format!("unknown revocation effect from_state {}", effect.from_state))
+        AcceptanceError::CorruptLog(format!(
+            "unknown revocation effect from_state {}",
+            effect.from_state
+        ))
     })?;
     let to = OperationState::try_from(effect.to_state).map_err(|_| {
-        AcceptanceError::CorruptLog(format!("unknown revocation effect to_state {}", effect.to_state))
+        AcceptanceError::CorruptLog(format!(
+            "unknown revocation effect to_state {}",
+            effect.to_state
+        ))
     })?;
     let failure = FailureCode::try_from(effect.failure_code).map_err(|_| {
-        AcceptanceError::CorruptLog(format!("unknown revocation effect failure_code {}", effect.failure_code))
+        AcceptanceError::CorruptLog(format!(
+            "unknown revocation effect failure_code {}",
+            effect.failure_code
+        ))
     })?;
     if record.state.is_terminal() {
         return Ok(false);
     }
     if from != record.state || !allowed_transition(from, to) {
         return Err(AcceptanceError::CorruptLog(format!(
-            "invalid revocation effect {:?} -> {:?} for command {:?}", from, to, record.command_id
+            "invalid revocation effect {:?} -> {:?} for command {:?}",
+            from, to, record.command_id
         )));
     }
     let expected_failure = match to {
         OperationState::Cancelled => FailureCode::Cancelled,
         OperationState::Rejected => FailureCode::AuthorizationDenied,
-        _ => return Err(AcceptanceError::CorruptLog("revocation effect must terminalize command".to_owned())),
+        _ => {
+            return Err(AcceptanceError::CorruptLog(
+                "revocation effect must terminalize command".to_owned(),
+            ))
+        }
     };
     if failure != expected_failure {
         return Err(AcceptanceError::CorruptLog(format!(
-            "revocation effect for command {:?} has failure {:?}, expected {:?}", record.command_id, failure, expected_failure
+            "revocation effect for command {:?} has failure {:?}, expected {:?}",
+            record.command_id, failure, expected_failure
         )));
     }
     record.state = to;

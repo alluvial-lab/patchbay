@@ -858,12 +858,7 @@ impl SpawnDescendantTail {
             session,
             audit,
         )?;
-        insert_descendant_grant_fact(
-            &mut progress.descendant_grant,
-            fact,
-            &key,
-            event_lsn,
-        )
+        insert_descendant_grant_fact(&mut progress.descendant_grant, fact, &key, event_lsn)
     }
 
     fn observe_command_transition(

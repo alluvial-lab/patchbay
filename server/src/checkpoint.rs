@@ -381,10 +381,9 @@ mod tests {
         LogicalTargetCreated, LogicalTargetId, LogicalTargetInitialCurrentAssigned, Observation,
         PayloadContentType, PayloadEnvelope, ResourceId, ResourceIdentity, ResourceKind,
         ResourceStateEvent, ResourceStateMutation, ResourceStateUpsert, ResourceViewStateUpdate,
-        RuntimeSessionId, SecurityLockdownEntered, SessionActivityState,
-        SessionConnectivityState, SessionGenerationBumped, SessionRegistered, SessionReport,
-        SessionReportApplied, SessionReportSourceCursor, SessionState, StoredEventKind,
-        StoredEventPayload,
+        RuntimeSessionId, SecurityLockdownEntered, SessionActivityState, SessionConnectivityState,
+        SessionGenerationBumped, SessionRegistered, SessionReport, SessionReportApplied,
+        SessionReportSourceCursor, SessionState, StoredEventKind, StoredEventPayload,
     };
     use patchbay_core::{
         session::{
@@ -662,7 +661,9 @@ mod tests {
         drop(storage);
 
         let reopened = RusqliteStorage::open(path.to_str().unwrap()).unwrap();
-        let aggregate = ProjectionState::rebuild(&reopened, &domain()).await.unwrap();
+        let aggregate = ProjectionState::rebuild(&reopened, &domain())
+            .await
+            .unwrap();
         assert_eq!(aggregate.session_recovery_checkpoint_lsn(), 4);
         assert_eq!(aggregate.session_replayed_event_count(), 0);
         assert_ownership_and_duplicate_rejection(
@@ -1129,10 +1130,7 @@ mod tests {
                                 }
                             })
                             .collect(),
-                        logical_targets: compatible
-                            .registry
-                            .logical_targets()
-                            .checkpoint_records(),
+                        logical_targets: compatible.registry.logical_targets().checkpoint_records(),
                     },
                 ),
             )

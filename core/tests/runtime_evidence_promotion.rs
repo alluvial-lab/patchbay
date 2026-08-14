@@ -523,6 +523,78 @@ async fn append_prefix(storage: &RusqliteStorage, prefix: Vec<RecordedEvent>) {
     }
 }
 
+fn transition_audit(
+    command_id: CommandId,
+    state: OperationState,
+    failure: FailureCode,
+) -> AuditRecordDraft {
+    let kind = match state {
+        OperationState::Running => AuditEventKind::CommandRunning,
+        OperationState::Completed => AuditEventKind::CommandCompleted,
+        OperationState::Rejected => AuditEventKind::CommandRejected,
+        OperationState::Failed => AuditEventKind::CommandFailed,
+        _ => panic!("unsupported test transition state {state:?}"),
+    };
+    let mut audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        kind,
+    );
+    audit.command_id = Some(command_id);
+    audit.failure_code = (failure != FailureCode::Unspecified).then_some(failure);
+    audit.reason_code = "command_state_transition".to_owned();
+    audit
+}
+
+fn deferred_result_audit() -> AuditRecordDraft {
+    let mut audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        AuditEventKind::CommandRunning,
+    );
+    audit.command_id = Some(command());
+    audit.target_scope = successful_result().target_scope;
+    audit.reason_code = "spawn_completion_deferred".to_owned();
+    audit
+}
+
+async fn append_production_promotion_prefix(storage: &RusqliteStorage) {
+    let mut prefix = valid_prefix();
+    prefix.truncate(7);
+    append_prefix(storage, prefix).await;
+    let deferred = storage
+        .append_spawn_result_deferred_audited(
+            &domain(),
+            successful_result(),
+            deferred_result_audit(),
+        )
+        .await
+        .expect("qualifying spawn Result commits through the dedicated boundary");
+    assert_eq!(deferred.source_event_id, event_id(8));
+    assert_eq!(deferred.audit_event_id, event_id(9));
+    assert_eq!(
+        storage
+            .append_spawn_successor_staged_idempotent(&domain(), staged())
+            .await
+            .expect("staged successor commits after deferred evidence"),
+        event_id(10)
+    );
+}
+
+fn production_unstamped_promotion() -> SpawnPromotionCommitted {
+    let mut promotion = unstamped_promotion();
+    promotion
+        .staged_successor
+        .as_mut()
+        .expect("promotion has staged evidence")
+        .event_id = Some(event_id(10));
+    promotion
+}
+
 #[test]
 fn promotion_producer_keeps_earliest_exact_success_result_retry_on_both_sides_of_staging() {
     let mut retry_before_staging = valid_prefix();
@@ -704,7 +776,7 @@ fn promotion_producer_treats_exact_failed_result_retries_as_one_non_success() {
 async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_durability() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let mut prefix = valid_prefix();
-    prefix.pop();
+    prefix.truncate(7);
     append_prefix(&storage, prefix).await;
 
     let generic = encode_staged_successor(&staged());
@@ -735,21 +807,13 @@ async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_
     ));
     assert!(matches!(
         storage
-            .append_batch_audited(
-                &domain(),
-                vec![generic.clone()],
-                generic_audit.clone(),
-            )
+            .append_batch_audited(&domain(), vec![generic.clone()], generic_audit.clone(),)
             .await,
         Err(StorageError::UnsupportedOperation)
     ));
     assert!(matches!(
         storage
-            .append_decision_audited_many(
-                &domain(),
-                generic.clone(),
-                vec![generic_audit],
-            )
+            .append_decision_audited_many(&domain(), generic.clone(), vec![generic_audit],)
             .await,
         Err(StorageError::UnsupportedOperation)
     ));
@@ -775,7 +839,7 @@ async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_
         .append_spawn_successor_staged_idempotent(&domain(), staged())
         .await
         .expect("exact staged successor retry reconciles");
-    assert_eq!(first, event_id(9));
+    assert_eq!(first, event_id(8));
     assert_eq!(retry, first);
 
     let mut changed = staged();
@@ -785,7 +849,7 @@ async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_
             .append_spawn_successor_staged_idempotent(&domain(), changed)
             .await,
         Err(StorageError::StagedSuccessorConflict {
-            existing_lsn: 9,
+            existing_lsn: 8,
             ..
         })
     ));
@@ -811,6 +875,313 @@ async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_
             .get(&claim().logical_target_id.unwrap())
             .and_then(|target| target.reserved_candidate.as_ref()),
         Some(&external(1))
+    );
+}
+
+#[tokio::test]
+async fn transition_observations_are_exclusive_from_every_generic_storage_route() {
+    for observation in [
+        {
+            let mut status = result(FailureCode::Unspecified);
+            status.kind = ObservationKind::Status as i32;
+            status
+        },
+        successful_result(),
+        result(FailureCode::ExecutionFailed),
+    ] {
+        let inner = RusqliteStorage::open_in_memory().unwrap();
+        let storage = AuditedStorage::new(inner.clone());
+        let source = StoredEventPayload {
+            kind: StoredEventKind::Observation as i32,
+            payload: observation.encode_to_vec(),
+        };
+        let candidate = patchbay_core::acceptance::derive_transition(&observation).unwrap();
+        let audit = transition_audit(
+            candidate.command_id,
+            candidate.to_state,
+            candidate.failure_code,
+        );
+        let key = IdempotencyKey {
+            value: format!("observation-bypass-{}", observation.kind),
+        };
+        let target = TargetKey::new(format!("observation-target-{}", observation.kind)).unwrap();
+
+        assert!(matches!(
+            storage.append(&domain(), source.clone()).await,
+            Err(StorageError::UnsupportedOperation)
+        ));
+        assert!(matches!(
+            storage
+                .append_audited(&domain(), source.clone(), audit.clone())
+                .await,
+            Err(StorageError::UnsupportedOperation)
+        ));
+        assert!(matches!(
+            storage
+                .append_decision(&domain(), source.clone(), audit.clone())
+                .await,
+            Err(StorageError::UnsupportedOperation)
+        ));
+        assert!(matches!(
+            storage
+                .append_batch_audited(&domain(), vec![source.clone()], audit.clone())
+                .await,
+            Err(StorageError::UnsupportedOperation)
+        ));
+        assert!(matches!(
+            storage
+                .append_decision_audited_many(&domain(), source.clone(), vec![audit.clone()],)
+                .await,
+            Err(StorageError::UnsupportedOperation)
+        ));
+        assert!(matches!(
+            storage
+                .append_dedup(&domain(), &key, &target, source.clone())
+                .await,
+            Err(StorageError::UnsupportedOperation)
+        ));
+        assert!(matches!(
+            inner.append(&domain(), source).await,
+            Err(StorageError::UnsupportedOperation)
+        ));
+        assert!(inner
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap()
+            .is_empty());
+    }
+}
+
+async fn assert_atomic_transition_rejected_without_writes(
+    storage: &RusqliteStorage,
+    observation: Observation,
+    transition: CommandTransition,
+    audit: AuditRecordDraft,
+) {
+    let before = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap();
+    assert!(storage
+        .append_observation_transition_audited(&domain(), observation, transition, audit)
+        .await
+        .is_err());
+    assert_eq!(
+        storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap(),
+        before,
+        "a rejected dedicated Observation decision must write nothing"
+    );
+}
+
+#[tokio::test]
+async fn atomic_transition_append_validates_durable_prestate_and_reconciles_exact_retries() {
+    let failed = result(FailureCode::ExecutionFailed);
+    let failed_transition = CommandTransition {
+        command_id: Some(command()),
+        from_state: OperationState::Running as i32,
+        to_state: OperationState::Failed as i32,
+        failure_code: FailureCode::ExecutionFailed as i32,
+        ..CommandTransition::default()
+    };
+    let failed_audit = transition_audit(
+        command(),
+        OperationState::Failed,
+        FailureCode::ExecutionFailed,
+    );
+
+    let missing = RusqliteStorage::open_in_memory().unwrap();
+    assert_atomic_transition_rejected_without_writes(
+        &missing,
+        failed.clone(),
+        failed_transition.clone(),
+        failed_audit.clone(),
+    )
+    .await;
+
+    let wrong_from = RusqliteStorage::open_in_memory().unwrap();
+    let mut running_prefix = valid_prefix();
+    running_prefix.truncate(7);
+    append_prefix(&wrong_from, running_prefix.clone()).await;
+    let mut wrong_from_transition = failed_transition.clone();
+    wrong_from_transition.from_state = OperationState::Accepted as i32;
+    assert_atomic_transition_rejected_without_writes(
+        &wrong_from,
+        failed.clone(),
+        wrong_from_transition,
+        failed_audit.clone(),
+    )
+    .await;
+
+    let disallowed = RusqliteStorage::open_in_memory().unwrap();
+    let mut accepted_prefix = valid_prefix();
+    accepted_prefix.truncate(5);
+    append_prefix(&disallowed, accepted_prefix).await;
+    let mut status = failed.clone();
+    status.kind = ObservationKind::Status as i32;
+    status.failure_code = FailureCode::Unspecified as i32;
+    assert_atomic_transition_rejected_without_writes(
+        &disallowed,
+        status,
+        CommandTransition {
+            command_id: Some(command()),
+            from_state: OperationState::Accepted as i32,
+            to_state: OperationState::Running as i32,
+            failure_code: FailureCode::Unspecified as i32,
+            ..CommandTransition::default()
+        },
+        transition_audit(command(), OperationState::Running, FailureCode::Unspecified),
+    )
+    .await;
+
+    let wrong_target = RusqliteStorage::open_in_memory().unwrap();
+    append_prefix(&wrong_target, running_prefix.clone()).await;
+    let mut mismatched = failed.clone();
+    mismatched.target_scope = Some(TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(AdapterId {
+            value: "another-adapter".to_owned(),
+        }),
+        ..TargetScope::default()
+    });
+    assert_atomic_transition_rejected_without_writes(
+        &wrong_target,
+        mismatched,
+        failed_transition.clone(),
+        failed_audit.clone(),
+    )
+    .await;
+
+    let forged = RusqliteStorage::open_in_memory().unwrap();
+    append_prefix(&forged, running_prefix.clone()).await;
+    let forged_command = CommandId {
+        value: "forged-command".to_owned(),
+    };
+    let mut forged_observation = failed.clone();
+    forged_observation.correlations = vec![TypedCorrelation {
+        r#ref: Some(typed_correlation::Ref::CommandId(forged_command.clone())),
+    }];
+    assert_atomic_transition_rejected_without_writes(
+        &forged,
+        forged_observation,
+        CommandTransition {
+            command_id: Some(forged_command.clone()),
+            ..failed_transition.clone()
+        },
+        transition_audit(
+            forged_command,
+            OperationState::Failed,
+            FailureCode::ExecutionFailed,
+        ),
+    )
+    .await;
+
+    let valid = RusqliteStorage::open_in_memory().unwrap();
+    append_prefix(&valid, running_prefix).await;
+    let first = valid
+        .append_observation_transition_audited(
+            &domain(),
+            failed.clone(),
+            failed_transition.clone(),
+            failed_audit.clone(),
+        )
+        .await
+        .expect("valid running-to-failed trio commits");
+    assert_eq!(first.observation_event_id, event_id(8));
+    assert_eq!(first.transition_event_id, event_id(9));
+    assert_eq!(first.audit_event_id, event_id(10));
+    let before_retry = valid.read_after(&domain(), Lsn { value: 0 }).await.unwrap();
+    let retry = valid
+        .append_observation_transition_audited(
+            &domain(),
+            failed.clone(),
+            failed_transition.clone(),
+            failed_audit.clone(),
+        )
+        .await
+        .expect("exact transition Result retry reconciles");
+    assert_eq!(retry, first);
+    assert_eq!(
+        valid
+            .reconcile_observation_retry(&domain(), failed.clone())
+            .await
+            .unwrap(),
+        Some(first.observation_event_id.clone())
+    );
+    assert_eq!(
+        valid.read_after(&domain(), Lsn { value: 0 }).await.unwrap(),
+        before_retry
+    );
+    let mut changed = failed;
+    changed.observed_at = Some(Timestamp {
+        seconds: 11,
+        nanos: 0,
+    });
+    assert_atomic_transition_rejected_without_writes(
+        &valid,
+        changed,
+        failed_transition,
+        failed_audit,
+    )
+    .await;
+    let replayed = patchbay_core::acceptance::rebuild_from_log(&valid, &domain())
+        .await
+        .expect("the committed trio is restart-replayable");
+    assert_eq!(
+        replayed.get_command(&command()).unwrap().state,
+        OperationState::Failed
+    );
+}
+
+#[tokio::test]
+async fn deferred_spawn_result_reuses_exact_source_and_rejects_changed_evidence() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut prefix = valid_prefix();
+    prefix.truncate(7);
+    append_prefix(&storage, prefix).await;
+    let first = storage
+        .append_spawn_result_deferred_audited(
+            &domain(),
+            successful_result(),
+            deferred_result_audit(),
+        )
+        .await
+        .unwrap();
+    let retry = storage
+        .append_spawn_result_deferred_audited(
+            &domain(),
+            successful_result(),
+            deferred_result_audit(),
+        )
+        .await
+        .expect("exact deferred Result retry reconciles");
+    assert_eq!(retry, first);
+    let before_changed = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap();
+    let mut changed = successful_result();
+    changed.observed_at = Some(Timestamp {
+        seconds: 11,
+        nanos: 0,
+    });
+    assert!(matches!(
+        storage
+            .append_spawn_result_deferred_audited(&domain(), changed, deferred_result_audit(),)
+            .await,
+        Err(StorageError::ObservationEvidenceConflict {
+            existing_lsn: 8,
+            ..
+        })
+    ));
+    assert_eq!(
+        storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap(),
+        before_changed
     );
 }
 
@@ -2177,106 +2548,95 @@ async fn malformed_quarantine_wire_is_rejected_on_every_generic_storage_route() 
 
 #[tokio::test]
 async fn promotion_rejects_result_before_delivered_or_later_running_evidence() {
-    for result_position in ["before-delivery", "before-running"] {
-        let storage = RusqliteStorage::open_in_memory().unwrap();
-        let mut prefix = valid_prefix();
-        prefix.truncate(5);
-        let ordered_tail = if result_position == "before-delivery" {
-            vec![
-                recorded(
-                    6,
-                    StoredEventPayload {
-                        kind: StoredEventKind::Observation as i32,
-                        payload: successful_result().encode_to_vec(),
-                    },
-                ),
-                recorded(
-                    7,
-                    StoredEventPayload {
-                        kind: StoredEventKind::CommandTransition as i32,
-                        payload: transition(OperationState::Accepted, OperationState::Delivered)
-                            .encode_to_vec(),
-                    },
-                ),
-                recorded(
-                    8,
-                    StoredEventPayload {
-                        kind: StoredEventKind::CommandTransition as i32,
-                        payload: transition(OperationState::Delivered, OperationState::Running)
-                            .encode_to_vec(),
-                    },
-                ),
-            ]
-        } else {
-            vec![
-                recorded(
-                    6,
-                    StoredEventPayload {
-                        kind: StoredEventKind::CommandTransition as i32,
-                        payload: transition(OperationState::Accepted, OperationState::Delivered)
-                            .encode_to_vec(),
-                    },
-                ),
-                recorded(
-                    7,
-                    StoredEventPayload {
-                        kind: StoredEventKind::Observation as i32,
-                        payload: successful_result().encode_to_vec(),
-                    },
-                ),
-                recorded(
-                    8,
-                    StoredEventPayload {
-                        kind: StoredEventKind::CommandTransition as i32,
-                        payload: transition(OperationState::Delivered, OperationState::Running)
-                            .encode_to_vec(),
-                    },
-                ),
-            ]
-        };
-        prefix.extend(ordered_tail);
-        prefix.push(recorded(9, encode_staged_successor(&staged())));
-        append_prefix(&storage, prefix).await;
+    let before_delivery = RusqliteStorage::open_in_memory().unwrap();
+    let mut accepted_prefix = valid_prefix();
+    accepted_prefix.truncate(5);
+    append_prefix(&before_delivery, accepted_prefix).await;
+    let before = before_delivery
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap();
+    assert!(before_delivery
+        .append_spawn_result_deferred_audited(
+            &domain(),
+            successful_result(),
+            deferred_result_audit(),
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        before_delivery
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap(),
+        before,
+        "Result-before-delivery must fail before source or audit durability"
+    );
 
-        let mut promotion = unstamped_promotion();
-        promotion.lifecycle[0].event_id = Some(event_id(if result_position == "before-delivery" {
-            7
-        } else {
-            6
-        }));
-        promotion.lifecycle[1].event_id = Some(event_id(8));
-        promotion.successful_result.as_mut().unwrap().event_id =
-            Some(event_id(if result_position == "before-delivery" {
-                6
-            } else {
-                7
-            }));
-        let mut audit = AuditRecordDraft::new(
-            Timestamp {
-                seconds: 10,
-                nanos: 0,
-            },
-            AuditEventKind::CommandCompleted,
-        );
-        audit.command_id = Some(command());
-        audit.reason_code = "spawn_completion".to_owned();
-        assert!(
-            storage
-                .append_spawn_promotion_audited(&domain(), promotion, audit)
-                .await
-                .is_err(),
-            "{result_position} must not become authority-bearing promotion evidence"
-        );
-        assert_eq!(
-            storage
-                .read_after(&domain(), Lsn { value: 0 })
-                .await
-                .unwrap()
-                .len(),
-            9,
-            "rejected promotion must not append source or audit"
-        );
-    }
+    let before_running = RusqliteStorage::open_in_memory().unwrap();
+    let mut delivered_prefix = valid_prefix();
+    delivered_prefix.truncate(6);
+    append_prefix(&before_running, delivered_prefix).await;
+    let deferred = before_running
+        .append_spawn_result_deferred_audited(
+            &domain(),
+            successful_result(),
+            deferred_result_audit(),
+        )
+        .await
+        .expect("delivered is a qualifying Result replay position");
+    assert_eq!(deferred.source_event_id, event_id(7));
+    assert_eq!(deferred.audit_event_id, event_id(8));
+    assert_eq!(
+        before_running
+            .append(
+                &domain(),
+                StoredEventPayload {
+                    kind: StoredEventKind::CommandTransition as i32,
+                    payload: transition(OperationState::Delivered, OperationState::Running)
+                        .encode_to_vec(),
+                },
+            )
+            .await
+            .unwrap(),
+        event_id(9)
+    );
+    assert_eq!(
+        before_running
+            .append_spawn_successor_staged_idempotent(&domain(), staged())
+            .await
+            .unwrap(),
+        event_id(10)
+    );
+    let mut promotion = production_unstamped_promotion();
+    promotion.lifecycle[0].event_id = Some(event_id(6));
+    promotion.lifecycle[1].event_id = Some(event_id(9));
+    promotion.successful_result.as_mut().unwrap().event_id = Some(event_id(7));
+    let mut audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        AuditEventKind::CommandCompleted,
+    );
+    audit.command_id = Some(command());
+    audit.reason_code = "spawn_completion".to_owned();
+    let before = before_running
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap();
+    assert!(before_running
+        .append_spawn_promotion_audited(&domain(), promotion, audit)
+        .await
+        .is_err());
+    assert_eq!(
+        before_running
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap(),
+        before,
+        "later running evidence must not qualify an earlier Result for promotion"
+    );
 }
 
 #[tokio::test]
@@ -2285,7 +2645,7 @@ async fn promotion_audit_failure_rolls_back_source_and_grant_identity_reservatio
     let path = directory.path().join("promotion-rollback.sqlite");
     let path_string = path.to_string_lossy().into_owned();
     let storage = RusqliteStorage::open(&path_string).unwrap();
-    append_prefix(&storage, valid_prefix()).await;
+    append_production_promotion_prefix(&storage).await;
     let connection = rusqlite::Connection::open(&path).unwrap();
     connection
         .execute_batch(&format!(
@@ -2305,7 +2665,7 @@ async fn promotion_audit_failure_rolls_back_source_and_grant_identity_reservatio
     audit.command_id = Some(command());
     audit.reason_code = "spawn_completion".to_owned();
     assert!(storage
-        .append_spawn_promotion_audited(&domain(), unstamped_promotion(), audit.clone())
+        .append_spawn_promotion_audited(&domain(), production_unstamped_promotion(), audit.clone(),)
         .await
         .is_err());
     assert_eq!(
@@ -2314,7 +2674,7 @@ async fn promotion_audit_failure_rolls_back_source_and_grant_identity_reservatio
             .await
             .unwrap()
             .len(),
-        9,
+        10,
         "source event and grant identity reservation roll back with the audit failure"
     );
 
@@ -2324,17 +2684,17 @@ async fn promotion_audit_failure_rolls_back_source_and_grant_identity_reservatio
         .unwrap();
     drop(connection);
     let committed = storage
-        .append_spawn_promotion_audited(&domain(), unstamped_promotion(), audit)
+        .append_spawn_promotion_audited(&domain(), production_unstamped_promotion(), audit)
         .await
         .expect("rolled-back grant identity can be reserved by the complete retry");
-    assert_eq!(committed.source_event_id, event_id(10));
-    assert_eq!(committed.audit_event_id, event_id(11));
+    assert_eq!(committed.source_event_id, event_id(11));
+    assert_eq!(committed.audit_event_id, event_id(12));
 }
 
 #[tokio::test]
 async fn storage_stamps_and_commits_complete_promotion_plus_audit_atomically() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    append_prefix(&storage, valid_prefix()).await;
+    append_production_promotion_prefix(&storage).await;
     let mut audit = AuditRecordDraft::new(
         Timestamp {
             seconds: 10,
@@ -2345,15 +2705,15 @@ async fn storage_stamps_and_commits_complete_promotion_plus_audit_atomically() {
     audit.command_id = Some(command());
     audit.reason_code = "spawn_completion".to_owned();
     let committed = storage
-        .append_spawn_promotion_audited(&domain(), unstamped_promotion(), audit)
+        .append_spawn_promotion_audited(&domain(), production_unstamped_promotion(), audit)
         .await
         .unwrap();
-    assert_eq!(committed.source_event_id, event_id(10));
-    assert_eq!(committed.audit_event_id, event_id(11));
-    assert_eq!(committed.promotion.promotion_event_id, Some(event_id(10)));
+    assert_eq!(committed.source_event_id, event_id(11));
+    assert_eq!(committed.audit_event_id, event_id(12));
+    assert_eq!(committed.promotion.promotion_event_id, Some(event_id(11)));
     assert_eq!(
         committed.promotion.completion_audit_event_id,
-        Some(event_id(11))
+        Some(event_id(12))
     );
     assert_eq!(
         committed
@@ -2365,10 +2725,10 @@ async fn storage_stamps_and_commits_complete_promotion_plus_audit_atomically() {
             .as_ref()
             .unwrap()
             .audit_id,
-        Some(event_id(11))
+        Some(event_id(12))
     );
     let events = storage
-        .read_after(&domain(), Lsn { value: 9 })
+        .read_after(&domain(), Lsn { value: 10 })
         .await
         .unwrap();
     assert_eq!(events.len(), 2);
@@ -2446,6 +2806,6 @@ async fn storage_stamps_and_commits_complete_promotion_plus_audit_atomically() {
             .await
             .unwrap()
             .len(),
-        11
+        12
     );
 }

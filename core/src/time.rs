@@ -4,7 +4,10 @@
 //! the server or a particular persistence backend. Callers sample the port at
 //! a boundary and pass that value into pure domain predicates.
 
-use std::{sync::{Arc, RwLock}, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    sync::{Arc, RwLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use prost_types::Timestamp;
 
@@ -32,7 +35,9 @@ pub struct TestClock {
 impl TestClock {
     #[must_use]
     pub fn new(now: Timestamp) -> Self {
-        Self { now: Arc::new(RwLock::new(now)) }
+        Self {
+            now: Arc::new(RwLock::new(now)),
+        }
     }
 
     pub fn set(&self, now: Timestamp) {
@@ -58,7 +63,10 @@ pub fn timestamp_from_system_time(time: SystemTime) -> Timestamp {
             let duration = error.duration();
             let seconds = i64::try_from(duration.as_secs()).unwrap_or(i64::MAX);
             if duration.subsec_nanos() == 0 {
-                Timestamp { seconds: -seconds, nanos: 0 }
+                Timestamp {
+                    seconds: -seconds,
+                    nanos: 0,
+                }
             } else {
                 Timestamp {
                     seconds: -seconds - 1,

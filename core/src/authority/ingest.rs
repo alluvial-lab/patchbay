@@ -268,10 +268,7 @@ where
     Ok(events)
 }
 
-fn fold_projection_prefix<L>(
-    projection: &L,
-    events: &[RecordedEvent],
-) -> Result<L, AuthorityError>
+fn fold_projection_prefix<L>(projection: &L, events: &[RecordedEvent]) -> Result<L, AuthorityError>
 where
     L: GrantProjection,
 {

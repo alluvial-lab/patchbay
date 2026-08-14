@@ -32,9 +32,9 @@ use std::{
 use patchbay_contracts::patchbay::{
     runtime_generation_disposition, typed_correlation, AuditEventKind, AuditPage, AuditRecord,
     AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, EventId, FailureCode,
-    Generation, Grant, IdempotencyKey, Lsn, Observation, ObservationKind, OperationState,
-    QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason, SpawnPromotionCommitted,
-    SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
+    Generation, Grant, IdempotencyKey, Lsn, Observation, ObservationKind, OperationKind,
+    OperationState, QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason,
+    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
@@ -713,6 +713,17 @@ enum WriterCommand {
         audit: AuditRecordDraft,
         reply: oneshot::Sender<Result<ObservationTransitionAppend, StorageError>>,
     },
+    AppendSpawnResultDeferredAudited {
+        authority_domain_id: String,
+        observation: Box<Observation>,
+        audit: AuditRecordDraft,
+        reply: oneshot::Sender<Result<AuditedAppend, StorageError>>,
+    },
+    ReconcileObservationRetry {
+        authority_domain_id: String,
+        observation: Box<Observation>,
+        reply: oneshot::Sender<Result<Option<EventId>, StorageError>>,
+    },
     AppendGrantAudited {
         authority_domain_id: String,
         identity: String,
@@ -927,6 +938,29 @@ async fn writer_actor(
                     *transition,
                     audit,
                 );
+                let _ = reply.send(result);
+            }
+            WriterCommand::AppendSpawnResultDeferredAudited {
+                authority_domain_id,
+                observation,
+                audit,
+                reply,
+            } => {
+                let result = do_append_spawn_result_deferred_audited(
+                    &mut db,
+                    &authority_domain_id,
+                    *observation,
+                    audit,
+                );
+                let _ = reply.send(result);
+            }
+            WriterCommand::ReconcileObservationRetry {
+                authority_domain_id,
+                observation,
+                reply,
+            } => {
+                let result =
+                    do_reconcile_observation_retry(&mut db, &authority_domain_id, *observation);
                 let _ = reply.send(result);
             }
             WriterCommand::AppendGrantAudited {
@@ -1366,6 +1400,18 @@ fn exact_observation_command_id(observation: &Observation) -> Result<&CommandId,
     })
 }
 
+fn observation_transition_audit_reason(observation: &Observation) -> &'static str {
+    if observation
+        .payload
+        .as_ref()
+        .is_some_and(|payload| payload.schema_ref == "patchbay.DiagnosticsResult")
+    {
+        "query_state_transition"
+    } else {
+        "command_state_transition"
+    }
+}
+
 fn validate_observation_transition_pair(
     authority_domain_id: &str,
     observation: &Observation,
@@ -1441,13 +1487,255 @@ fn validate_observation_transition_pair(
     if audit.kind != expected_audit_kind
         || audit.command_id.as_ref() != Some(command_id)
         || audit.failure_code != expected_audit_failure
-        || audit.reason_code != "command_state_transition"
+        || audit.reason_code != observation_transition_audit_reason(observation)
     {
         return Err(StorageError::InvalidAuditRecord(
             "Observation transition audit does not match the derived lifecycle decision".to_owned(),
         ));
     }
     Ok(())
+}
+
+#[derive(Debug)]
+struct QualifiedObservation {
+    observation_event_id: EventId,
+    transition_event_id: Option<EventId>,
+    audit_event_id: EventId,
+}
+
+struct ValidatedObservationPrefix {
+    commands: crate::acceptance::CommandIndex,
+    previous_lsn: u64,
+    exact: Option<QualifiedObservation>,
+    conflicting_result_lsn: Option<u64>,
+}
+
+fn audit_kind_for_state(state: OperationState) -> Result<AuditEventKind, StorageError> {
+    match state {
+        OperationState::Delivered => Ok(AuditEventKind::CommandDelivered),
+        OperationState::Running => Ok(AuditEventKind::CommandRunning),
+        OperationState::Completed => Ok(AuditEventKind::CommandCompleted),
+        OperationState::Rejected => Ok(AuditEventKind::CommandRejected),
+        OperationState::Failed => Ok(AuditEventKind::CommandFailed),
+        OperationState::Expired => Ok(AuditEventKind::CommandExpired),
+        OperationState::Cancelled => Ok(AuditEventKind::CommandCancelled),
+        OperationState::Superseded => Ok(AuditEventKind::CommandSuperseded),
+        OperationState::Accepted | OperationState::Unspecified => Err(StorageError::CorruptRecord(
+            "Observation transition selected a non-transition state".to_owned(),
+        )),
+    }
+}
+
+fn validate_canonical_audit(
+    events: &[RecordedEvent],
+    index: usize,
+    expected_source: &EventId,
+    expected_kind: AuditEventKind,
+    command_id: &CommandId,
+    expected_failure: Option<FailureCode>,
+    expected_reason: &str,
+    expected_target: Option<&patchbay_contracts::patchbay::TargetScope>,
+) -> Result<EventId, StorageError> {
+    let event = events.get(index).ok_or_else(|| {
+        StorageError::CorruptRecord(
+            "canonical Observation decision is missing its immediate audit".to_owned(),
+        )
+    })?;
+    if event.payload.kind != StoredEventKind::AuditRecord as i32 {
+        return Err(StorageError::CorruptRecord(
+            "canonical Observation decision is not immediately followed by its audit".to_owned(),
+        ));
+    }
+    let audit = AuditRecord::decode(event.payload.payload.as_slice()).map_err(|error| {
+        StorageError::CorruptRecord(format!(
+            "cannot decode canonical Observation audit: {error}"
+        ))
+    })?;
+    if audit.audit_event_id.as_ref() != Some(&event.event_id)
+        || audit.source_event_id.as_ref() != Some(expected_source)
+        || AuditEventKind::try_from(audit.kind).ok() != Some(expected_kind)
+        || audit.command_id.as_ref() != Some(command_id)
+        || FailureCode::try_from(audit.failure_code)
+            .ok()
+            .filter(|failure| *failure != FailureCode::Unspecified)
+            != expected_failure
+        || audit.reason_code != expected_reason
+        || expected_target.is_some_and(|target| audit.target_scope.as_ref() != Some(target))
+    {
+        return Err(StorageError::CorruptRecord(
+            "canonical Observation audit framing disagrees with its source decision".to_owned(),
+        ));
+    }
+    Ok(event.event_id.clone())
+}
+
+fn validate_observation_prefix(
+    events: &[RecordedEvent],
+    domain: &AuthorityDomainId,
+    incoming: &Observation,
+) -> Result<ValidatedObservationPrefix, StorageError> {
+    let incoming_candidate = crate::acceptance::derive_transition(incoming).ok_or_else(|| {
+        StorageError::CorruptRecord(
+            "Observation retry is not a transition-producing status/Result".to_owned(),
+        )
+    })?;
+    let mut commands = crate::acceptance::CommandIndex::new();
+    let mut previous_lsn = 0;
+    let mut exact = None;
+    let mut conflicting_result_lsn = None;
+
+    for (index, event) in events.iter().enumerate() {
+        let validated = crate::storage::validate_next_replay_event(domain, previous_lsn, event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        if event.payload.kind == StoredEventKind::Observation as i32 {
+            let durable =
+                Observation::decode(event.payload.payload.as_slice()).map_err(|error| {
+                    StorageError::CorruptRecord(format!(
+                        "cannot decode durable Observation at LSN {}: {error}",
+                        validated.lsn
+                    ))
+                })?;
+            if let Some(durable_candidate) = crate::acceptance::derive_transition(&durable) {
+                let same_identity = durable_candidate.command_id == incoming_candidate.command_id
+                    && durable.target_scope == incoming.target_scope;
+                if same_identity
+                    && ObservationKind::try_from(durable.kind).ok() == Some(ObservationKind::Result)
+                    && durable != *incoming
+                    && conflicting_result_lsn.is_none()
+                {
+                    conflicting_result_lsn = Some(validated.lsn);
+                }
+                if durable == *incoming {
+                    let record = commands
+                        .get_command(&durable_candidate.command_id)
+                        .ok_or_else(|| {
+                            StorageError::CorruptRecord(format!(
+                                "canonical Observation at LSN {} precedes its command",
+                                validated.lsn
+                            ))
+                        })?;
+                    if durable.target_scope != record.operation.target_scope {
+                        return Err(StorageError::CorruptRecord(format!(
+                            "canonical Observation at LSN {} targets another command scope",
+                            validated.lsn
+                        )));
+                    }
+                    let is_deferred_spawn = record.operation.kind == OperationKind::Spawn as i32
+                        && durable_candidate.to_state == OperationState::Completed
+                        && durable_candidate.failure_code == FailureCode::Unspecified;
+                    let qualified = if is_deferred_spawn {
+                        if !matches!(
+                            record.state,
+                            OperationState::Delivered | OperationState::Running
+                        ) {
+                            return Err(StorageError::CorruptRecord(format!(
+                                "canonical deferred spawn Result at LSN {} is not at a delivered/running replay position",
+                                validated.lsn
+                            )));
+                        }
+                        let mut staged = commands.clone();
+                        staged
+                            .apply(event)
+                            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+                        if !staged.has_deferred_spawn_success(&durable_candidate.command_id) {
+                            return Err(StorageError::CorruptRecord(
+                                "canonical deferred spawn Result does not qualify in the staged command projection"
+                                    .to_owned(),
+                            ));
+                        }
+                        let audit_event_id = validate_canonical_audit(
+                            events,
+                            index + 1,
+                            &event.event_id,
+                            AuditEventKind::CommandRunning,
+                            &durable_candidate.command_id,
+                            None,
+                            "spawn_completion_deferred",
+                            durable.target_scope.as_ref(),
+                        )?;
+                        QualifiedObservation {
+                            observation_event_id: event.event_id.clone(),
+                            transition_event_id: None,
+                            audit_event_id,
+                        }
+                    } else {
+                        let transition_event = events.get(index + 1).ok_or_else(|| {
+                            StorageError::CorruptRecord(
+                                "canonical transition-producing Observation is stranded at the durable tail"
+                                    .to_owned(),
+                            )
+                        })?;
+                        if transition_event.payload.kind
+                            != StoredEventKind::CommandTransition as i32
+                        {
+                            return Err(StorageError::CorruptRecord(
+                                "canonical transition-producing Observation is not immediately followed by its transition"
+                                    .to_owned(),
+                            ));
+                        }
+                        let durable_transition =
+                            CommandTransition::decode(transition_event.payload.payload.as_slice())
+                                .map_err(|error| {
+                                    StorageError::CorruptRecord(format!(
+                                        "cannot decode canonical Observation transition: {error}"
+                                    ))
+                                })?;
+                        if durable_transition.command_id.as_ref()
+                            != Some(&durable_candidate.command_id)
+                            || OperationState::try_from(durable_transition.from_state).ok()
+                                != Some(record.state)
+                            || OperationState::try_from(durable_transition.to_state).ok()
+                                != Some(durable_candidate.to_state)
+                            || FailureCode::try_from(durable_transition.failure_code).ok()
+                                != Some(durable_candidate.failure_code)
+                        {
+                            return Err(StorageError::CorruptRecord(
+                                "canonical Observation transition disagrees with replay pre-state or derived outcome"
+                                    .to_owned(),
+                            ));
+                        }
+                        let mut staged = commands.clone();
+                        staged
+                            .apply(event)
+                            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+                        staged
+                            .apply(transition_event)
+                            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+                        let audit_event_id = validate_canonical_audit(
+                            events,
+                            index + 2,
+                            &transition_event.event_id,
+                            audit_kind_for_state(durable_candidate.to_state)?,
+                            &durable_candidate.command_id,
+                            (durable_candidate.failure_code != FailureCode::Unspecified)
+                                .then_some(durable_candidate.failure_code),
+                            observation_transition_audit_reason(&durable),
+                            None,
+                        )?;
+                        QualifiedObservation {
+                            observation_event_id: event.event_id.clone(),
+                            transition_event_id: Some(transition_event.event_id.clone()),
+                            audit_event_id,
+                        }
+                    };
+                    if exact.is_none() {
+                        exact = Some(qualified);
+                    }
+                }
+            }
+        }
+        commands
+            .apply(event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        previous_lsn = validated.lsn;
+    }
+
+    Ok(ValidatedObservationPrefix {
+        commands,
+        previous_lsn,
+        exact,
+        conflicting_result_lsn,
+    })
 }
 
 fn do_append_observation_transition_audited(
@@ -1459,9 +1747,10 @@ fn do_append_observation_transition_audited(
 ) -> Result<ObservationTransitionAppend, StorageError> {
     validate_observation_transition_pair(authority_domain_id, &observation, &transition, &audit)?;
     audit.source_event_id = None;
-    audit.validate(&AuthorityDomainId {
+    let domain = AuthorityDomainId {
         value: authority_domain_id.to_owned(),
-    })?;
+    };
+    audit.validate(&domain)?;
     let observation_payload = StoredEventPayload {
         kind: StoredEventKind::Observation as i32,
         payload: observation.encode_to_vec(),
@@ -1471,28 +1760,238 @@ fn do_append_observation_transition_audited(
         payload: transition.encode_to_vec(),
     };
     let tx = db.transaction().map_err(map_write_err)?;
+    let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
+    let validated = validate_observation_prefix(&events, &domain, &observation)?;
+    if let Some(existing) = validated.exact {
+        let transition_event_id = existing.transition_event_id.ok_or_else(|| {
+            StorageError::CorruptRecord(
+                "transition append retry resolves to deferred spawn evidence".to_owned(),
+            )
+        })?;
+        tx.commit().map_err(map_write_err)?;
+        return Ok(ObservationTransitionAppend {
+            observation_event_id: existing.observation_event_id,
+            transition_event_id,
+            audit_event_id: existing.audit_event_id,
+        });
+    }
+
+    let command_id = exact_observation_command_id(&observation)?;
+    let record = validated.commands.get_command(command_id).ok_or_else(|| {
+        StorageError::CorruptRecord(format!(
+            "Observation transition references missing command {}",
+            command_id.value
+        ))
+    })?;
+    if record.operation.target_scope != observation.target_scope {
+        return Err(StorageError::CorruptRecord(format!(
+            "Observation transition target disagrees with durable command {}",
+            command_id.value
+        )));
+    }
+    if OperationState::try_from(transition.from_state).ok() != Some(record.state) {
+        return Err(StorageError::CorruptRecord(format!(
+            "Observation transition from_state disagrees with durable command {}",
+            command_id.value
+        )));
+    }
+
+    let observation_event_id = event_id(domain.clone(), validated.previous_lsn + 1);
+    let transition_event_id = event_id(domain.clone(), validated.previous_lsn + 2);
+    let observation_candidate = RecordedEvent {
+        event_id: observation_event_id.clone(),
+        payload: observation_payload.clone(),
+    };
+    let transition_candidate = RecordedEvent {
+        event_id: transition_event_id.clone(),
+        payload: transition_payload.clone(),
+    };
+    let mut staged = validated.commands.clone();
+    staged
+        .apply(&observation_candidate)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    staged
+        .apply(&transition_candidate)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+
     let (observation_lsn, _) = insert_event(&tx, authority_domain_id, &observation_payload)?;
-    let observation_event_id = event_id(
-        AuthorityDomainId {
-            value: authority_domain_id.to_owned(),
-        },
-        observation_lsn as u64,
-    );
+    if observation_lsn as u64 != validated.previous_lsn + 1 {
+        return Err(StorageError::CorruptRecord(format!(
+            "SQLite assigned Observation LSN {observation_lsn}, expected {}",
+            validated.previous_lsn + 1
+        )));
+    }
     let (transition_lsn, _) = insert_event(&tx, authority_domain_id, &transition_payload)?;
-    let transition_event_id = event_id(
-        AuthorityDomainId {
-            value: authority_domain_id.to_owned(),
-        },
-        transition_lsn as u64,
-    );
+    if transition_lsn as u64 != validated.previous_lsn + 2 {
+        return Err(StorageError::CorruptRecord(format!(
+            "SQLite assigned transition LSN {transition_lsn}, expected {}",
+            validated.previous_lsn + 2
+        )));
+    }
     audit.source_event_id = Some(transition_event_id.clone());
     let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
+    if audit_event_id != event_id(domain, validated.previous_lsn + 3) {
+        return Err(StorageError::CorruptRecord(
+            "Observation transition audit is not the immediate successor".to_owned(),
+        ));
+    }
     tx.commit().map_err(map_write_err)?;
     Ok(ObservationTransitionAppend {
         observation_event_id,
         transition_event_id,
         audit_event_id,
     })
+}
+
+fn validate_deferred_spawn_result(
+    authority_domain_id: &str,
+    observation: &Observation,
+    audit: &AuditRecordDraft,
+) -> Result<CommandId, StorageError> {
+    if observation
+        .authority_domain_id
+        .as_ref()
+        .map(|domain| domain.value.as_str())
+        != Some(authority_domain_id)
+        || ObservationKind::try_from(observation.kind).ok() != Some(ObservationKind::Result)
+        || FailureCode::try_from(observation.failure_code).ok() != Some(FailureCode::Unspecified)
+    {
+        return Err(StorageError::CorruptRecord(
+            "deferred spawn evidence must be one successful Result in the append domain".to_owned(),
+        ));
+    }
+    let command_id = exact_observation_command_id(observation)?.clone();
+    if audit.kind != AuditEventKind::CommandRunning
+        || audit.command_id.as_ref() != Some(&command_id)
+        || audit.failure_code.is_some()
+        || audit.reason_code != "spawn_completion_deferred"
+        || audit.target_scope != observation.target_scope
+    {
+        return Err(StorageError::InvalidAuditRecord(
+            "deferred spawn Result requires canonical CommandRunning audit framing".to_owned(),
+        ));
+    }
+    Ok(command_id)
+}
+
+fn do_append_spawn_result_deferred_audited(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    observation: Observation,
+    mut audit: AuditRecordDraft,
+) -> Result<AuditedAppend, StorageError> {
+    let command_id = validate_deferred_spawn_result(authority_domain_id, &observation, &audit)?;
+    audit.source_event_id = None;
+    let domain = AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    };
+    audit.validate(&domain)?;
+    let tx = db.transaction().map_err(map_write_err)?;
+    let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
+    let validated = validate_observation_prefix(&events, &domain, &observation)?;
+    if let Some(existing) = validated.exact {
+        if existing.transition_event_id.is_some() {
+            return Err(StorageError::CorruptRecord(
+                "deferred spawn retry resolves to terminalizing evidence".to_owned(),
+            ));
+        }
+        tx.commit().map_err(map_write_err)?;
+        return Ok(AuditedAppend {
+            source_event_id: existing.observation_event_id,
+            audit_event_id: existing.audit_event_id,
+        });
+    }
+    if let Some(existing_lsn) = validated.conflicting_result_lsn {
+        return Err(StorageError::ObservationEvidenceConflict {
+            command_id: command_id.value,
+            existing_lsn,
+        });
+    }
+    let record = validated.commands.get_command(&command_id).ok_or_else(|| {
+        StorageError::CorruptRecord(format!(
+            "deferred spawn Result references missing command {}",
+            command_id.value
+        ))
+    })?;
+    if record.operation.kind != OperationKind::Spawn as i32
+        || record.operation.target_scope != observation.target_scope
+        || !matches!(
+            record.state,
+            OperationState::Delivered | OperationState::Running
+        )
+    {
+        return Err(StorageError::CorruptRecord(format!(
+            "deferred spawn Result disagrees with durable spawn pre-state for command {}",
+            command_id.value
+        )));
+    }
+
+    let source = StoredEventPayload {
+        kind: StoredEventKind::Observation as i32,
+        payload: observation.encode_to_vec(),
+    };
+    let source_event_id = event_id(domain.clone(), validated.previous_lsn + 1);
+    let candidate = RecordedEvent {
+        event_id: source_event_id.clone(),
+        payload: source.clone(),
+    };
+    let mut staged = validated.commands;
+    staged
+        .apply(&candidate)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    if !staged.has_deferred_spawn_success(&command_id) {
+        return Err(StorageError::CorruptRecord(
+            "deferred spawn Result did not qualify in the staged command projection".to_owned(),
+        ));
+    }
+    let (source_lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
+    if source_lsn as u64 != validated.previous_lsn + 1 {
+        return Err(StorageError::CorruptRecord(format!(
+            "SQLite assigned deferred Result LSN {source_lsn}, expected {}",
+            validated.previous_lsn + 1
+        )));
+    }
+    audit.source_event_id = Some(source_event_id.clone());
+    let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
+    if audit_event_id != event_id(domain, validated.previous_lsn + 2) {
+        return Err(StorageError::CorruptRecord(
+            "deferred spawn Result audit is not the immediate successor".to_owned(),
+        ));
+    }
+    tx.commit().map_err(map_write_err)?;
+    Ok(AuditedAppend {
+        source_event_id,
+        audit_event_id,
+    })
+}
+
+fn do_reconcile_observation_retry(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    observation: Observation,
+) -> Result<Option<EventId>, StorageError> {
+    if observation
+        .authority_domain_id
+        .as_ref()
+        .map(|domain| domain.value.as_str())
+        != Some(authority_domain_id)
+        || crate::acceptance::derive_transition(&observation).is_none()
+    {
+        return Err(StorageError::CorruptRecord(
+            "Observation retry is not a transition-producing status/Result in the append domain"
+                .to_owned(),
+        ));
+    }
+    let domain = AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    };
+    let tx = db.transaction().map_err(map_write_err)?;
+    let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
+    let existing = validate_observation_prefix(&events, &domain, &observation)?
+        .exact
+        .map(|qualified| qualified.observation_event_id);
+    tx.commit().map_err(map_write_err)?;
+    Ok(existing)
 }
 
 fn do_append_grant_audited(
@@ -2794,15 +3293,27 @@ impl CoreGenerationStore for RusqliteStorage {
     }
 }
 
+fn transition_producing_observation(payload: &StoredEventPayload) -> bool {
+    if payload.kind != StoredEventKind::Observation as i32 {
+        return false;
+    }
+    Observation::decode(payload.payload.as_slice())
+        .ok()
+        .and_then(|observation| crate::acceptance::derive_transition(&observation))
+        .is_some()
+}
+
 fn reject_generic_unaudited_special(payload: &StoredEventPayload) -> Result<(), StorageError> {
-    if matches!(
-        StoredEventKind::try_from(payload.kind).ok(),
-        Some(
-            StoredEventKind::SpawnSuccessorEvidenceStaged
-                | StoredEventKind::SpawnPromotionCommitted
-                | StoredEventKind::QuarantinedRuntimeEvidence
+    if transition_producing_observation(payload)
+        || matches!(
+            StoredEventKind::try_from(payload.kind).ok(),
+            Some(
+                StoredEventKind::SpawnSuccessorEvidenceStaged
+                    | StoredEventKind::SpawnPromotionCommitted
+                    | StoredEventKind::QuarantinedRuntimeEvidence
+            )
         )
-    ) {
+    {
         Err(StorageError::UnsupportedOperation)
     } else {
         Ok(())
@@ -3018,6 +3529,46 @@ impl Storage for RusqliteStorage {
                 observation: Box::new(observation),
                 transition: Box::new(transition),
                 audit,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_spawn_result_deferred_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        observation: Observation,
+        audit: AuditRecordDraft,
+    ) -> Result<AuditedAppend, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendSpawnResultDeferredAudited {
+                authority_domain_id: authority_domain_id.value.clone(),
+                observation: Box::new(observation),
+                audit,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn reconcile_observation_retry(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        observation: Observation,
+    ) -> Result<Option<EventId>, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::ReconcileObservationRetry {
+                authority_domain_id: authority_domain_id.value.clone(),
+                observation: Box::new(observation),
                 reply: reply_tx,
             })
             .await

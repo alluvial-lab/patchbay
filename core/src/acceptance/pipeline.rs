@@ -247,7 +247,10 @@ where
             FailureCode::AuthorizationDenied,
             "security_lockdown_active".to_owned(),
             None,
-            format!("security lockdown is active: {reason_code} (entered at {:?})", entered_event_id.lsn),
+            format!(
+                "security lockdown is active: {reason_code} (entered at {:?})",
+                entered_event_id.lsn
+            ),
         ));
     }
 
@@ -325,11 +328,30 @@ where
         Err(crate::acceptance::GrantDenied::NoGrant { actor, .. }) => {
             let (failure, reason_code, decision_grant_id, diagnostic) =
                 if let Some(value) = actor.strip_prefix("grant_expired:") {
-                    (FailureCode::Expired, "grant_expired", Some(GrantId { value: value.to_owned() }), "grant is expired")
+                    (
+                        FailureCode::Expired,
+                        "grant_expired",
+                        Some(GrantId {
+                            value: value.to_owned(),
+                        }),
+                        "grant is expired",
+                    )
                 } else if let Some(value) = actor.strip_prefix("grant_revoked:") {
-                    (FailureCode::AuthorizationDenied, "grant_revoked", Some(GrantId { value: value.to_owned() }), "grant is revoked")
+                    (
+                        FailureCode::AuthorizationDenied,
+                        "grant_revoked",
+                        Some(GrantId {
+                            value: value.to_owned(),
+                        }),
+                        "grant is revoked",
+                    )
                 } else {
-                    (FailureCode::AuthorizationDenied, "authorization_denied", None, "no matching live grant")
+                    (
+                        FailureCode::AuthorizationDenied,
+                        "authorization_denied",
+                        None,
+                        "no matching live grant",
+                    )
                 };
             return Ok(rejected_result(
                 Some(validated.command_id.clone()),

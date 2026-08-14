@@ -1,12 +1,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AdapterId, AuthorityDomainId, CommandId, DeviceId, EndpointId,
-    resource_state_mutation, AdapterSnapshotSupport, Generation, Grant, GrantId, GrantProvenance,
-    GrantRevocationPolicy, Operation, OperationKind, PayloadContentType, PayloadEnvelope,
-    ResourceId, ResourceKind, ResourceStateEvent, ResourceStateMutation, ResourceStateUpsert,
-    ResourceViewStateUpdate, StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind,
-    TimeWindow,
+    resource_state_mutation, ActorEndpointRef, ActorId, AdapterId, AdapterSnapshotSupport,
+    AuthorityDomainId, CommandId, DeviceId, EndpointId, Generation, Grant, GrantId,
+    GrantProvenance, GrantRevocationPolicy, Operation, OperationKind, PayloadContentType,
+    PayloadEnvelope, ResourceId, ResourceKind, ResourceStateEvent, ResourceStateMutation,
+    ResourceStateUpsert, ResourceViewStateUpdate, StoredEventKind, SubmissionOutcome, TargetScope,
+    TargetScopeKind, TimeWindow,
 };
 use patchbay_core::{
     acceptance::{
@@ -23,14 +23,22 @@ use patchbay_core::{
 use prost_types::Timestamp;
 
 fn domain() -> AuthorityDomainId {
-    AuthorityDomainId { value: "authority-main".to_owned() }
+    AuthorityDomainId {
+        value: "authority-main".to_owned(),
+    }
 }
 
 fn identity(adapter: &str, kind: &str, id: &str) -> ResourceIdentity {
     ResourceIdentity::new(
-        AdapterId { value: adapter.to_owned() },
-        ResourceKind { value: kind.to_owned() },
-        ResourceId { value: id.to_owned() },
+        AdapterId {
+            value: adapter.to_owned(),
+        },
+        ResourceKind {
+            value: kind.to_owned(),
+        },
+        ResourceId {
+            value: id.to_owned(),
+        },
     )
     .unwrap()
 }
@@ -49,20 +57,25 @@ fn resource_registry(identities: &[ResourceIdentity]) -> ResourceRegistry {
             mutations: vec![ResourceStateMutation {
                 identity: Some(identity.to_scope().resource.unwrap()),
                 from_revision_lsn: None,
-                mutation: Some(resource_state_mutation::Mutation::Upsert(ResourceStateUpsert {
-                    resource_payload: Some(PayloadEnvelope {
-                        payload: vec![1],
-                        content_type: PayloadContentType::Protobuf as i32,
-                        schema_ref: "resource.schema".into(),
-                    }),
-                    projection_payload: Some(PayloadEnvelope {
-                        payload: vec![2],
-                        content_type: PayloadContentType::Protobuf as i32,
-                        schema_ref: "projection.schema".into(),
-                    }),
-                })),
+                mutation: Some(resource_state_mutation::Mutation::Upsert(
+                    ResourceStateUpsert {
+                        resource_payload: Some(PayloadEnvelope {
+                            payload: vec![1],
+                            content_type: PayloadContentType::Protobuf as i32,
+                            schema_ref: "resource.schema".into(),
+                        }),
+                        projection_payload: Some(PayloadEnvelope {
+                            payload: vec![2],
+                            content_type: PayloadContentType::Protobuf as i32,
+                            schema_ref: "projection.schema".into(),
+                        }),
+                    },
+                )),
             }],
-            observed_at: Some(Timestamp { seconds: 1, nanos: 0 }),
+            observed_at: Some(Timestamp {
+                seconds: 1,
+                nanos: 0,
+            }),
         };
         registry
             .observe(&RecordedEvent {
@@ -76,10 +89,14 @@ fn resource_registry(identities: &[ResourceIdentity]) -> ResourceRegistry {
 
 fn operation(command: &str, key: &str, target: TargetScope) -> Operation {
     Operation {
-        command_id: Some(CommandId { value: command.to_owned() }),
+        command_id: Some(CommandId {
+            value: command.to_owned(),
+        }),
         authority_domain_id: Some(domain()),
         sender: Some(ActorEndpointRef {
-            actor_id: Some(ActorId { value: "payload-claim".to_owned() }),
+            actor_id: Some(ActorId {
+                value: "payload-claim".to_owned(),
+            }),
             ..ActorEndpointRef::default()
         }),
         kind: OperationKind::Query as i32,
@@ -87,22 +104,38 @@ fn operation(command: &str, key: &str, target: TargetScope) -> Operation {
         idempotency_key: key.to_owned(),
         payload: Some(PayloadEnvelope::default()),
         validity_window: Some(TimeWindow {
-            starts_at: Some(Timestamp { seconds: 90, nanos: 0 }),
-            expires_at: Some(Timestamp { seconds: 110, nanos: 0 }),
+            starts_at: Some(Timestamp {
+                seconds: 90,
+                nanos: 0,
+            }),
+            expires_at: Some(Timestamp {
+                seconds: 110,
+                nanos: 0,
+            }),
         }),
-        submitted_at: Some(Timestamp { seconds: 100, nanos: 0 }),
+        submitted_at: Some(Timestamp {
+            seconds: 100,
+            nanos: 0,
+        }),
         ..Operation::default()
     }
 }
 
 fn grant(id: &str, target_scope: TargetScope) -> Grant {
     Grant {
-        grant_id: Some(GrantId { value: id.to_owned() }),
+        grant_id: Some(GrantId {
+            value: id.to_owned(),
+        }),
         authority_domain_id: Some(domain()),
-        subject_actor_id: Some(ActorId { value: "operator".to_owned() }),
+        subject_actor_id: Some(ActorId {
+            value: "operator".to_owned(),
+        }),
         target_scope: Some(target_scope),
         allowed_operation_kinds: vec![OperationKind::Query as i32],
-        provenance: Some(GrantProvenance { reason: "resource acceptance test".to_owned(), ..GrantProvenance::default() }),
+        provenance: Some(GrantProvenance {
+            reason: "resource acceptance test".to_owned(),
+            ..GrantProvenance::default()
+        }),
         revocation_policy: GrantRevocationPolicy::Continue as i32,
         ..Grant::default()
     }
@@ -114,17 +147,25 @@ struct Issuer;
 impl IssuerContext for Issuer {
     fn verified_actor(&self) -> Option<&ActorId> {
         static ACTOR: std::sync::OnceLock<ActorId> = std::sync::OnceLock::new();
-        Some(ACTOR.get_or_init(|| ActorId { value: "operator".to_owned() }))
+        Some(ACTOR.get_or_init(|| ActorId {
+            value: "operator".to_owned(),
+        }))
     }
     fn verified_endpoint(&self) -> Option<&EndpointId> {
         static ENDPOINT: std::sync::OnceLock<EndpointId> = std::sync::OnceLock::new();
-        Some(ENDPOINT.get_or_init(|| EndpointId { value: "web".to_owned() }))
+        Some(ENDPOINT.get_or_init(|| EndpointId {
+            value: "web".to_owned(),
+        }))
     }
     fn verified_device(&self) -> Option<&DeviceId> {
         static DEVICE: std::sync::OnceLock<DeviceId> = std::sync::OnceLock::new();
-        Some(DEVICE.get_or_init(|| DeviceId { value: "device".to_owned() }))
+        Some(DEVICE.get_or_init(|| DeviceId {
+            value: "device".to_owned(),
+        }))
     }
-    fn endpoint_generation(&self) -> Option<Generation> { Some(Generation { value: 1 }) }
+    fn endpoint_generation(&self) -> Option<Generation> {
+        Some(Generation { value: 1 })
+    }
     fn authority_domain_id(&self) -> &AuthorityDomainId {
         static DOMAIN: std::sync::OnceLock<AuthorityDomainId> = std::sync::OnceLock::new();
         DOMAIN.get_or_init(domain)
@@ -142,7 +183,10 @@ impl ElicitationContractLookup for NoContracts {
 }
 
 fn clock() -> TestClock {
-    TestClock::new(Timestamp { seconds: 100, nanos: 0 })
+    TestClock::new(Timestamp {
+        seconds: 100,
+        nanos: 0,
+    })
 }
 
 async fn operation_count(storage: &RusqliteStorage) -> usize {
@@ -160,9 +204,14 @@ async fn exact_authorized_registered_resource_accepts_without_session_identity()
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let exact = identity("adapter-a", "pool", "shared");
     let mut authority = AuthorityRegistry::new();
-    ingest_grant(&storage, &mut authority, &domain(), grant("resource-grant", exact.to_scope()))
-        .await
-        .unwrap();
+    ingest_grant(
+        &storage,
+        &mut authority,
+        &domain(),
+        grant("resource-grant", exact.to_scope()),
+    )
+    .await
+    .unwrap();
     let resources = resource_registry(std::slice::from_ref(&exact));
     let targets = TargetRegistry::new(SessionRegistry::new(domain()).unwrap(), resources);
 
@@ -188,9 +237,14 @@ async fn exact_grant_fences_cross_adapter_and_kind_before_append() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let exact = identity("adapter-a", "pool", "shared");
     let mut authority = AuthorityRegistry::new();
-    ingest_grant(&storage, &mut authority, &domain(), grant("resource-grant", exact.to_scope()))
-        .await
-        .unwrap();
+    ingest_grant(
+        &storage,
+        &mut authority,
+        &domain(),
+        grant("resource-grant", exact.to_scope()),
+    )
+    .await
+    .unwrap();
     let resources = resource_registry(&[
         exact.clone(),
         identity("adapter-b", "pool", "shared"),
@@ -212,7 +266,11 @@ async fn exact_grant_fences_cross_adapter_and_kind_before_append() {
             &CommandIndex::new(),
             &NoContracts,
             &Issuer,
-            operation(&format!("collision-{index}"), &format!("collision-key-{index}"), collision.to_scope()),
+            operation(
+                &format!("collision-{index}"),
+                &format!("collision-key-{index}"),
+                collision.to_scope(),
+            ),
             &clock(),
         )
         .await
@@ -234,7 +292,9 @@ async fn adapter_grant_reaches_resolution_and_target_key_scopes_the_full_tuple()
             "adapter-grant",
             TargetScope {
                 kind: TargetScopeKind::Adapter as i32,
-                adapter_id: Some(AdapterId { value: "adapter-a".to_owned() }),
+                adapter_id: Some(AdapterId {
+                    value: "adapter-a".to_owned(),
+                }),
                 ..TargetScope::default()
             },
         ),
@@ -291,7 +351,11 @@ impl GrantCheck for CountingGrant<'_> {
         _target_scope: &TargetScope,
     ) -> Result<Authorized, GrantDenied> {
         self.0.fetch_add(1, Ordering::Relaxed);
-        Ok(Authorized { grant_id: Some(GrantId { value: "unexpected".to_owned() }) })
+        Ok(Authorized {
+            grant_id: Some(GrantId {
+                value: "unexpected".to_owned(),
+            }),
+        })
     }
 }
 
