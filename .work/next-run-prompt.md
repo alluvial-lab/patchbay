@@ -14,20 +14,26 @@ Autopilot the **spawn stride** in the Patchbay `.work/` substrate. Load + follow
 ## The designs are GATE-COMPLETE — implement, don't redesign
 Passed research-grounding → feature-design → 5-reviewer adversarial review (10 BLOCKERs) → redesign (all resolved). The review is at `.work/active/reviews/spawn-stride-adversarial-review-2026-08-12.md`. **Implement against the resolved designs; do not re-litigate resolved BLOCKERs.** Key resolved decisions are in the two feature bodies (compound continuation authority; atomic `SpawnPromotionCommitted`; ambiguous-failure poisons the claim; `ClaimedSuccessor` fence; `QuarantinedRuntimeEvidence`; contract-leaves-first; completion-driver owner; Pi `patchbay-control` cwd handshake; `memory_only|materialized|invalid` JSONL; cursor replacement epoch).
 
-## PROGRESS (session 2026-08-13) — 4 of ~22 children done, all pushed, CI green
+## PROGRESS (session 2026-08-13) — 4 of ~22 children DONE + Leaf 6 implemented (at review, 6 BLOCKERs pending fix); all pushed, CI green through crash-evidence
 Spawn-side contract leaves **done** (deep-lane reviewed, BLOCKERs/MATERIALs fixed, mutants fail):
 - `research-handoff-spawn-logical-target-identity-contract` ✅
 - `research-handoff-spawn-continuation-payload-authority-contract` ✅ (submit path guards continuations until `fleet-spawn-target-resolution` wires compound authority)
 - `research-handoff-spawn-claim-registry-contract` ✅ (evidence-dependent transitions guarded; strict validation)
 - `research-handoff-spawn-crash-external-effect-evidence-contract` ✅ (typed no-effect/external-effect evidence wired into claim validation; promotion still guarded for Leaf 6)
 
+**Leaf 6 — `runtime-evidence-promotion-contract` — IMPLEMENTED (commit `eee06b2`) but at `stage: review` with 6 BLOCKERs.** The types + dedicated atomic SQLite promotion append (confirmed sound — real one-transaction, no fallback) + focused tests are good, but Leaf 6 is **not wired into the production paths**: managed reports still bypass the classifier via ordinary `SessionRegistered`/`SessionGenerationBumped`; the forbidden raw-stale-Observation replay shape still exists; quarantine admits malformed payloads; descendant authority isn't bound to the exact spawner; generic storage routes bypass the dedicated promotion append; the ordered authority→session→claim→command fold has no replay call site. **The fix is integration + boundary-exclusivity + semantic-validity, NOT redesign** — full findings + fix scope are in `.work/active/reviews/leaf6-runtime-evidence-promotion-review-2026-08-13.md`. Read that file FIRST when resuming.
+
 ## RESUME HERE — the derived wave plan (from authoritative `depends_on`)
 Compute with `.work/bin/work-view --ready` or by topological sort of the children's `depends_on`. Remaining spawn contract leaves first, then operation waves, then Pi:
 
 ```
-NEXT → runtime-evidence-promotion-contract (Leaf 6: SpawnPromotionCommitted + QuarantinedRuntimeEvidence
-        + SpawnSuccessorEvidenceStaged + atomic audited promotion append + RuntimeGenerationDisposition
-        with ClaimedSuccessor. UN-GUARDS the promotion transition. Biggest contract leaf — BLOCKERs 2,4,5.)
+NEXT → fix Leaf 6's 6 review BLOCKERs (integration into production paths; see
+        .work/active/reviews/leaf6-runtime-evidence-promotion-review-2026-08-13.md).
+        This is the biggest fix in the stride: wire classifier+quarantine+ordered-promotion-fold
+        into real ingress/observation/authority/server-aggregate; enforce promotion/quarantine
+        boundary exclusivity on ALL storage routes + validate payloads; bind descendant authority
+        to the exact accepted Operation; replace isolated test fixtures with a fully-valid
+        integrated promotion + add mutation tests (a–f). Likely needs impl → review → fix → re-review.
   then → cursor-authoritative-replacement-contract (Leaf 4: adapter-neutral, TS in operator-domain/src/reconciliation/external_cursor.ts; depends identity only)
 (all 6 spawn contract leaves done)
   → fleet-spawn-target-resolution  (Unit 1: compound Grant selection; UN-GUARDS continuation on submit path)
