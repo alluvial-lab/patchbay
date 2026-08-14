@@ -4,6 +4,7 @@ package patchbay;
 
 import "google/protobuf/timestamp.proto";
 import "patchbay/common.proto";
+import "patchbay/elicitations.proto";
 import "patchbay/operations.proto";
 import "patchbay/sessions.proto";
 
@@ -28,6 +29,60 @@ enum ObservationKind {
   OBSERVATION_KIND_STATUS = 2;
   OBSERVATION_KIND_DELTA = 3;
   OBSERVATION_KIND_RESULT = 4;
+}
+
+// Typed admitted families for diagnostic quarantine. There is intentionally no
+// bytes/Any/PayloadEnvelope candidate arm: an unknown family is rejected
+// before durability instead of acquiring an opaque replay escape hatch.
+message RuntimeDeliveryAcknowledgementEvidence {
+  CommandId command_id = 1;
+  RuntimeGenerationRef target = 2;
+  google.protobuf.Timestamp observed_at = 3;
+}
+
+message RuntimeTranscriptStatusEvidence {
+  Observation observation = 1;
+}
+
+message RuntimeElicitationMutationEvidence {
+  Elicitation elicitation = 1;
+  ElicitationState from_state = 2;
+  ElicitationState to_state = 3;
+}
+
+enum RuntimeEvidenceQuarantineReason {
+  RUNTIME_EVIDENCE_QUARANTINE_REASON_UNSPECIFIED = 0;
+  RUNTIME_EVIDENCE_QUARANTINE_REASON_TOMBSTONED = 1;
+  RUNTIME_EVIDENCE_QUARANTINE_REASON_UNKNOWN_TARGET = 2;
+  RUNTIME_EVIDENCE_QUARANTINE_REASON_IDENTITY_MISMATCH = 3;
+  RUNTIME_EVIDENCE_QUARANTINE_REASON_CLAIM_MISMATCH = 4;
+  RUNTIME_EVIDENCE_QUARANTINE_REASON_STALE_ATTACHMENT = 5;
+  RUNTIME_EVIDENCE_QUARANTINE_REASON_STALE_SOURCE_ORDER = 6;
+}
+
+message RuntimeEvidenceClassificationContext {
+  RuntimeGenerationDisposition disposition = 1;
+  RuntimeGenerationRef classified_target = 2;
+  RuntimeGenerationRef current = 3;
+  LogicalTargetTombstone tombstone = 4;
+  SpawnGenerationClaim active_claim = 5;
+}
+
+// Diagnostic-only outer replay envelope. Normal projections dispatch on
+// STORED_EVENT_KIND_QUARANTINED_RUNTIME_EVIDENCE and never recursively apply
+// the nested candidate as Observation/session/Elicitation/command evidence.
+message QuarantinedRuntimeEvidence {
+  AuthorityDomainId authority_domain_id = 1;
+  oneof candidate {
+    Observation observation = 2;
+    SessionReport session_report = 3;
+    RuntimeDeliveryAcknowledgementEvidence delivery_acknowledgement = 4;
+    RuntimeTranscriptStatusEvidence transcript_status = 5;
+    RuntimeElicitationMutationEvidence elicitation_mutation = 6;
+  }
+  RuntimeEvidenceClassificationContext classification = 7;
+  RuntimeEvidenceQuarantineReason reason = 8;
+  RuntimeEvidenceSourceAttachment source_attachment = 9;
 }
 
 message EndpointPresence {

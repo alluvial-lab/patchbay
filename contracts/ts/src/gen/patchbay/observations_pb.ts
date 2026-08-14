@@ -6,11 +6,13 @@ import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2"
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { ActorEndpointRef, ActorId, AuthorityDomainId, DeviceId, EndpointId, EventId, Lsn, PayloadEnvelope, ReplyId, SubscriptionId, TargetScope, TypedCorrelation } from "./common_pb.js";
+import type { ActorEndpointRef, ActorId, AuthorityDomainId, CommandId, DeviceId, EndpointId, EventId, Lsn, PayloadEnvelope, ReplyId, RuntimeGenerationRef, SubscriptionId, TargetScope, TypedCorrelation } from "./common_pb.js";
 import { file_patchbay_common } from "./common_pb.js";
-import type { FailureCode } from "./operations_pb.js";
+import type { Elicitation, ElicitationState } from "./elicitations_pb.js";
+import { file_patchbay_elicitations } from "./elicitations_pb.js";
+import type { FailureCode, SpawnGenerationClaim } from "./operations_pb.js";
 import { file_patchbay_operations } from "./operations_pb.js";
-import type { SessionConnectivityState } from "./sessions_pb.js";
+import type { LogicalTargetTombstone, RuntimeEvidenceSourceAttachment, RuntimeGenerationDisposition, SessionConnectivityState, SessionReport } from "./sessions_pb.js";
 import { file_patchbay_sessions } from "./sessions_pb.js";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -18,7 +20,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/observations.proto.
  */
 export const file_patchbay_observations: GenFile = /*@__PURE__*/
-  fileDesc("ChtwYXRjaGJheS9vYnNlcnZhdGlvbnMucHJvdG8SCHBhdGNoYmF5IpoECgtPYnNlcnZhdGlvbhIjCghldmVudF9pZBgBIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQSIwoIcmVwbHlfaWQYAiABKAsyES5wYXRjaGJheS5SZXBseUlkEjgKE2F1dGhvcml0eV9kb21haW5faWQYAyABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIqCgZzZW5kZXIYBCABKAsyGi5wYXRjaGJheS5BY3RvckVuZHBvaW50UmVmEi0KCXJlY2lwaWVudBgFIAEoCzIaLnBhdGNoYmF5LkFjdG9yRW5kcG9pbnRSZWYSJwoEa2luZBgGIAEoDjIZLnBhdGNoYmF5Lk9ic2VydmF0aW9uS2luZBIwCgxjb3JyZWxhdGlvbnMYByADKAsyGi5wYXRjaGJheS5UeXBlZENvcnJlbGF0aW9uEisKDHRhcmdldF9zY29wZRgIIAEoCzIVLnBhdGNoYmF5LlRhcmdldFNjb3BlEioKB3BheWxvYWQYCSABKAsyGS5wYXRjaGJheS5QYXlsb2FkRW52ZWxvcGUSGgoDbHNuGAogASgLMg0ucGF0Y2hiYXkuTHNuEi8KC29ic2VydmVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIrCgxmYWlsdXJlX2NvZGUYDCABKA4yFS5wYXRjaGJheS5GYWlsdXJlQ29kZSLWAQoQRW5kcG9pbnRQcmVzZW5jZRIpCgtlbmRwb2ludF9pZBgBIAEoCzIULnBhdGNoYmF5LkVuZHBvaW50SWQSJQoJZGV2aWNlX2lkGAIgASgLMhIucGF0Y2hiYXkuRGV2aWNlSWQSQQoVZW5kcG9pbnRfYXZhaWxhYmlsaXR5GAMgASgOMiIucGF0Y2hiYXkuU2Vzc2lvbkNvbm5lY3Rpdml0eVN0YXRlEi0KFmxhc3RfYXV0aG9yaXRhdGl2ZV9sc24YBCABKAsyDS5wYXRjaGJheS5Mc24itQEKDUFjdG9yUHJlc2VuY2USIwoIYWN0b3JfaWQYASABKAsyES5wYXRjaGJheS5BY3RvcklkEisKBXN0YXRlGAIgASgOMhwucGF0Y2hiYXkuQWN0b3JQcmVzZW5jZVN0YXRlEi0KCWVuZHBvaW50cxgDIAMoCzIaLnBhdGNoYmF5LkVuZHBvaW50UHJlc2VuY2USIwoMcmV2aXNpb25fbHNuGAQgASgLMg0ucGF0Y2hiYXkuTHNuItQCChdPYnNlcnZhdGlvblN1YnNjcmlwdGlvbhIxCg9zdWJzY3JpcHRpb25faWQYASABKAsyGC5wYXRjaGJheS5TdWJzY3JpcHRpb25JZBIuCgpzdWJzY3JpYmVyGAIgASgLMhoucGF0Y2hiYXkuQWN0b3JFbmRwb2ludFJlZhIwChFhdXRob3JpemVkX2ZpbHRlchgDIAEoCzIVLnBhdGNoYmF5LlRhcmdldFNjb3BlEjUKBXN0YXRlGAQgASgOMiYucGF0Y2hiYXkuT2JzZXJ2YXRpb25TdWJzY3JpcHRpb25TdGF0ZRIdCgZjdXJzb3IYBSABKAsyDS5wYXRjaGJheS5Mc24SKQoSbGFzdF9kZWxpdmVyZWRfbHNuGAYgASgLMg0ucGF0Y2hiYXkuTHNuEiMKCGF1ZGl0X2lkGAcgASgLMhEucGF0Y2hiYXkuRXZlbnRJZCLIAQoRQXR0ZW50aW9uUmVxdWlyZWQSKwoMdGFyZ2V0X3Njb3BlGAEgASgLMhUucGF0Y2hiYXkuVGFyZ2V0U2NvcGUSLwoFc3RhdGUYAiABKA4yIC5wYXRjaGJheS5BdHRlbnRpb25SZXF1aXJlZFN0YXRlEjAKDGNvcnJlbGF0aW9ucxgDIAMoCzIaLnBhdGNoYmF5LlR5cGVkQ29ycmVsYXRpb24SIwoMcmV2aXNpb25fbHNuGAQgASgLMg0ucGF0Y2hiYXkuTHNuKqUBCg9PYnNlcnZhdGlvbktpbmQSIAocT0JTRVJWQVRJT05fS0lORF9VTlNQRUNJRklFRBAAEhoKFk9CU0VSVkFUSU9OX0tJTkRfRVZFTlQQARIbChdPQlNFUlZBVElPTl9LSU5EX1NUQVRVUxACEhoKFk9CU0VSVkFUSU9OX0tJTkRfREVMVEEQAxIbChdPQlNFUlZBVElPTl9LSU5EX1JFU1VMVBAEKsUBChJBY3RvclByZXNlbmNlU3RhdGUSJAogQUNUT1JfUFJFU0VOQ0VfU1RBVEVfVU5TUEVDSUZJRUQQABIiCh5BQ1RPUl9QUkVTRU5DRV9TVEFURV9BVkFJTEFCTEUQARIdChlBQ1RPUl9QUkVTRU5DRV9TVEFURV9BV0FZEAISJAogQUNUT1JfUFJFU0VOQ0VfU1RBVEVfVU5BVkFJTEFCTEUQAxIgChxBQ1RPUl9QUkVTRU5DRV9TVEFURV9VTktOT1dOEAQqhgIKHE9ic2VydmF0aW9uU3Vic2NyaXB0aW9uU3RhdGUSLgoqT0JTRVJWQVRJT05fU1VCU0NSSVBUSU9OX1NUQVRFX1VOU1BFQ0lGSUVEEAASLQopT0JTRVJWQVRJT05fU1VCU0NSSVBUSU9OX1NUQVRFX1NVQlNDUklCRUQQARIrCidPQlNFUlZBVElPTl9TVUJTQ1JJUFRJT05fU1RBVEVfUkVTVU1JTkcQAhIvCitPQlNFUlZBVElPTl9TVUJTQ1JJUFRJT05fU1RBVEVfVU5TVUJTQ1JJQkVEEAMSKQolT0JTRVJWQVRJT05fU1VCU0NSSVBUSU9OX1NUQVRFX0ZBSUxFRBAEKpYCChZBdHRlbnRpb25SZXF1aXJlZFN0YXRlEigKJEFUVEVOVElPTl9SRVFVSVJFRF9TVEFURV9VTlNQRUNJRklFRBAAEiEKHUFUVEVOVElPTl9SRVFVSVJFRF9TVEFURV9OT05FEAESMAosQVRURU5USU9OX1JFUVVJUkVEX1NUQVRFX0FUVEVOVElPTl9SRVFVRVNURUQQAhIuCipBVFRFTlRJT05fUkVRVUlSRURfU1RBVEVfUkVTUE9OU0VfUkVRVUlSRUQQAxIlCiFBVFRFTlRJT05fUkVRVUlSRURfU1RBVEVfQkxPQ0tJTkcQBBImCiJBVFRFTlRJT05fUkVRVUlSRURfU1RBVEVfRVNDQUxBVEVEEAViBnByb3RvMw", [file_google_protobuf_timestamp, file_patchbay_common, file_patchbay_operations, file_patchbay_sessions]);
+  fileDesc("ChtwYXRjaGJheS9vYnNlcnZhdGlvbnMucHJvdG8SCHBhdGNoYmF5IpoECgtPYnNlcnZhdGlvbhIjCghldmVudF9pZBgBIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQSIwoIcmVwbHlfaWQYAiABKAsyES5wYXRjaGJheS5SZXBseUlkEjgKE2F1dGhvcml0eV9kb21haW5faWQYAyABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIqCgZzZW5kZXIYBCABKAsyGi5wYXRjaGJheS5BY3RvckVuZHBvaW50UmVmEi0KCXJlY2lwaWVudBgFIAEoCzIaLnBhdGNoYmF5LkFjdG9yRW5kcG9pbnRSZWYSJwoEa2luZBgGIAEoDjIZLnBhdGNoYmF5Lk9ic2VydmF0aW9uS2luZBIwCgxjb3JyZWxhdGlvbnMYByADKAsyGi5wYXRjaGJheS5UeXBlZENvcnJlbGF0aW9uEisKDHRhcmdldF9zY29wZRgIIAEoCzIVLnBhdGNoYmF5LlRhcmdldFNjb3BlEioKB3BheWxvYWQYCSABKAsyGS5wYXRjaGJheS5QYXlsb2FkRW52ZWxvcGUSGgoDbHNuGAogASgLMg0ucGF0Y2hiYXkuTHNuEi8KC29ic2VydmVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIrCgxmYWlsdXJlX2NvZGUYDCABKA4yFS5wYXRjaGJheS5GYWlsdXJlQ29kZSKyAQomUnVudGltZURlbGl2ZXJ5QWNrbm93bGVkZ2VtZW50RXZpZGVuY2USJwoKY29tbWFuZF9pZBgBIAEoCzITLnBhdGNoYmF5LkNvbW1hbmRJZBIuCgZ0YXJnZXQYAiABKAsyHi5wYXRjaGJheS5SdW50aW1lR2VuZXJhdGlvblJlZhIvCgtvYnNlcnZlZF9hdBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiTQofUnVudGltZVRyYW5zY3JpcHRTdGF0dXNFdmlkZW5jZRIqCgtvYnNlcnZhdGlvbhgBIAEoCzIVLnBhdGNoYmF5Lk9ic2VydmF0aW9uIq4BCiJSdW50aW1lRWxpY2l0YXRpb25NdXRhdGlvbkV2aWRlbmNlEioKC2VsaWNpdGF0aW9uGAEgASgLMhUucGF0Y2hiYXkuRWxpY2l0YXRpb24SLgoKZnJvbV9zdGF0ZRgCIAEoDjIaLnBhdGNoYmF5LkVsaWNpdGF0aW9uU3RhdGUSLAoIdG9fc3RhdGUYAyABKA4yGi5wYXRjaGJheS5FbGljaXRhdGlvblN0YXRlIroCCiRSdW50aW1lRXZpZGVuY2VDbGFzc2lmaWNhdGlvbkNvbnRleHQSOwoLZGlzcG9zaXRpb24YASABKAsyJi5wYXRjaGJheS5SdW50aW1lR2VuZXJhdGlvbkRpc3Bvc2l0aW9uEjkKEWNsYXNzaWZpZWRfdGFyZ2V0GAIgASgLMh4ucGF0Y2hiYXkuUnVudGltZUdlbmVyYXRpb25SZWYSLwoHY3VycmVudBgDIAEoCzIeLnBhdGNoYmF5LlJ1bnRpbWVHZW5lcmF0aW9uUmVmEjMKCXRvbWJzdG9uZRgEIAEoCzIgLnBhdGNoYmF5LkxvZ2ljYWxUYXJnZXRUb21ic3RvbmUSNAoMYWN0aXZlX2NsYWltGAUgASgLMh4ucGF0Y2hiYXkuU3Bhd25HZW5lcmF0aW9uQ2xhaW0i+QQKGlF1YXJhbnRpbmVkUnVudGltZUV2aWRlbmNlEjgKE2F1dGhvcml0eV9kb21haW5faWQYASABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIsCgtvYnNlcnZhdGlvbhgCIAEoCzIVLnBhdGNoYmF5Lk9ic2VydmF0aW9uSAASMQoOc2Vzc2lvbl9yZXBvcnQYAyABKAsyFy5wYXRjaGJheS5TZXNzaW9uUmVwb3J0SAASVAoYZGVsaXZlcnlfYWNrbm93bGVkZ2VtZW50GAQgASgLMjAucGF0Y2hiYXkuUnVudGltZURlbGl2ZXJ5QWNrbm93bGVkZ2VtZW50RXZpZGVuY2VIABJGChF0cmFuc2NyaXB0X3N0YXR1cxgFIAEoCzIpLnBhdGNoYmF5LlJ1bnRpbWVUcmFuc2NyaXB0U3RhdHVzRXZpZGVuY2VIABJMChRlbGljaXRhdGlvbl9tdXRhdGlvbhgGIAEoCzIsLnBhdGNoYmF5LlJ1bnRpbWVFbGljaXRhdGlvbk11dGF0aW9uRXZpZGVuY2VIABJGCg5jbGFzc2lmaWNhdGlvbhgHIAEoCzIuLnBhdGNoYmF5LlJ1bnRpbWVFdmlkZW5jZUNsYXNzaWZpY2F0aW9uQ29udGV4dBI5CgZyZWFzb24YCCABKA4yKS5wYXRjaGJheS5SdW50aW1lRXZpZGVuY2VRdWFyYW50aW5lUmVhc29uEkQKEXNvdXJjZV9hdHRhY2htZW50GAkgASgLMikucGF0Y2hiYXkuUnVudGltZUV2aWRlbmNlU291cmNlQXR0YWNobWVudEILCgljYW5kaWRhdGUi1gEKEEVuZHBvaW50UHJlc2VuY2USKQoLZW5kcG9pbnRfaWQYASABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEiUKCWRldmljZV9pZBgCIAEoCzISLnBhdGNoYmF5LkRldmljZUlkEkEKFWVuZHBvaW50X2F2YWlsYWJpbGl0eRgDIAEoDjIiLnBhdGNoYmF5LlNlc3Npb25Db25uZWN0aXZpdHlTdGF0ZRItChZsYXN0X2F1dGhvcml0YXRpdmVfbHNuGAQgASgLMg0ucGF0Y2hiYXkuTHNuIrUBCg1BY3RvclByZXNlbmNlEiMKCGFjdG9yX2lkGAEgASgLMhEucGF0Y2hiYXkuQWN0b3JJZBIrCgVzdGF0ZRgCIAEoDjIcLnBhdGNoYmF5LkFjdG9yUHJlc2VuY2VTdGF0ZRItCgllbmRwb2ludHMYAyADKAsyGi5wYXRjaGJheS5FbmRwb2ludFByZXNlbmNlEiMKDHJldmlzaW9uX2xzbhgEIAEoCzINLnBhdGNoYmF5LkxzbiLUAgoXT2JzZXJ2YXRpb25TdWJzY3JpcHRpb24SMQoPc3Vic2NyaXB0aW9uX2lkGAEgASgLMhgucGF0Y2hiYXkuU3Vic2NyaXB0aW9uSWQSLgoKc3Vic2NyaWJlchgCIAEoCzIaLnBhdGNoYmF5LkFjdG9yRW5kcG9pbnRSZWYSMAoRYXV0aG9yaXplZF9maWx0ZXIYAyABKAsyFS5wYXRjaGJheS5UYXJnZXRTY29wZRI1CgVzdGF0ZRgEIAEoDjImLnBhdGNoYmF5Lk9ic2VydmF0aW9uU3Vic2NyaXB0aW9uU3RhdGUSHQoGY3Vyc29yGAUgASgLMg0ucGF0Y2hiYXkuTHNuEikKEmxhc3RfZGVsaXZlcmVkX2xzbhgGIAEoCzINLnBhdGNoYmF5LkxzbhIjCghhdWRpdF9pZBgHIAEoCzIRLnBhdGNoYmF5LkV2ZW50SWQiyAEKEUF0dGVudGlvblJlcXVpcmVkEisKDHRhcmdldF9zY29wZRgBIAEoCzIVLnBhdGNoYmF5LlRhcmdldFNjb3BlEi8KBXN0YXRlGAIgASgOMiAucGF0Y2hiYXkuQXR0ZW50aW9uUmVxdWlyZWRTdGF0ZRIwCgxjb3JyZWxhdGlvbnMYAyADKAsyGi5wYXRjaGJheS5UeXBlZENvcnJlbGF0aW9uEiMKDHJldmlzaW9uX2xzbhgEIAEoCzINLnBhdGNoYmF5LkxzbiqlAQoPT2JzZXJ2YXRpb25LaW5kEiAKHE9CU0VSVkFUSU9OX0tJTkRfVU5TUEVDSUZJRUQQABIaChZPQlNFUlZBVElPTl9LSU5EX0VWRU5UEAESGwoXT0JTRVJWQVRJT05fS0lORF9TVEFUVVMQAhIaChZPQlNFUlZBVElPTl9LSU5EX0RFTFRBEAMSGwoXT0JTRVJWQVRJT05fS0lORF9SRVNVTFQQBCqkAwofUnVudGltZUV2aWRlbmNlUXVhcmFudGluZVJlYXNvbhIyCi5SVU5USU1FX0VWSURFTkNFX1FVQVJBTlRJTkVfUkVBU09OX1VOU1BFQ0lGSUVEEAASMQotUlVOVElNRV9FVklERU5DRV9RVUFSQU5USU5FX1JFQVNPTl9UT01CU1RPTkVEEAESNQoxUlVOVElNRV9FVklERU5DRV9RVUFSQU5USU5FX1JFQVNPTl9VTktOT1dOX1RBUkdFVBACEjgKNFJVTlRJTUVfRVZJREVOQ0VfUVVBUkFOVElORV9SRUFTT05fSURFTlRJVFlfTUlTTUFUQ0gQAxI1CjFSVU5USU1FX0VWSURFTkNFX1FVQVJBTlRJTkVfUkVBU09OX0NMQUlNX01JU01BVENIEAQSNwozUlVOVElNRV9FVklERU5DRV9RVUFSQU5USU5FX1JFQVNPTl9TVEFMRV9BVFRBQ0hNRU5UEAUSOQo1UlVOVElNRV9FVklERU5DRV9RVUFSQU5USU5FX1JFQVNPTl9TVEFMRV9TT1VSQ0VfT1JERVIQBirFAQoSQWN0b3JQcmVzZW5jZVN0YXRlEiQKIEFDVE9SX1BSRVNFTkNFX1NUQVRFX1VOU1BFQ0lGSUVEEAASIgoeQUNUT1JfUFJFU0VOQ0VfU1RBVEVfQVZBSUxBQkxFEAESHQoZQUNUT1JfUFJFU0VOQ0VfU1RBVEVfQVdBWRACEiQKIEFDVE9SX1BSRVNFTkNFX1NUQVRFX1VOQVZBSUxBQkxFEAMSIAocQUNUT1JfUFJFU0VOQ0VfU1RBVEVfVU5LTk9XThAEKoYCChxPYnNlcnZhdGlvblN1YnNjcmlwdGlvblN0YXRlEi4KKk9CU0VSVkFUSU9OX1NVQlNDUklQVElPTl9TVEFURV9VTlNQRUNJRklFRBAAEi0KKU9CU0VSVkFUSU9OX1NVQlNDUklQVElPTl9TVEFURV9TVUJTQ1JJQkVEEAESKwonT0JTRVJWQVRJT05fU1VCU0NSSVBUSU9OX1NUQVRFX1JFU1VNSU5HEAISLworT0JTRVJWQVRJT05fU1VCU0NSSVBUSU9OX1NUQVRFX1VOU1VCU0NSSUJFRBADEikKJU9CU0VSVkFUSU9OX1NVQlNDUklQVElPTl9TVEFURV9GQUlMRUQQBCqWAgoWQXR0ZW50aW9uUmVxdWlyZWRTdGF0ZRIoCiRBVFRFTlRJT05fUkVRVUlSRURfU1RBVEVfVU5TUEVDSUZJRUQQABIhCh1BVFRFTlRJT05fUkVRVUlSRURfU1RBVEVfTk9ORRABEjAKLEFUVEVOVElPTl9SRVFVSVJFRF9TVEFURV9BVFRFTlRJT05fUkVRVUVTVEVEEAISLgoqQVRURU5USU9OX1JFUVVJUkVEX1NUQVRFX1JFU1BPTlNFX1JFUVVJUkVEEAMSJQohQVRURU5USU9OX1JFUVVJUkVEX1NUQVRFX0JMT0NLSU5HEAQSJgoiQVRURU5USU9OX1JFUVVJUkVEX1NUQVRFX0VTQ0FMQVRFRBAFYgZwcm90bzM", [file_google_protobuf_timestamp, file_patchbay_common, file_patchbay_elicitations, file_patchbay_operations, file_patchbay_sessions]);
 
 /**
  * @generated from message patchbay.Observation
@@ -93,6 +95,189 @@ export const ObservationSchema: GenMessage<Observation> = /*@__PURE__*/
   messageDesc(file_patchbay_observations, 0);
 
 /**
+ * Typed admitted families for diagnostic quarantine. There is intentionally no
+ * bytes/Any/PayloadEnvelope candidate arm: an unknown family is rejected
+ * before durability instead of acquiring an opaque replay escape hatch.
+ *
+ * @generated from message patchbay.RuntimeDeliveryAcknowledgementEvidence
+ */
+export type RuntimeDeliveryAcknowledgementEvidence = Message<"patchbay.RuntimeDeliveryAcknowledgementEvidence"> & {
+  /**
+   * @generated from field: patchbay.CommandId command_id = 1;
+   */
+  commandId?: CommandId | undefined;
+
+  /**
+   * @generated from field: patchbay.RuntimeGenerationRef target = 2;
+   */
+  target?: RuntimeGenerationRef | undefined;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp observed_at = 3;
+   */
+  observedAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message patchbay.RuntimeDeliveryAcknowledgementEvidence.
+ * Use `create(RuntimeDeliveryAcknowledgementEvidenceSchema)` to create a new message.
+ */
+export const RuntimeDeliveryAcknowledgementEvidenceSchema: GenMessage<RuntimeDeliveryAcknowledgementEvidence> = /*@__PURE__*/
+  messageDesc(file_patchbay_observations, 1);
+
+/**
+ * @generated from message patchbay.RuntimeTranscriptStatusEvidence
+ */
+export type RuntimeTranscriptStatusEvidence = Message<"patchbay.RuntimeTranscriptStatusEvidence"> & {
+  /**
+   * @generated from field: patchbay.Observation observation = 1;
+   */
+  observation?: Observation | undefined;
+};
+
+/**
+ * Describes the message patchbay.RuntimeTranscriptStatusEvidence.
+ * Use `create(RuntimeTranscriptStatusEvidenceSchema)` to create a new message.
+ */
+export const RuntimeTranscriptStatusEvidenceSchema: GenMessage<RuntimeTranscriptStatusEvidence> = /*@__PURE__*/
+  messageDesc(file_patchbay_observations, 2);
+
+/**
+ * @generated from message patchbay.RuntimeElicitationMutationEvidence
+ */
+export type RuntimeElicitationMutationEvidence = Message<"patchbay.RuntimeElicitationMutationEvidence"> & {
+  /**
+   * @generated from field: patchbay.Elicitation elicitation = 1;
+   */
+  elicitation?: Elicitation | undefined;
+
+  /**
+   * @generated from field: patchbay.ElicitationState from_state = 2;
+   */
+  fromState: ElicitationState;
+
+  /**
+   * @generated from field: patchbay.ElicitationState to_state = 3;
+   */
+  toState: ElicitationState;
+};
+
+/**
+ * Describes the message patchbay.RuntimeElicitationMutationEvidence.
+ * Use `create(RuntimeElicitationMutationEvidenceSchema)` to create a new message.
+ */
+export const RuntimeElicitationMutationEvidenceSchema: GenMessage<RuntimeElicitationMutationEvidence> = /*@__PURE__*/
+  messageDesc(file_patchbay_observations, 3);
+
+/**
+ * @generated from message patchbay.RuntimeEvidenceClassificationContext
+ */
+export type RuntimeEvidenceClassificationContext = Message<"patchbay.RuntimeEvidenceClassificationContext"> & {
+  /**
+   * @generated from field: patchbay.RuntimeGenerationDisposition disposition = 1;
+   */
+  disposition?: RuntimeGenerationDisposition | undefined;
+
+  /**
+   * @generated from field: patchbay.RuntimeGenerationRef classified_target = 2;
+   */
+  classifiedTarget?: RuntimeGenerationRef | undefined;
+
+  /**
+   * @generated from field: patchbay.RuntimeGenerationRef current = 3;
+   */
+  current?: RuntimeGenerationRef | undefined;
+
+  /**
+   * @generated from field: patchbay.LogicalTargetTombstone tombstone = 4;
+   */
+  tombstone?: LogicalTargetTombstone | undefined;
+
+  /**
+   * @generated from field: patchbay.SpawnGenerationClaim active_claim = 5;
+   */
+  activeClaim?: SpawnGenerationClaim | undefined;
+};
+
+/**
+ * Describes the message patchbay.RuntimeEvidenceClassificationContext.
+ * Use `create(RuntimeEvidenceClassificationContextSchema)` to create a new message.
+ */
+export const RuntimeEvidenceClassificationContextSchema: GenMessage<RuntimeEvidenceClassificationContext> = /*@__PURE__*/
+  messageDesc(file_patchbay_observations, 4);
+
+/**
+ * Diagnostic-only outer replay envelope. Normal projections dispatch on
+ * STORED_EVENT_KIND_QUARANTINED_RUNTIME_EVIDENCE and never recursively apply
+ * the nested candidate as Observation/session/Elicitation/command evidence.
+ *
+ * @generated from message patchbay.QuarantinedRuntimeEvidence
+ */
+export type QuarantinedRuntimeEvidence = Message<"patchbay.QuarantinedRuntimeEvidence"> & {
+  /**
+   * @generated from field: patchbay.AuthorityDomainId authority_domain_id = 1;
+   */
+  authorityDomainId?: AuthorityDomainId | undefined;
+
+  /**
+   * @generated from oneof patchbay.QuarantinedRuntimeEvidence.candidate
+   */
+  candidate: {
+    /**
+     * @generated from field: patchbay.Observation observation = 2;
+     */
+    value: Observation;
+    case: "observation";
+  } | {
+    /**
+     * @generated from field: patchbay.SessionReport session_report = 3;
+     */
+    value: SessionReport;
+    case: "sessionReport";
+  } | {
+    /**
+     * @generated from field: patchbay.RuntimeDeliveryAcknowledgementEvidence delivery_acknowledgement = 4;
+     */
+    value: RuntimeDeliveryAcknowledgementEvidence;
+    case: "deliveryAcknowledgement";
+  } | {
+    /**
+     * @generated from field: patchbay.RuntimeTranscriptStatusEvidence transcript_status = 5;
+     */
+    value: RuntimeTranscriptStatusEvidence;
+    case: "transcriptStatus";
+  } | {
+    /**
+     * @generated from field: patchbay.RuntimeElicitationMutationEvidence elicitation_mutation = 6;
+     */
+    value: RuntimeElicitationMutationEvidence;
+    case: "elicitationMutation";
+  } | { case: undefined; value?: undefined };
+
+  /**
+   * @generated from field: patchbay.RuntimeEvidenceClassificationContext classification = 7;
+   */
+  classification?: RuntimeEvidenceClassificationContext | undefined;
+
+  /**
+   * @generated from field: patchbay.RuntimeEvidenceQuarantineReason reason = 8;
+   */
+  reason: RuntimeEvidenceQuarantineReason;
+
+  /**
+   * @generated from field: patchbay.RuntimeEvidenceSourceAttachment source_attachment = 9;
+   */
+  sourceAttachment?: RuntimeEvidenceSourceAttachment | undefined;
+};
+
+/**
+ * Describes the message patchbay.QuarantinedRuntimeEvidence.
+ * Use `create(QuarantinedRuntimeEvidenceSchema)` to create a new message.
+ */
+export const QuarantinedRuntimeEvidenceSchema: GenMessage<QuarantinedRuntimeEvidence> = /*@__PURE__*/
+  messageDesc(file_patchbay_observations, 5);
+
+/**
  * @generated from message patchbay.EndpointPresence
  */
 export type EndpointPresence = Message<"patchbay.EndpointPresence"> & {
@@ -122,7 +307,7 @@ export type EndpointPresence = Message<"patchbay.EndpointPresence"> & {
  * Use `create(EndpointPresenceSchema)` to create a new message.
  */
 export const EndpointPresenceSchema: GenMessage<EndpointPresence> = /*@__PURE__*/
-  messageDesc(file_patchbay_observations, 1);
+  messageDesc(file_patchbay_observations, 6);
 
 /**
  * @generated from message patchbay.ActorPresence
@@ -154,7 +339,7 @@ export type ActorPresence = Message<"patchbay.ActorPresence"> & {
  * Use `create(ActorPresenceSchema)` to create a new message.
  */
 export const ActorPresenceSchema: GenMessage<ActorPresence> = /*@__PURE__*/
-  messageDesc(file_patchbay_observations, 2);
+  messageDesc(file_patchbay_observations, 7);
 
 /**
  * @generated from message patchbay.ObservationSubscription
@@ -201,7 +386,7 @@ export type ObservationSubscription = Message<"patchbay.ObservationSubscription"
  * Use `create(ObservationSubscriptionSchema)` to create a new message.
  */
 export const ObservationSubscriptionSchema: GenMessage<ObservationSubscription> = /*@__PURE__*/
-  messageDesc(file_patchbay_observations, 3);
+  messageDesc(file_patchbay_observations, 8);
 
 /**
  * @generated from message patchbay.AttentionRequired
@@ -233,7 +418,7 @@ export type AttentionRequired = Message<"patchbay.AttentionRequired"> & {
  * Use `create(AttentionRequiredSchema)` to create a new message.
  */
 export const AttentionRequiredSchema: GenMessage<AttentionRequired> = /*@__PURE__*/
-  messageDesc(file_patchbay_observations, 4);
+  messageDesc(file_patchbay_observations, 9);
 
 /**
  * @generated from enum patchbay.ObservationKind
@@ -272,6 +457,52 @@ export const ObservationKindSchema: GenEnum<ObservationKind> = /*@__PURE__*/
   enumDesc(file_patchbay_observations, 0);
 
 /**
+ * @generated from enum patchbay.RuntimeEvidenceQuarantineReason
+ */
+export enum RuntimeEvidenceQuarantineReason {
+  /**
+   * @generated from enum value: RUNTIME_EVIDENCE_QUARANTINE_REASON_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: RUNTIME_EVIDENCE_QUARANTINE_REASON_TOMBSTONED = 1;
+   */
+  TOMBSTONED = 1,
+
+  /**
+   * @generated from enum value: RUNTIME_EVIDENCE_QUARANTINE_REASON_UNKNOWN_TARGET = 2;
+   */
+  UNKNOWN_TARGET = 2,
+
+  /**
+   * @generated from enum value: RUNTIME_EVIDENCE_QUARANTINE_REASON_IDENTITY_MISMATCH = 3;
+   */
+  IDENTITY_MISMATCH = 3,
+
+  /**
+   * @generated from enum value: RUNTIME_EVIDENCE_QUARANTINE_REASON_CLAIM_MISMATCH = 4;
+   */
+  CLAIM_MISMATCH = 4,
+
+  /**
+   * @generated from enum value: RUNTIME_EVIDENCE_QUARANTINE_REASON_STALE_ATTACHMENT = 5;
+   */
+  STALE_ATTACHMENT = 5,
+
+  /**
+   * @generated from enum value: RUNTIME_EVIDENCE_QUARANTINE_REASON_STALE_SOURCE_ORDER = 6;
+   */
+  STALE_SOURCE_ORDER = 6,
+}
+
+/**
+ * Describes the enum patchbay.RuntimeEvidenceQuarantineReason.
+ */
+export const RuntimeEvidenceQuarantineReasonSchema: GenEnum<RuntimeEvidenceQuarantineReason> = /*@__PURE__*/
+  enumDesc(file_patchbay_observations, 1);
+
+/**
  * @generated from enum patchbay.ActorPresenceState
  */
 export enum ActorPresenceState {
@@ -305,7 +536,7 @@ export enum ActorPresenceState {
  * Describes the enum patchbay.ActorPresenceState.
  */
 export const ActorPresenceStateSchema: GenEnum<ActorPresenceState> = /*@__PURE__*/
-  enumDesc(file_patchbay_observations, 1);
+  enumDesc(file_patchbay_observations, 2);
 
 /**
  * @generated from enum patchbay.ObservationSubscriptionState
@@ -341,7 +572,7 @@ export enum ObservationSubscriptionState {
  * Describes the enum patchbay.ObservationSubscriptionState.
  */
 export const ObservationSubscriptionStateSchema: GenEnum<ObservationSubscriptionState> = /*@__PURE__*/
-  enumDesc(file_patchbay_observations, 2);
+  enumDesc(file_patchbay_observations, 3);
 
 /**
  * @generated from enum patchbay.AttentionRequiredState
@@ -382,5 +613,5 @@ export enum AttentionRequiredState {
  * Describes the enum patchbay.AttentionRequiredState.
  */
 export const AttentionRequiredStateSchema: GenEnum<AttentionRequiredState> = /*@__PURE__*/
-  enumDesc(file_patchbay_observations, 3);
+  enumDesc(file_patchbay_observations, 4);
 

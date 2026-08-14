@@ -9,12 +9,12 @@ use std::collections::{BTreeMap, HashMap};
 use patchbay_contracts::patchbay::{
     security_lockdown_event, session_state_event, AdapterId, AuthorityDomainId, Generation,
     LogicalTargetCandidateReleased, LogicalTargetCandidateReserved, LogicalTargetCreated,
-    LogicalTargetInitialCurrentAssigned, LogicalTargetProjectionRecord, LogicalTargetId,
-    RuntimeSessionId, SecurityLockdownEvent,
-    SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
-    SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
-    SessionRelabeled, SessionReportApplied, SessionReportSourceCursor, SessionState, StoredEventKind,
-    StoredEventPayload,
+    LogicalTargetId, LogicalTargetInitialCurrentAssigned, LogicalTargetProjectionRecord,
+    RuntimeSessionId, SecurityLockdownEvent, SessionActivityChanged, SessionActivityState,
+    SessionConnectivityChanged, SessionConnectivityState, SessionGenerationBumped,
+    SessionModelChanged, SessionRegistered, SessionRelabeled, SessionReportApplied,
+    SessionReportSourceCursor, SessionState, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged,
+    StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
@@ -215,9 +215,9 @@ impl SessionRegistry {
         }
 
         if lockdown_active
-            && sessions.values().any(|record| {
-                record.state.connectivity == SessionConnectivityState::Live as i32
-            })
+            && sessions
+                .values()
+                .any(|record| record.state.connectivity == SessionConnectivityState::Live as i32)
         {
             return Err(SessionError::CorruptRecord(
                 "active-lockdown checkpoint contains a live session".to_owned(),
@@ -292,7 +292,10 @@ impl SessionRegistry {
         }
         if !matches!(
             kind,
-            StoredEventKind::SessionState | StoredEventKind::SecurityLockdown
+            StoredEventKind::SessionState
+                | StoredEventKind::SecurityLockdown
+                | StoredEventKind::SpawnSuccessorEvidenceStaged
+                | StoredEventKind::SpawnPromotionCommitted
         ) {
             // Sibling kinds remain projection no-ops, including when their
             // framing is malformed. The one exception is an identity already
@@ -319,6 +322,22 @@ impl SessionRegistry {
 
         if kind == StoredEventKind::SecurityLockdown {
             self.observe_security_lockdown(event)?;
+        } else if kind == StoredEventKind::SpawnSuccessorEvidenceStaged {
+            let staged = SpawnSuccessorEvidenceStaged::decode(event.payload.payload.as_slice())
+                .map_err(|error| {
+                    SessionError::CorruptRecord(format!(
+                        "cannot decode staged successor at LSN {event_lsn}: {error}"
+                    ))
+                })?;
+            self.observe_staged_successor(&staged)?;
+        } else if kind == StoredEventKind::SpawnPromotionCommitted {
+            let promotion = SpawnPromotionCommitted::decode(event.payload.payload.as_slice())
+                .map_err(|error| {
+                    SessionError::CorruptRecord(format!(
+                        "cannot decode spawn promotion at LSN {event_lsn}: {error}"
+                    ))
+                })?;
+            self.observe_spawn_promotion(&promotion, &event.event_id, event_lsn)?;
         } else {
             let state_event =
                 SessionStateEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
@@ -486,6 +505,162 @@ impl SessionRegistry {
         })?;
         self.logical_targets
             .release_candidate(&logical_target_id, external)?;
+        Ok(())
+    }
+
+    fn observe_staged_successor(
+        &mut self,
+        staged: &SpawnSuccessorEvidenceStaged,
+    ) -> Result<(), SessionError> {
+        super::validate_staged_successor(staged)
+            .map_err(|error| SessionError::CorruptLog(error.to_string()))?;
+        let target = staged
+            .classified_target
+            .as_ref()
+            .expect("staged successor validated");
+        self.logical_targets.reserve_candidate(
+            target
+                .logical_target_id
+                .as_ref()
+                .expect("staged successor validated"),
+            staged
+                .external_runtime_reservation
+                .clone()
+                .expect("staged successor validated"),
+        )?;
+        Ok(())
+    }
+
+    fn observe_spawn_promotion(
+        &mut self,
+        promotion: &SpawnPromotionCommitted,
+        event_id: &patchbay_contracts::patchbay::EventId,
+        event_lsn: u64,
+    ) -> Result<(), SessionError> {
+        super::validate_spawn_promotion_envelope(promotion, event_id)
+            .map_err(|error| SessionError::CorruptLog(error.to_string()))?;
+        let accepted = promotion
+            .accepted_claim
+            .as_ref()
+            .expect("promotion validated");
+        let claim = accepted.claim.as_ref().expect("promotion validated");
+        let promoted = promotion
+            .promoted_runtime
+            .as_ref()
+            .expect("promotion validated");
+        let logical_target_id = promoted
+            .logical_target_id
+            .as_ref()
+            .expect("promotion validated");
+        let staged = promotion
+            .staged_successor
+            .as_ref()
+            .and_then(|evidence| evidence.staged.as_ref())
+            .expect("promotion validated");
+        let report = staged.report.as_ref().expect("promotion validated");
+        let validated = validate_report(report)?;
+        if self.lockdown_active && validated.connectivity == SessionConnectivityState::Live {
+            return Err(SessionError::CorruptLog(format!(
+                "spawn promotion at LSN {event_lsn} would publish live during lockdown"
+            )));
+        }
+        let projected_target = self.logical_targets.get(logical_target_id).ok_or_else(|| {
+            SessionError::CorruptLog(format!(
+                "spawn promotion at LSN {event_lsn} references unknown logical target"
+            ))
+        })?;
+        if projected_target.current.as_ref() != claim.expected_prior.as_ref()
+            || projected_target.reserved_candidate.as_ref()
+                != promotion.external_runtime_reservation.as_ref()
+        {
+            return Err(SessionError::CorruptLog(format!(
+                "spawn promotion at LSN {event_lsn} does not match logical-target current/reservation pre-state"
+            )));
+        }
+
+        let prior_record = if let Some(prior) = claim.expected_prior.as_ref() {
+            let external = prior
+                .external_runtime
+                .as_ref()
+                .expect("promotion validated prior");
+            let prior_identity = SessionIdentity {
+                adapter_id: external
+                    .adapter_id
+                    .clone()
+                    .expect("promotion validated prior"),
+                deployment_scope: external.deployment_scope.clone(),
+                runtime_session_id: external
+                    .runtime_session_id
+                    .clone()
+                    .expect("promotion validated prior"),
+                session_generation: external.generation.expect("promotion validated prior"),
+            };
+            let record = self.get_session(&prior_identity).cloned().ok_or_else(|| {
+                SessionError::CorruptLog(format!(
+                    "spawn promotion at LSN {event_lsn} exact prior is not the current session"
+                ))
+            })?;
+            Some(record)
+        } else {
+            None
+        };
+        let candidate_key = live_key(&validated.identity);
+        if self.sessions.contains_key(&candidate_key)
+            && prior_record
+                .as_ref()
+                .is_none_or(|prior| live_key(&prior.identity) != candidate_key)
+        {
+            return Err(SessionError::CorruptLog(format!(
+                "spawn promotion at LSN {event_lsn} collides with another live session"
+            )));
+        }
+
+        self.logical_targets.commit_reserved_candidate(
+            logical_target_id,
+            claim.expected_prior.as_ref(),
+            promotion
+                .external_runtime_reservation
+                .as_ref()
+                .expect("promotion validated"),
+            event_lsn,
+        )?;
+        if let Some(prior) = prior_record {
+            let prior_key = live_key(&prior.identity);
+            self.sessions.remove(&prior_key);
+            self.tombstones.insert(
+                SessionTombstoneKey {
+                    adapter_id: prior.identity.adapter_id.clone(),
+                    deployment_scope: prior.identity.deployment_scope.clone(),
+                    runtime_session_id: prior.identity.runtime_session_id.clone(),
+                    generation: prior.identity.session_generation,
+                },
+                SessionTombstone {
+                    adapter_id: prior.identity.adapter_id,
+                    deployment_scope: prior.identity.deployment_scope,
+                    runtime_session_id: prior.identity.runtime_session_id,
+                    superseded_generation: prior.identity.session_generation,
+                    superseded_at_lsn: event_lsn,
+                },
+            );
+        }
+        self.sessions.insert(
+            candidate_key,
+            SessionRecord {
+                identity: validated.identity,
+                state: SessionState {
+                    connectivity: validated.connectivity as i32,
+                    activity: validated.activity as i32,
+                },
+                project: report.project.clone(),
+                cwd: report.cwd.clone(),
+                name: report.name.clone(),
+                model: report.model.clone(),
+                last_source_cursor: Some(validated.source_cursor),
+                last_authoritative_lsn: Some(event_lsn),
+                tombstoned: false,
+                superseded_at_lsn: None,
+            },
+        );
         Ok(())
     }
 

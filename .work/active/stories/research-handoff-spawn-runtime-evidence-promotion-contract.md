@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-runtime-evidence-promotion-contract
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, security, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-continuation-payload-authority-contract, research-handoff-spawn-claim-registry-contract, research-handoff-spawn-crash-external-effect-evidence-contract]
@@ -9,7 +9,7 @@ release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-13
 ---
 
 # Runtime evidence quarantine and atomic promotion contract
@@ -61,3 +61,25 @@ Promotion readiness requires accepted compound provenance, delivered/running lif
 ## Ordering constraint
 
 Final invariant contract leaf. Target resolution waits on this leaf and the parallel cursor replacement leaf, ensuring all operations consume settled shared contracts.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol` — caller-selected strongest worker for the atomic promotion, authority fence, and replay-quarantine security boundary.
+- Review weight: `thorough` (caller); implementation stops at `review` for independent convergence review and does not self-approve the promotion/quarantine/fence invariants.
+- Files changed: generated contract sources/artifacts in `contracts/proto/patchbay/{common,observations,sessions,authority}.proto`, `contracts/{rust,ts}/src/gen/**`; runtime fence and ordered projection folds in `core/src/{session,authority,acceptance}/`; dedicated storage transaction in `core/src/storage/`; replay dispatch allowlists; focused contract tests.
+- Tests added: `core/tests/runtime_evidence_promotion.rs` covers exact `ClaimedSuccessor`, wrong-operation rejection, staging-not-current, direct claim consumption, nested quarantine inertness, mandatory atomic quarantine audit, promotion id/audit stamping, and generic-promotion append rejection. The prior Leaf-6 guard test now explicitly rejects only the forbidden legacy two-event promotion shape.
+- Atomic promotion mechanism: `Storage::append_spawn_promotion_audited` is fail-closed by default and implemented by the SQLite single-writer actor as one transaction. It predicts the two consecutive LSNs, stamps `promotion_event_id`, `completion_audit_event_id`, and the nested descendant Grant's `audit_id` before encoding, reserves the descendant Grant identity, inserts the one promotion source, inserts its source-linked audit, verifies both assigned ids, and commits once. Generic/unaudited promotion appends reject.
+- Promotion un-guard wiring: `SpawnClaimRegistry` consumes `STORED_EVENT_KIND_SPAWN_PROMOTION_COMMITTED` directly, validates every embedded fact against the referenced durable prefix and exact active/poisoned claim, then sets `promoted` and clears the fence. The old disposition-event path cannot promote. `fold_spawn_promotion_ordered` stages clones and applies authority → session → claim → command before publishing any projection.
+- Quarantine rationale: the generated admitted-family `oneof` has no bytes/Any/opaque arm; normal command, Elicitation, diagnostics, authority, session, and completion dispatch recognizes only the outer quarantine kind and never recursively applies its candidate. Un-audited quarantine append rejects.
+- Simplification: reused the existing SQLite writer transaction and audit index instead of introducing a batch-prefix protocol; one semantic promotion source remains the only authoritative replay unit.
+- Discrepancies from design: none. The implementation keeps the operation driver and target-selection work downstream; this leaf supplies envelopes, validation/folds, and storage atomicity only.
+- Adjacent issues parked: none.
+
+## Verification evidence
+
+- `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`
+- `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`
+- `cd operator-domain && npm run build && npm test`
+- `cd pi-adapter && npm test`
+
+All commands passed on 2026-08-13.

@@ -12,15 +12,18 @@ use patchbay_contracts::patchbay::{
     no_external_effect_proof, session_state_event, spawn_claim_disposition_changed,
     spawn_claim_event, AcceptedOperation, AdapterId, AuthorityDomainId, CommandId,
     ContinuationAuthorityProvenance, EventId, ExternalEffectDisposition, FailureCode, Lsn,
-    OperationKind, OperationState, RuntimeGenerationRef, SessionConnectivityState,
-    SessionStateEvent, SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimDispositionChanged,
-    SpawnClaimEvent, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
-    SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnPriorWorkDisposition,
-    SpawnPriorWorkEffect, StoredEventKind, StoredEventPayload, TargetScopeKind,
+    Observation, ObservationKind, OperationKind, OperationState, RuntimeGenerationRef,
+    SessionConnectivityState, SessionStateEvent, SpawnClaimAccepted, SpawnClaimDisposition,
+    SpawnClaimDispositionChanged, SpawnClaimEvent, SpawnExecutionEvidence,
+    SpawnExecutionEvidenceProducer, SpawnExecutionPhase, SpawnGenerationClaim,
+    SpawnPendingReplacementFence, SpawnPriorWorkDisposition, SpawnPriorWorkEffect,
+    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
+    TargetScopeKind,
 };
 use prost::Message;
 
 use crate::{
+    acceptance::exact_command_correlation,
     adapter::AdapterRegistry,
     storage::{validate_next_replay_event, RecordedEvent, Storage},
 };
@@ -238,6 +241,14 @@ impl SpawnClaimRegistry {
                     ))
                 })?;
             next.apply_claim_event(claim_event, event_lsn)?;
+        } else if kind == StoredEventKind::SpawnPromotionCommitted {
+            let promotion = SpawnPromotionCommitted::decode(event.payload.payload.as_slice())
+                .map_err(|error| {
+                    corrupt_record(format!(
+                        "cannot decode spawn promotion at LSN {event_lsn}: {error}"
+                    ))
+                })?;
+            next.apply_promotion(promotion, &event.event_id, event_lsn)?;
         }
         next.applied_through_lsn = event_lsn;
         next.applied_events.insert(event_lsn, event.payload.clone());
@@ -317,6 +328,68 @@ impl SpawnClaimRegistry {
                 adapter_id,
             },
         );
+        Ok(())
+    }
+
+    fn apply_promotion(
+        &mut self,
+        promotion: SpawnPromotionCommitted,
+        event_id: &EventId,
+        event_lsn: u64,
+    ) -> Result<(), SpawnClaimError> {
+        super::validate_spawn_promotion_envelope(&promotion, event_id)
+            .map_err(|error| corrupt_log(error.to_string()))?;
+        let accepted = promotion
+            .accepted_claim
+            .as_ref()
+            .expect("promotion envelope validated");
+        let claim = accepted
+            .claim
+            .as_ref()
+            .expect("promotion envelope validated");
+        let command_id = claim
+            .claim_operation_id
+            .as_ref()
+            .expect("promotion envelope validated")
+            .clone();
+        let record = self
+            .records
+            .get(&command_id)
+            .ok_or_else(|| SpawnClaimError::UnknownClaim(command_id.clone()))?;
+        if record.claim != *claim
+            || !matches!(
+                record.disposition,
+                SpawnClaimDisposition::Active
+                    | SpawnClaimDisposition::PoisonedPendingReconciliation
+            )
+        {
+            return Err(corrupt_log(
+                "promotion does not consume the exact active/poisoned claim pre-state",
+            ));
+        }
+        validate_embedded_promotion_history(
+            &self.applied_events,
+            &self.authority_domain_id,
+            record,
+            &promotion,
+            event_lsn,
+        )?;
+        validate_promoted_runtime(
+            &self.authority_domain_id,
+            &record.claim,
+            promotion
+                .promoted_runtime
+                .as_ref()
+                .expect("promotion envelope validated"),
+        )?;
+        let key = claim_key(&record.claim)?;
+        if self.exclusive_claims.get(&key) != Some(&command_id) {
+            return Err(corrupt_log("promoted claim did not own its exclusive key"));
+        }
+        let record = self.records.get_mut(&command_id).expect("claim validated");
+        record.disposition = SpawnClaimDisposition::Promoted;
+        record.pending_replacement = None;
+        record.latest_disposition_lsn = event_lsn;
         Ok(())
     }
 
@@ -787,29 +860,6 @@ fn validate_transition_evidence(
             Ok(())
         }
         (
-            SpawnClaimDisposition::Promoted,
-            Some(spawn_claim_disposition_changed::Evidence::Promotion(promotion)),
-        ) => {
-            let referenced = validate_referenced_event(
-                events,
-                domain,
-                record.accepted_lsn,
-                promotion.promotion_event_id.as_ref(),
-                event_lsn,
-                "promotion evidence",
-            )?;
-            let runtime = promotion
-                .promoted_runtime
-                .as_ref()
-                .ok_or_else(|| corrupt_record("promotion evidence has no promoted runtime"))?;
-            validate_promoted_runtime(domain, &record.claim, runtime)?;
-            reject_unavailable_typed_evidence(
-                referenced,
-                "SpawnPromotionCommitted",
-                "runtime evidence and promotion envelopes (Leaf 6)",
-            )
-        }
-        (
             SpawnClaimDisposition::TargetAbandoned,
             Some(spawn_claim_disposition_changed::Evidence::TargetAbandonment(abandonment)),
         ) => validate_referenced_event(
@@ -825,6 +875,133 @@ fn validate_transition_evidence(
             "claim disposition is not paired with its exact closed-vocabulary evidence",
         )),
     }
+}
+
+fn validate_embedded_promotion_history(
+    events: &BTreeMap<u64, StoredEventPayload>,
+    domain: &AuthorityDomainId,
+    record: &SpawnClaimRecord,
+    promotion: &SpawnPromotionCommitted,
+    promotion_lsn: u64,
+) -> Result<(), SpawnClaimError> {
+    let accepted_id = promotion
+        .accepted_claim_event_id
+        .as_ref()
+        .expect("promotion envelope validated accepted id");
+    let accepted_payload = validate_referenced_event(
+        events,
+        domain,
+        0,
+        Some(accepted_id),
+        promotion_lsn,
+        "promotion accepted claim",
+    )?;
+    if StoredEventKind::try_from(accepted_payload.kind).ok() != Some(StoredEventKind::SpawnClaim) {
+        return Err(corrupt_log(
+            "promotion accepted-claim reference is not SpawnClaim",
+        ));
+    }
+    let accepted_event =
+        SpawnClaimEvent::decode(accepted_payload.payload.as_slice()).map_err(|error| {
+            corrupt_record(format!("cannot decode promotion accepted claim: {error}"))
+        })?;
+    if accepted_event.authority_domain_id.as_ref() != Some(domain)
+        || accepted_event.mutation
+            != Some(spawn_claim_event::Mutation::Accepted(
+                promotion
+                    .accepted_claim
+                    .clone()
+                    .expect("promotion envelope validated"),
+            ))
+        || accepted_id
+            .lsn
+            .is_none_or(|lsn| lsn.value != record.accepted_lsn)
+    {
+        return Err(corrupt_log(
+            "promotion accepted claim bytes/pre-state do not match",
+        ));
+    }
+
+    for evidence in &promotion.lifecycle {
+        let id = evidence
+            .event_id
+            .as_ref()
+            .expect("promotion envelope validated lifecycle id");
+        let payload = validate_referenced_event(
+            events,
+            domain,
+            record.accepted_lsn,
+            Some(id),
+            promotion_lsn,
+            "promotion lifecycle evidence",
+        )?;
+        if StoredEventKind::try_from(payload.kind).ok() != Some(StoredEventKind::CommandTransition)
+            || patchbay_contracts::patchbay::CommandTransition::decode(payload.payload.as_slice())
+                .ok()
+                .as_ref()
+                != evidence.transition.as_ref()
+        {
+            return Err(corrupt_log(
+                "promotion lifecycle reference bytes do not match",
+            ));
+        }
+    }
+
+    let result = promotion
+        .successful_result
+        .as_ref()
+        .expect("promotion envelope validated result");
+    let result_payload = validate_referenced_event(
+        events,
+        domain,
+        record.accepted_lsn,
+        result.event_id.as_ref(),
+        promotion_lsn,
+        "promotion successful result",
+    )?;
+    if StoredEventKind::try_from(result_payload.kind).ok() != Some(StoredEventKind::Observation) {
+        return Err(corrupt_log(
+            "promotion result reference is not an Observation",
+        ));
+    }
+    let observation = Observation::decode(result_payload.payload.as_slice())
+        .map_err(|error| corrupt_record(format!("cannot decode promotion result: {error}")))?;
+    if ObservationKind::try_from(observation.kind).ok() != Some(ObservationKind::Result)
+        || FailureCode::try_from(observation.failure_code).ok() != Some(FailureCode::Unspecified)
+        || observation.target_scope != result.target_scope
+        || observation.observed_at != result.observed_at
+        || exact_command_correlation(&observation.correlations).as_ref()
+            != result.command_id.as_ref()
+    {
+        return Err(corrupt_log(
+            "promotion result does not match exact successful Observation",
+        ));
+    }
+
+    let staged = promotion
+        .staged_successor
+        .as_ref()
+        .expect("promotion envelope validated staged");
+    let staged_payload = validate_referenced_event(
+        events,
+        domain,
+        record.accepted_lsn,
+        staged.event_id.as_ref(),
+        promotion_lsn,
+        "promotion staged successor",
+    )?;
+    if StoredEventKind::try_from(staged_payload.kind).ok()
+        != Some(StoredEventKind::SpawnSuccessorEvidenceStaged)
+        || SpawnSuccessorEvidenceStaged::decode(staged_payload.payload.as_slice())
+            .ok()
+            .as_ref()
+            != staged.staged.as_ref()
+    {
+        return Err(corrupt_log(
+            "promotion staged-successor reference bytes do not match",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_no_effect_release(
@@ -1577,18 +1754,6 @@ fn validate_referenced_event<'a>(
             "{name} references unavailable or unauthenticated durable bytes"
         ))
     })
-}
-
-fn reject_unavailable_typed_evidence(
-    referenced: &StoredEventPayload,
-    required_discriminator: &str,
-    owner: &str,
-) -> Result<(), SpawnClaimError> {
-    let actual = StoredEventKind::try_from(referenced.kind)
-        .map_err(|_| corrupt_record("evidence references an unknown stored-event discriminator"))?;
-    Err(corrupt_log(format!(
-        "{actual:?} cannot authorize this claim transition: {required_discriminator} is owned by {owner} and is not registered yet"
-    )))
 }
 
 fn claim_key(claim: &SpawnGenerationClaim) -> Result<SpawnClaimKey, SpawnClaimError> {

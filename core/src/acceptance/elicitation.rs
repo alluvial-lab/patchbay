@@ -104,6 +104,9 @@ impl ElicitationSlotLayer {
             | StoredEventKind::ResourceState
             | StoredEventKind::SpawnClaim
             | StoredEventKind::SpawnExecutionEvidence
+            | StoredEventKind::SpawnSuccessorEvidenceStaged
+            | StoredEventKind::QuarantinedRuntimeEvidence
+            | StoredEventKind::SpawnPromotionCommitted
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::OperatorSessionRevocation

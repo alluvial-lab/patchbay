@@ -350,6 +350,14 @@ pub enum StoredEventKind {
     /// Exact claim-correlated spawn execution/crash evidence
     /// (adapter_control.proto). This is evidence, never promotion authority.
     SpawnExecutionEvidence = 17,
+    /// Exact claimed-successor report staged behind the generation fence
+    /// (sessions.proto). It reserves identity but does not publish a live session.
+    SpawnSuccessorEvidenceStaged = 18,
+    /// Diagnostic-only outer envelope for stale/mismatched runtime evidence
+    /// (observations.proto). Projections must never dispatch its nested candidate.
+    QuarantinedRuntimeEvidence = 19,
+    /// One authority-bearing spawn promotion replay decision (sessions.proto).
+    SpawnPromotionCommitted = 20,
 }
 impl StoredEventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -376,6 +384,9 @@ impl StoredEventKind {
             Self::ResourceState => "STORED_EVENT_KIND_RESOURCE_STATE",
             Self::SpawnClaim => "STORED_EVENT_KIND_SPAWN_CLAIM",
             Self::SpawnExecutionEvidence => "STORED_EVENT_KIND_SPAWN_EXECUTION_EVIDENCE",
+            Self::SpawnSuccessorEvidenceStaged => "STORED_EVENT_KIND_SPAWN_SUCCESSOR_EVIDENCE_STAGED",
+            Self::QuarantinedRuntimeEvidence => "STORED_EVENT_KIND_QUARANTINED_RUNTIME_EVIDENCE",
+            Self::SpawnPromotionCommitted => "STORED_EVENT_KIND_SPAWN_PROMOTION_COMMITTED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -399,6 +410,9 @@ impl StoredEventKind {
             "STORED_EVENT_KIND_RESOURCE_STATE" => Some(Self::ResourceState),
             "STORED_EVENT_KIND_SPAWN_CLAIM" => Some(Self::SpawnClaim),
             "STORED_EVENT_KIND_SPAWN_EXECUTION_EVIDENCE" => Some(Self::SpawnExecutionEvidence),
+            "STORED_EVENT_KIND_SPAWN_SUCCESSOR_EVIDENCE_STAGED" => Some(Self::SpawnSuccessorEvidenceStaged),
+            "STORED_EVENT_KIND_QUARANTINED_RUNTIME_EVIDENCE" => Some(Self::QuarantinedRuntimeEvidence),
+            "STORED_EVENT_KIND_SPAWN_PROMOTION_COMMITTED" => Some(Self::SpawnPromotionCommitted),
             _ => None,
         }
     }
@@ -1047,6 +1061,353 @@ impl AdapterSnapshotSupport {
         }
     }
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Elicitation {
+    #[prost(message, optional, tag="1")]
+    pub elicitation_id: ::core::option::Option<ElicitationId>,
+    #[prost(message, optional, tag="2")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag="3")]
+    pub opener: ::core::option::Option<ActorEndpointRef>,
+    #[prost(message, optional, tag="4")]
+    pub expected_responder_actor: ::core::option::Option<ActorId>,
+    #[prost(message, optional, tag="5")]
+    pub response_contract: ::core::option::Option<ResponseContract>,
+    #[prost(message, optional, tag="6")]
+    pub target_context: ::core::option::Option<TargetScope>,
+    #[prost(message, optional, tag="7")]
+    pub timeout_policy: ::core::option::Option<TimeoutPolicy>,
+    #[prost(message, optional, tag="8")]
+    pub cancellation_policy: ::core::option::Option<CancellationPolicy>,
+    #[prost(message, repeated, tag="9")]
+    pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
+    #[prost(message, optional, tag="10")]
+    pub payload: ::core::option::Option<PayloadEnvelope>,
+    #[prost(enumeration="ElicitationState", tag="11")]
+    pub state: i32,
+    #[prost(message, optional, tag="12")]
+    pub recorded_lsn: ::core::option::Option<Lsn>,
+    #[prost(message, optional, tag="13")]
+    pub opened_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ResponseContract {
+    #[prost(enumeration="ResponseContractKind", tag="1")]
+    pub contract_kind: i32,
+    #[prost(string, tag="2")]
+    pub schema_ref: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag="3")]
+    pub ui_hints: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, optional, tag="4")]
+    pub timeout_policy: ::core::option::Option<TimeoutPolicy>,
+    #[prost(enumeration="InvalidResponsePolicy", tag="5")]
+    pub invalid_response_policy: i32,
+    #[prost(message, optional, tag="6")]
+    pub responder_policy: ::core::option::Option<ResponderPolicy>,
+    #[prost(enumeration="ResponseSensitivity", tag="7")]
+    pub sensitivity: i32,
+    /// Typed contract body. Present for committed contract kinds with a typed
+    /// shape; approval remains binary and carries no typed body in v0.1.0.
+    #[prost(oneof="response_contract::ContractBody", tags="8")]
+    pub contract_body: ::core::option::Option<response_contract::ContractBody>,
+}
+/// Nested message and enum types in `ResponseContract`.
+pub mod response_contract {
+    /// Typed contract body. Present for committed contract kinds with a typed
+    /// shape; approval remains binary and carries no typed body in v0.1.0.
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum ContractBody {
+        #[prost(message, tag="8")]
+        Question(super::QuestionContract),
+    }
+}
+/// A selectable option within a question contract.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResponseOption {
+    #[prost(string, tag="1")]
+    pub option_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub label: ::prost::alloc::string::String,
+}
+/// The typed contract body for a `question` contract kind. Each Elicitation is
+/// single-answer; grouped multi-question presentation is a surface concern.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QuestionContract {
+    #[prost(message, repeated, tag="1")]
+    pub options: ::prost::alloc::vec::Vec<ResponseOption>,
+    #[prost(bool, tag="2")]
+    pub allow_free_text: bool,
+}
+/// The typed response payload carried by an ELICITATION_RESPONSE Operation.
+/// Exactly one of selected_option_id / free_text is the primary answer;
+/// clarification is an optional supplementary answer-and field.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ElicitationResponsePayload {
+    #[prost(string, tag="1")]
+    pub selected_option_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub free_text: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub clarification: ::prost::alloc::string::String,
+}
+/// The typed response payload carried by an APPROVAL_RESPONSE Operation.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ApprovalResponsePayload {
+    #[prost(enumeration="ApprovalDecision", tag="1")]
+    pub decision: i32,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TimeoutPolicy {
+    #[prost(message, optional, tag="1")]
+    pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
+    #[prost(message, optional, tag="2")]
+    pub duration: ::core::option::Option<::prost_types::Duration>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct CancellationPolicy {
+    #[prost(bool, tag="1")]
+    pub opener_may_withdraw: bool,
+    #[prost(bool, tag="2")]
+    pub responder_may_decline: bool,
+    #[prost(bool, tag="3")]
+    pub core_or_policy_may_cancel: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ResponderPolicy {
+    #[prost(message, optional, tag="1")]
+    pub expected_responder_actor: ::core::option::Option<ActorId>,
+    #[prost(string, tag="2")]
+    pub endpoint_class: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub fallback_policy: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ElicitationState {
+    Unspecified = 0,
+    Opened = 1,
+    Pending = 2,
+    Answered = 3,
+    Declined = 4,
+    Expired = 5,
+    Cancelled = 6,
+    Withdrawn = 7,
+    Superseded = 8,
+    Stale = 9,
+}
+impl ElicitationState {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ELICITATION_STATE_UNSPECIFIED",
+            Self::Opened => "ELICITATION_STATE_OPENED",
+            Self::Pending => "ELICITATION_STATE_PENDING",
+            Self::Answered => "ELICITATION_STATE_ANSWERED",
+            Self::Declined => "ELICITATION_STATE_DECLINED",
+            Self::Expired => "ELICITATION_STATE_EXPIRED",
+            Self::Cancelled => "ELICITATION_STATE_CANCELLED",
+            Self::Withdrawn => "ELICITATION_STATE_WITHDRAWN",
+            Self::Superseded => "ELICITATION_STATE_SUPERSEDED",
+            Self::Stale => "ELICITATION_STATE_STALE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ELICITATION_STATE_UNSPECIFIED" => Some(Self::Unspecified),
+            "ELICITATION_STATE_OPENED" => Some(Self::Opened),
+            "ELICITATION_STATE_PENDING" => Some(Self::Pending),
+            "ELICITATION_STATE_ANSWERED" => Some(Self::Answered),
+            "ELICITATION_STATE_DECLINED" => Some(Self::Declined),
+            "ELICITATION_STATE_EXPIRED" => Some(Self::Expired),
+            "ELICITATION_STATE_CANCELLED" => Some(Self::Cancelled),
+            "ELICITATION_STATE_WITHDRAWN" => Some(Self::Withdrawn),
+            "ELICITATION_STATE_SUPERSEDED" => Some(Self::Superseded),
+            "ELICITATION_STATE_STALE" => Some(Self::Stale),
+            _ => None,
+        }
+    }
+}
+/// The operator's binary decision on an approval Elicitation. v0.1.0 commits
+/// APPROVED and DENIED. The richer decisions are named reserved seams and are
+/// not validatable until promotion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ApprovalDecision {
+    Unspecified = 0,
+    Approved = 1,
+    Denied = 2,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedAllowOnce = 100,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedAlways = 101,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedPolicyAmend = 102,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedModifiedInput = 103,
+}
+impl ApprovalDecision {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "APPROVAL_DECISION_UNSPECIFIED",
+            Self::Approved => "APPROVAL_DECISION_APPROVED",
+            Self::Denied => "APPROVAL_DECISION_DENIED",
+            Self::ReservedAllowOnce => "APPROVAL_DECISION_RESERVED_ALLOW_ONCE",
+            Self::ReservedAlways => "APPROVAL_DECISION_RESERVED_ALWAYS",
+            Self::ReservedPolicyAmend => "APPROVAL_DECISION_RESERVED_POLICY_AMEND",
+            Self::ReservedModifiedInput => "APPROVAL_DECISION_RESERVED_MODIFIED_INPUT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "APPROVAL_DECISION_UNSPECIFIED" => Some(Self::Unspecified),
+            "APPROVAL_DECISION_APPROVED" => Some(Self::Approved),
+            "APPROVAL_DECISION_DENIED" => Some(Self::Denied),
+            "APPROVAL_DECISION_RESERVED_ALLOW_ONCE" => Some(Self::ReservedAllowOnce),
+            "APPROVAL_DECISION_RESERVED_ALWAYS" => Some(Self::ReservedAlways),
+            "APPROVAL_DECISION_RESERVED_POLICY_AMEND" => Some(Self::ReservedPolicyAmend),
+            "APPROVAL_DECISION_RESERVED_MODIFIED_INPUT" => Some(Self::ReservedModifiedInput),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ResponseContractKind {
+    Unspecified = 0,
+    Approval = 1,
+    Question = 2,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedFreeform = 100,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedSecret = 101,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedFunctionResult = 102,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedFileAttachment = 103,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedStructuredSchema = 104,
+    /// reserved, not validatable in v0; submissions reject with validation_failed.
+    ReservedServiceRequest = 105,
+}
+impl ResponseContractKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "RESPONSE_CONTRACT_KIND_UNSPECIFIED",
+            Self::Approval => "RESPONSE_CONTRACT_KIND_APPROVAL",
+            Self::Question => "RESPONSE_CONTRACT_KIND_QUESTION",
+            Self::ReservedFreeform => "RESPONSE_CONTRACT_KIND_RESERVED_FREEFORM",
+            Self::ReservedSecret => "RESPONSE_CONTRACT_KIND_RESERVED_SECRET",
+            Self::ReservedFunctionResult => "RESPONSE_CONTRACT_KIND_RESERVED_FUNCTION_RESULT",
+            Self::ReservedFileAttachment => "RESPONSE_CONTRACT_KIND_RESERVED_FILE_ATTACHMENT",
+            Self::ReservedStructuredSchema => "RESPONSE_CONTRACT_KIND_RESERVED_STRUCTURED_SCHEMA",
+            Self::ReservedServiceRequest => "RESPONSE_CONTRACT_KIND_RESERVED_SERVICE_REQUEST",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "RESPONSE_CONTRACT_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "RESPONSE_CONTRACT_KIND_APPROVAL" => Some(Self::Approval),
+            "RESPONSE_CONTRACT_KIND_QUESTION" => Some(Self::Question),
+            "RESPONSE_CONTRACT_KIND_RESERVED_FREEFORM" => Some(Self::ReservedFreeform),
+            "RESPONSE_CONTRACT_KIND_RESERVED_SECRET" => Some(Self::ReservedSecret),
+            "RESPONSE_CONTRACT_KIND_RESERVED_FUNCTION_RESULT" => Some(Self::ReservedFunctionResult),
+            "RESPONSE_CONTRACT_KIND_RESERVED_FILE_ATTACHMENT" => Some(Self::ReservedFileAttachment),
+            "RESPONSE_CONTRACT_KIND_RESERVED_STRUCTURED_SCHEMA" => Some(Self::ReservedStructuredSchema),
+            "RESPONSE_CONTRACT_KIND_RESERVED_SERVICE_REQUEST" => Some(Self::ReservedServiceRequest),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum InvalidResponsePolicy {
+    Unspecified = 0,
+    RejectAndKeepPending = 1,
+    /// reserved, not validatable in v0.1.0; treated as
+    /// REJECT_AND_KEEP_PENDING until a future protocol promotion.
+    TerminalDeclined = 2,
+    /// reserved, not validatable in v0.1.0; treated as
+    /// REJECT_AND_KEEP_PENDING until a future protocol promotion.
+    TerminalSuperseded = 3,
+    /// reserved, not validatable in v0.1.0; treated as
+    /// REJECT_AND_KEEP_PENDING until a future protocol promotion.
+    TerminalCancelled = 4,
+}
+impl InvalidResponsePolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "INVALID_RESPONSE_POLICY_UNSPECIFIED",
+            Self::RejectAndKeepPending => "INVALID_RESPONSE_POLICY_REJECT_AND_KEEP_PENDING",
+            Self::TerminalDeclined => "INVALID_RESPONSE_POLICY_TERMINAL_DECLINED",
+            Self::TerminalSuperseded => "INVALID_RESPONSE_POLICY_TERMINAL_SUPERSEDED",
+            Self::TerminalCancelled => "INVALID_RESPONSE_POLICY_TERMINAL_CANCELLED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "INVALID_RESPONSE_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "INVALID_RESPONSE_POLICY_REJECT_AND_KEEP_PENDING" => Some(Self::RejectAndKeepPending),
+            "INVALID_RESPONSE_POLICY_TERMINAL_DECLINED" => Some(Self::TerminalDeclined),
+            "INVALID_RESPONSE_POLICY_TERMINAL_SUPERSEDED" => Some(Self::TerminalSuperseded),
+            "INVALID_RESPONSE_POLICY_TERMINAL_CANCELLED" => Some(Self::TerminalCancelled),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ResponseSensitivity {
+    Unspecified = 0,
+    Loggable = 1,
+    Redacted = 2,
+    Encrypted = 3,
+    NeverPersistPlaintext = 4,
+}
+impl ResponseSensitivity {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "RESPONSE_SENSITIVITY_UNSPECIFIED",
+            Self::Loggable => "RESPONSE_SENSITIVITY_LOGGABLE",
+            Self::Redacted => "RESPONSE_SENSITIVITY_REDACTED",
+            Self::Encrypted => "RESPONSE_SENSITIVITY_ENCRYPTED",
+            Self::NeverPersistPlaintext => "RESPONSE_SENSITIVITY_NEVER_PERSIST_PLAINTEXT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "RESPONSE_SENSITIVITY_UNSPECIFIED" => Some(Self::Unspecified),
+            "RESPONSE_SENSITIVITY_LOGGABLE" => Some(Self::Loggable),
+            "RESPONSE_SENSITIVITY_REDACTED" => Some(Self::Redacted),
+            "RESPONSE_SENSITIVITY_ENCRYPTED" => Some(Self::Encrypted),
+            "RESPONSE_SENSITIVITY_NEVER_PERSIST_PLAINTEXT" => Some(Self::NeverPersistPlaintext),
+            _ => None,
+        }
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Grant {
     #[prost(message, optional, tag="1")]
@@ -1144,6 +1505,18 @@ pub struct DescendantGrantProvenance {
     /// spawning_grant_id this preserves both authorizing Grant ids.
     #[prost(message, optional, tag="3")]
     pub continuation_authority: ::core::option::Option<ContinuationAuthorityProvenance>,
+}
+/// Complete authority contribution carried by the one promotion replay unit.
+/// The nested descendant is installed directly from SpawnPromotionCommitted;
+/// it is never emitted first as a standalone grant event.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnPromotionAuthorityEvidence {
+    #[prost(message, optional, tag="1")]
+    pub spawning_grant_id: ::core::option::Option<GrantId>,
+    #[prost(message, optional, tag="2")]
+    pub continuation_authority: ::core::option::Option<ContinuationAuthorityProvenance>,
+    #[prost(message, optional, tag="3")]
+    pub descendant_grant: ::core::option::Option<DescendantGrant>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct GrantRevocationEffect {
@@ -1438,6 +1811,143 @@ pub struct SessionReport {
     pub model: ::prost::alloc::string::String,
     #[prost(message, optional, tag="12")]
     pub source_cursor: ::core::option::Option<SessionReportSourceCursor>,
+}
+/// Shared runtime-generation fence result. ClaimedSuccessor is deliberately a
+/// typed variant rather than a SessionReport exception: every ingress family
+/// uses this same classifier and only the exact claimed report may stage.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RuntimeGenerationDisposition {
+    #[prost(oneof="runtime_generation_disposition::Disposition", tags="1, 2, 3, 4, 5")]
+    pub disposition: ::core::option::Option<runtime_generation_disposition::Disposition>,
+}
+/// Nested message and enum types in `RuntimeGenerationDisposition`.
+pub mod runtime_generation_disposition {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Disposition {
+        #[prost(message, tag="1")]
+        Current(super::RuntimeGenerationCurrent),
+        #[prost(message, tag="2")]
+        ClaimedSuccessor(super::RuntimeGenerationClaimedSuccessor),
+        #[prost(message, tag="3")]
+        Tombstoned(super::RuntimeGenerationTombstoned),
+        #[prost(message, tag="4")]
+        Unknown(super::RuntimeGenerationUnknown),
+        #[prost(message, tag="5")]
+        IdentityMismatch(super::RuntimeGenerationIdentityMismatch),
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RuntimeGenerationCurrent {
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RuntimeGenerationClaimedSuccessor {
+    #[prost(message, optional, tag="1")]
+    pub claim_operation_id: ::core::option::Option<CommandId>,
+    #[prost(message, optional, tag="2")]
+    pub expected_prior: ::core::option::Option<RuntimeGenerationRef>,
+    #[prost(message, optional, tag="3")]
+    pub claimed_generation: ::core::option::Option<Generation>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RuntimeGenerationTombstoned {
+    #[prost(message, optional, tag="1")]
+    pub superseded_at_lsn: ::core::option::Option<Lsn>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RuntimeGenerationUnknown {
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RuntimeGenerationIdentityMismatch {
+}
+/// Durable source binding for staged and quarantined runtime evidence. The
+/// process-local attachment token is intentionally absent.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RuntimeEvidenceSourceAttachment {
+    #[prost(message, optional, tag="1")]
+    pub adapter_id: ::core::option::Option<AdapterId>,
+    #[prost(message, optional, tag="2")]
+    pub adapter_generation: ::core::option::Option<Generation>,
+    #[prost(message, optional, tag="3")]
+    pub attachment_event_id: ::core::option::Option<EventId>,
+}
+/// Exact successor report admitted by ClaimedSuccessor. Folding this event may
+/// reserve the external identity, but must not create a current/live session.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnSuccessorEvidenceStaged {
+    #[prost(message, optional, tag="1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag="2")]
+    pub exact_claim: ::core::option::Option<SpawnGenerationClaim>,
+    #[prost(message, optional, tag="3")]
+    pub report: ::core::option::Option<SessionReport>,
+    #[prost(message, optional, tag="4")]
+    pub classified_target: ::core::option::Option<RuntimeGenerationRef>,
+    #[prost(message, optional, tag="5")]
+    pub disposition: ::core::option::Option<RuntimeGenerationDisposition>,
+    #[prost(message, optional, tag="6")]
+    pub source_attachment: ::core::option::Option<RuntimeEvidenceSourceAttachment>,
+    #[prost(message, optional, tag="7")]
+    pub external_runtime_reservation: ::core::option::Option<ExternalRuntimeRef>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SpawnPromotionLifecycleEvidence {
+    #[prost(message, optional, tag="1")]
+    pub event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag="2")]
+    pub transition: ::core::option::Option<CommandTransition>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnPromotionResultEvidence {
+    #[prost(message, optional, tag="1")]
+    pub event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag="2")]
+    pub command_id: ::core::option::Option<CommandId>,
+    #[prost(message, optional, tag="3")]
+    pub target_scope: ::core::option::Option<TargetScope>,
+    #[prost(enumeration="FailureCode", tag="4")]
+    pub failure_code: i32,
+    #[prost(message, optional, tag="5")]
+    pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SpawnPromotionStagedEvidence {
+    #[prost(message, optional, tag="1")]
+    pub event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag="2")]
+    pub staged: ::core::option::Option<SpawnSuccessorEvidenceStaged>,
+}
+/// One semantic replay decision shared by authority, session, claim, and
+/// command projections. Storage assigns promotion_event_id and
+/// completion_audit_event_id together and stamps the nested descendant audit
+/// link in the same transaction. The event is self-contained; references bind
+/// its facts to the preceding durable prefix rather than requiring another
+/// post-promotion source event.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SpawnPromotionCommitted {
+    #[prost(message, optional, tag="1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag="2")]
+    pub promotion_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag="3")]
+    pub completion_audit_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag="4")]
+    pub accepted_claim_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag="5")]
+    pub accepted_claim: ::core::option::Option<SpawnClaimAccepted>,
+    #[prost(message, repeated, tag="6")]
+    pub lifecycle: ::prost::alloc::vec::Vec<SpawnPromotionLifecycleEvidence>,
+    #[prost(message, optional, tag="7")]
+    pub successful_result: ::core::option::Option<SpawnPromotionResultEvidence>,
+    #[prost(message, optional, tag="8")]
+    pub staged_successor: ::core::option::Option<SpawnPromotionStagedEvidence>,
+    #[prost(message, optional, tag="9")]
+    pub promoted_runtime: ::core::option::Option<RuntimeGenerationRef>,
+    #[prost(message, optional, tag="10")]
+    pub external_runtime_reservation: ::core::option::Option<ExternalRuntimeRef>,
+    #[prost(message, optional, tag="11")]
+    pub authority: ::core::option::Option<SpawnPromotionAuthorityEvidence>,
+    #[prost(message, optional, tag="12")]
+    pub committed_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SessionSnapshot {
@@ -2012,6 +2522,77 @@ pub struct Observation {
     #[prost(enumeration="FailureCode", tag="12")]
     pub failure_code: i32,
 }
+/// Typed admitted families for diagnostic quarantine. There is intentionally no
+/// bytes/Any/PayloadEnvelope candidate arm: an unknown family is rejected
+/// before durability instead of acquiring an opaque replay escape hatch.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RuntimeDeliveryAcknowledgementEvidence {
+    #[prost(message, optional, tag="1")]
+    pub command_id: ::core::option::Option<CommandId>,
+    #[prost(message, optional, tag="2")]
+    pub target: ::core::option::Option<RuntimeGenerationRef>,
+    #[prost(message, optional, tag="3")]
+    pub observed_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RuntimeTranscriptStatusEvidence {
+    #[prost(message, optional, tag="1")]
+    pub observation: ::core::option::Option<Observation>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RuntimeElicitationMutationEvidence {
+    #[prost(message, optional, tag="1")]
+    pub elicitation: ::core::option::Option<Elicitation>,
+    #[prost(enumeration="ElicitationState", tag="2")]
+    pub from_state: i32,
+    #[prost(enumeration="ElicitationState", tag="3")]
+    pub to_state: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RuntimeEvidenceClassificationContext {
+    #[prost(message, optional, tag="1")]
+    pub disposition: ::core::option::Option<RuntimeGenerationDisposition>,
+    #[prost(message, optional, tag="2")]
+    pub classified_target: ::core::option::Option<RuntimeGenerationRef>,
+    #[prost(message, optional, tag="3")]
+    pub current: ::core::option::Option<RuntimeGenerationRef>,
+    #[prost(message, optional, tag="4")]
+    pub tombstone: ::core::option::Option<LogicalTargetTombstone>,
+    #[prost(message, optional, tag="5")]
+    pub active_claim: ::core::option::Option<SpawnGenerationClaim>,
+}
+/// Diagnostic-only outer replay envelope. Normal projections dispatch on
+/// STORED_EVENT_KIND_QUARANTINED_RUNTIME_EVIDENCE and never recursively apply
+/// the nested candidate as Observation/session/Elicitation/command evidence.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QuarantinedRuntimeEvidence {
+    #[prost(message, optional, tag="1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag="7")]
+    pub classification: ::core::option::Option<RuntimeEvidenceClassificationContext>,
+    #[prost(enumeration="RuntimeEvidenceQuarantineReason", tag="8")]
+    pub reason: i32,
+    #[prost(message, optional, tag="9")]
+    pub source_attachment: ::core::option::Option<RuntimeEvidenceSourceAttachment>,
+    #[prost(oneof="quarantined_runtime_evidence::Candidate", tags="2, 3, 4, 5, 6")]
+    pub candidate: ::core::option::Option<quarantined_runtime_evidence::Candidate>,
+}
+/// Nested message and enum types in `QuarantinedRuntimeEvidence`.
+pub mod quarantined_runtime_evidence {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Candidate {
+        #[prost(message, tag="2")]
+        Observation(super::Observation),
+        #[prost(message, tag="3")]
+        SessionReport(super::SessionReport),
+        #[prost(message, tag="4")]
+        DeliveryAcknowledgement(super::RuntimeDeliveryAcknowledgementEvidence),
+        #[prost(message, tag="5")]
+        TranscriptStatus(super::RuntimeTranscriptStatusEvidence),
+        #[prost(message, tag="6")]
+        ElicitationMutation(super::RuntimeElicitationMutationEvidence),
+    }
+}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EndpointPresence {
     #[prost(message, optional, tag="1")]
@@ -2093,6 +2674,47 @@ impl ObservationKind {
             "OBSERVATION_KIND_STATUS" => Some(Self::Status),
             "OBSERVATION_KIND_DELTA" => Some(Self::Delta),
             "OBSERVATION_KIND_RESULT" => Some(Self::Result),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum RuntimeEvidenceQuarantineReason {
+    Unspecified = 0,
+    Tombstoned = 1,
+    UnknownTarget = 2,
+    IdentityMismatch = 3,
+    ClaimMismatch = 4,
+    StaleAttachment = 5,
+    StaleSourceOrder = 6,
+}
+impl RuntimeEvidenceQuarantineReason {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "RUNTIME_EVIDENCE_QUARANTINE_REASON_UNSPECIFIED",
+            Self::Tombstoned => "RUNTIME_EVIDENCE_QUARANTINE_REASON_TOMBSTONED",
+            Self::UnknownTarget => "RUNTIME_EVIDENCE_QUARANTINE_REASON_UNKNOWN_TARGET",
+            Self::IdentityMismatch => "RUNTIME_EVIDENCE_QUARANTINE_REASON_IDENTITY_MISMATCH",
+            Self::ClaimMismatch => "RUNTIME_EVIDENCE_QUARANTINE_REASON_CLAIM_MISMATCH",
+            Self::StaleAttachment => "RUNTIME_EVIDENCE_QUARANTINE_REASON_STALE_ATTACHMENT",
+            Self::StaleSourceOrder => "RUNTIME_EVIDENCE_QUARANTINE_REASON_STALE_SOURCE_ORDER",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "RUNTIME_EVIDENCE_QUARANTINE_REASON_UNSPECIFIED" => Some(Self::Unspecified),
+            "RUNTIME_EVIDENCE_QUARANTINE_REASON_TOMBSTONED" => Some(Self::Tombstoned),
+            "RUNTIME_EVIDENCE_QUARANTINE_REASON_UNKNOWN_TARGET" => Some(Self::UnknownTarget),
+            "RUNTIME_EVIDENCE_QUARANTINE_REASON_IDENTITY_MISMATCH" => Some(Self::IdentityMismatch),
+            "RUNTIME_EVIDENCE_QUARANTINE_REASON_CLAIM_MISMATCH" => Some(Self::ClaimMismatch),
+            "RUNTIME_EVIDENCE_QUARANTINE_REASON_STALE_ATTACHMENT" => Some(Self::StaleAttachment),
+            "RUNTIME_EVIDENCE_QUARANTINE_REASON_STALE_SOURCE_ORDER" => Some(Self::StaleSourceOrder),
             _ => None,
         }
     }
@@ -3548,353 +4170,6 @@ impl SnapshotViewKind {
             "SNAPSHOT_VIEW_KIND_UNSPECIFIED" => Some(Self::Unspecified),
             "SNAPSHOT_VIEW_KIND_SESSION" => Some(Self::Session),
             "SNAPSHOT_VIEW_KIND_RESOURCE" => Some(Self::Resource),
-            _ => None,
-        }
-    }
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct Elicitation {
-    #[prost(message, optional, tag="1")]
-    pub elicitation_id: ::core::option::Option<ElicitationId>,
-    #[prost(message, optional, tag="2")]
-    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
-    #[prost(message, optional, tag="3")]
-    pub opener: ::core::option::Option<ActorEndpointRef>,
-    #[prost(message, optional, tag="4")]
-    pub expected_responder_actor: ::core::option::Option<ActorId>,
-    #[prost(message, optional, tag="5")]
-    pub response_contract: ::core::option::Option<ResponseContract>,
-    #[prost(message, optional, tag="6")]
-    pub target_context: ::core::option::Option<TargetScope>,
-    #[prost(message, optional, tag="7")]
-    pub timeout_policy: ::core::option::Option<TimeoutPolicy>,
-    #[prost(message, optional, tag="8")]
-    pub cancellation_policy: ::core::option::Option<CancellationPolicy>,
-    #[prost(message, repeated, tag="9")]
-    pub correlations: ::prost::alloc::vec::Vec<TypedCorrelation>,
-    #[prost(message, optional, tag="10")]
-    pub payload: ::core::option::Option<PayloadEnvelope>,
-    #[prost(enumeration="ElicitationState", tag="11")]
-    pub state: i32,
-    #[prost(message, optional, tag="12")]
-    pub recorded_lsn: ::core::option::Option<Lsn>,
-    #[prost(message, optional, tag="13")]
-    pub opened_at: ::core::option::Option<::prost_types::Timestamp>,
-}
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ResponseContract {
-    #[prost(enumeration="ResponseContractKind", tag="1")]
-    pub contract_kind: i32,
-    #[prost(string, tag="2")]
-    pub schema_ref: ::prost::alloc::string::String,
-    #[prost(string, repeated, tag="3")]
-    pub ui_hints: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
-    #[prost(message, optional, tag="4")]
-    pub timeout_policy: ::core::option::Option<TimeoutPolicy>,
-    #[prost(enumeration="InvalidResponsePolicy", tag="5")]
-    pub invalid_response_policy: i32,
-    #[prost(message, optional, tag="6")]
-    pub responder_policy: ::core::option::Option<ResponderPolicy>,
-    #[prost(enumeration="ResponseSensitivity", tag="7")]
-    pub sensitivity: i32,
-    /// Typed contract body. Present for committed contract kinds with a typed
-    /// shape; approval remains binary and carries no typed body in v0.1.0.
-    #[prost(oneof="response_contract::ContractBody", tags="8")]
-    pub contract_body: ::core::option::Option<response_contract::ContractBody>,
-}
-/// Nested message and enum types in `ResponseContract`.
-pub mod response_contract {
-    /// Typed contract body. Present for committed contract kinds with a typed
-    /// shape; approval remains binary and carries no typed body in v0.1.0.
-    #[derive(Clone, PartialEq, ::prost::Oneof)]
-    pub enum ContractBody {
-        #[prost(message, tag="8")]
-        Question(super::QuestionContract),
-    }
-}
-/// A selectable option within a question contract.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ResponseOption {
-    #[prost(string, tag="1")]
-    pub option_id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub label: ::prost::alloc::string::String,
-}
-/// The typed contract body for a `question` contract kind. Each Elicitation is
-/// single-answer; grouped multi-question presentation is a surface concern.
-#[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QuestionContract {
-    #[prost(message, repeated, tag="1")]
-    pub options: ::prost::alloc::vec::Vec<ResponseOption>,
-    #[prost(bool, tag="2")]
-    pub allow_free_text: bool,
-}
-/// The typed response payload carried by an ELICITATION_RESPONSE Operation.
-/// Exactly one of selected_option_id / free_text is the primary answer;
-/// clarification is an optional supplementary answer-and field.
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ElicitationResponsePayload {
-    #[prost(string, tag="1")]
-    pub selected_option_id: ::prost::alloc::string::String,
-    #[prost(string, tag="2")]
-    pub free_text: ::prost::alloc::string::String,
-    #[prost(string, tag="3")]
-    pub clarification: ::prost::alloc::string::String,
-}
-/// The typed response payload carried by an APPROVAL_RESPONSE Operation.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ApprovalResponsePayload {
-    #[prost(enumeration="ApprovalDecision", tag="1")]
-    pub decision: i32,
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct TimeoutPolicy {
-    #[prost(message, optional, tag="1")]
-    pub expires_at: ::core::option::Option<::prost_types::Timestamp>,
-    #[prost(message, optional, tag="2")]
-    pub duration: ::core::option::Option<::prost_types::Duration>,
-}
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct CancellationPolicy {
-    #[prost(bool, tag="1")]
-    pub opener_may_withdraw: bool,
-    #[prost(bool, tag="2")]
-    pub responder_may_decline: bool,
-    #[prost(bool, tag="3")]
-    pub core_or_policy_may_cancel: bool,
-}
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct ResponderPolicy {
-    #[prost(message, optional, tag="1")]
-    pub expected_responder_actor: ::core::option::Option<ActorId>,
-    #[prost(string, tag="2")]
-    pub endpoint_class: ::prost::alloc::string::String,
-    #[prost(string, tag="3")]
-    pub fallback_policy: ::prost::alloc::string::String,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum ElicitationState {
-    Unspecified = 0,
-    Opened = 1,
-    Pending = 2,
-    Answered = 3,
-    Declined = 4,
-    Expired = 5,
-    Cancelled = 6,
-    Withdrawn = 7,
-    Superseded = 8,
-    Stale = 9,
-}
-impl ElicitationState {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::Unspecified => "ELICITATION_STATE_UNSPECIFIED",
-            Self::Opened => "ELICITATION_STATE_OPENED",
-            Self::Pending => "ELICITATION_STATE_PENDING",
-            Self::Answered => "ELICITATION_STATE_ANSWERED",
-            Self::Declined => "ELICITATION_STATE_DECLINED",
-            Self::Expired => "ELICITATION_STATE_EXPIRED",
-            Self::Cancelled => "ELICITATION_STATE_CANCELLED",
-            Self::Withdrawn => "ELICITATION_STATE_WITHDRAWN",
-            Self::Superseded => "ELICITATION_STATE_SUPERSEDED",
-            Self::Stale => "ELICITATION_STATE_STALE",
-        }
-    }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "ELICITATION_STATE_UNSPECIFIED" => Some(Self::Unspecified),
-            "ELICITATION_STATE_OPENED" => Some(Self::Opened),
-            "ELICITATION_STATE_PENDING" => Some(Self::Pending),
-            "ELICITATION_STATE_ANSWERED" => Some(Self::Answered),
-            "ELICITATION_STATE_DECLINED" => Some(Self::Declined),
-            "ELICITATION_STATE_EXPIRED" => Some(Self::Expired),
-            "ELICITATION_STATE_CANCELLED" => Some(Self::Cancelled),
-            "ELICITATION_STATE_WITHDRAWN" => Some(Self::Withdrawn),
-            "ELICITATION_STATE_SUPERSEDED" => Some(Self::Superseded),
-            "ELICITATION_STATE_STALE" => Some(Self::Stale),
-            _ => None,
-        }
-    }
-}
-/// The operator's binary decision on an approval Elicitation. v0.1.0 commits
-/// APPROVED and DENIED. The richer decisions are named reserved seams and are
-/// not validatable until promotion.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum ApprovalDecision {
-    Unspecified = 0,
-    Approved = 1,
-    Denied = 2,
-    /// reserved, not validatable in v0; submissions reject with validation_failed.
-    ReservedAllowOnce = 100,
-    /// reserved, not validatable in v0; submissions reject with validation_failed.
-    ReservedAlways = 101,
-    /// reserved, not validatable in v0; submissions reject with validation_failed.
-    ReservedPolicyAmend = 102,
-    /// reserved, not validatable in v0; submissions reject with validation_failed.
-    ReservedModifiedInput = 103,
-}
-impl ApprovalDecision {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::Unspecified => "APPROVAL_DECISION_UNSPECIFIED",
-            Self::Approved => "APPROVAL_DECISION_APPROVED",
-            Self::Denied => "APPROVAL_DECISION_DENIED",
-            Self::ReservedAllowOnce => "APPROVAL_DECISION_RESERVED_ALLOW_ONCE",
-            Self::ReservedAlways => "APPROVAL_DECISION_RESERVED_ALWAYS",
-            Self::ReservedPolicyAmend => "APPROVAL_DECISION_RESERVED_POLICY_AMEND",
-            Self::ReservedModifiedInput => "APPROVAL_DECISION_RESERVED_MODIFIED_INPUT",
-        }
-    }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "APPROVAL_DECISION_UNSPECIFIED" => Some(Self::Unspecified),
-            "APPROVAL_DECISION_APPROVED" => Some(Self::Approved),
-            "APPROVAL_DECISION_DENIED" => Some(Self::Denied),
-            "APPROVAL_DECISION_RESERVED_ALLOW_ONCE" => Some(Self::ReservedAllowOnce),
-            "APPROVAL_DECISION_RESERVED_ALWAYS" => Some(Self::ReservedAlways),
-            "APPROVAL_DECISION_RESERVED_POLICY_AMEND" => Some(Self::ReservedPolicyAmend),
-            "APPROVAL_DECISION_RESERVED_MODIFIED_INPUT" => Some(Self::ReservedModifiedInput),
-            _ => None,
-        }
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum ResponseContractKind {
-    Unspecified = 0,
-    Approval = 1,
-    Question = 2,
-    /// reserved, not validatable in v0; submissions reject with validation_failed.
-    ReservedFreeform = 100,
-    /// reserved, not validatable in v0; submissions reject with validation_failed.
-    ReservedSecret = 101,
-    /// reserved, not validatable in v0; submissions reject with validation_failed.
-    ReservedFunctionResult = 102,
-    /// reserved, not validatable in v0; submissions reject with validation_failed.
-    ReservedFileAttachment = 103,
-    /// reserved, not validatable in v0; submissions reject with validation_failed.
-    ReservedStructuredSchema = 104,
-    /// reserved, not validatable in v0; submissions reject with validation_failed.
-    ReservedServiceRequest = 105,
-}
-impl ResponseContractKind {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::Unspecified => "RESPONSE_CONTRACT_KIND_UNSPECIFIED",
-            Self::Approval => "RESPONSE_CONTRACT_KIND_APPROVAL",
-            Self::Question => "RESPONSE_CONTRACT_KIND_QUESTION",
-            Self::ReservedFreeform => "RESPONSE_CONTRACT_KIND_RESERVED_FREEFORM",
-            Self::ReservedSecret => "RESPONSE_CONTRACT_KIND_RESERVED_SECRET",
-            Self::ReservedFunctionResult => "RESPONSE_CONTRACT_KIND_RESERVED_FUNCTION_RESULT",
-            Self::ReservedFileAttachment => "RESPONSE_CONTRACT_KIND_RESERVED_FILE_ATTACHMENT",
-            Self::ReservedStructuredSchema => "RESPONSE_CONTRACT_KIND_RESERVED_STRUCTURED_SCHEMA",
-            Self::ReservedServiceRequest => "RESPONSE_CONTRACT_KIND_RESERVED_SERVICE_REQUEST",
-        }
-    }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "RESPONSE_CONTRACT_KIND_UNSPECIFIED" => Some(Self::Unspecified),
-            "RESPONSE_CONTRACT_KIND_APPROVAL" => Some(Self::Approval),
-            "RESPONSE_CONTRACT_KIND_QUESTION" => Some(Self::Question),
-            "RESPONSE_CONTRACT_KIND_RESERVED_FREEFORM" => Some(Self::ReservedFreeform),
-            "RESPONSE_CONTRACT_KIND_RESERVED_SECRET" => Some(Self::ReservedSecret),
-            "RESPONSE_CONTRACT_KIND_RESERVED_FUNCTION_RESULT" => Some(Self::ReservedFunctionResult),
-            "RESPONSE_CONTRACT_KIND_RESERVED_FILE_ATTACHMENT" => Some(Self::ReservedFileAttachment),
-            "RESPONSE_CONTRACT_KIND_RESERVED_STRUCTURED_SCHEMA" => Some(Self::ReservedStructuredSchema),
-            "RESPONSE_CONTRACT_KIND_RESERVED_SERVICE_REQUEST" => Some(Self::ReservedServiceRequest),
-            _ => None,
-        }
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum InvalidResponsePolicy {
-    Unspecified = 0,
-    RejectAndKeepPending = 1,
-    /// reserved, not validatable in v0.1.0; treated as
-    /// REJECT_AND_KEEP_PENDING until a future protocol promotion.
-    TerminalDeclined = 2,
-    /// reserved, not validatable in v0.1.0; treated as
-    /// REJECT_AND_KEEP_PENDING until a future protocol promotion.
-    TerminalSuperseded = 3,
-    /// reserved, not validatable in v0.1.0; treated as
-    /// REJECT_AND_KEEP_PENDING until a future protocol promotion.
-    TerminalCancelled = 4,
-}
-impl InvalidResponsePolicy {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::Unspecified => "INVALID_RESPONSE_POLICY_UNSPECIFIED",
-            Self::RejectAndKeepPending => "INVALID_RESPONSE_POLICY_REJECT_AND_KEEP_PENDING",
-            Self::TerminalDeclined => "INVALID_RESPONSE_POLICY_TERMINAL_DECLINED",
-            Self::TerminalSuperseded => "INVALID_RESPONSE_POLICY_TERMINAL_SUPERSEDED",
-            Self::TerminalCancelled => "INVALID_RESPONSE_POLICY_TERMINAL_CANCELLED",
-        }
-    }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "INVALID_RESPONSE_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
-            "INVALID_RESPONSE_POLICY_REJECT_AND_KEEP_PENDING" => Some(Self::RejectAndKeepPending),
-            "INVALID_RESPONSE_POLICY_TERMINAL_DECLINED" => Some(Self::TerminalDeclined),
-            "INVALID_RESPONSE_POLICY_TERMINAL_SUPERSEDED" => Some(Self::TerminalSuperseded),
-            "INVALID_RESPONSE_POLICY_TERMINAL_CANCELLED" => Some(Self::TerminalCancelled),
-            _ => None,
-        }
-    }
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
-#[repr(i32)]
-pub enum ResponseSensitivity {
-    Unspecified = 0,
-    Loggable = 1,
-    Redacted = 2,
-    Encrypted = 3,
-    NeverPersistPlaintext = 4,
-}
-impl ResponseSensitivity {
-    /// String value of the enum field names used in the ProtoBuf definition.
-    ///
-    /// The values are not transformed in any way and thus are considered stable
-    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
-    pub fn as_str_name(&self) -> &'static str {
-        match self {
-            Self::Unspecified => "RESPONSE_SENSITIVITY_UNSPECIFIED",
-            Self::Loggable => "RESPONSE_SENSITIVITY_LOGGABLE",
-            Self::Redacted => "RESPONSE_SENSITIVITY_REDACTED",
-            Self::Encrypted => "RESPONSE_SENSITIVITY_ENCRYPTED",
-            Self::NeverPersistPlaintext => "RESPONSE_SENSITIVITY_NEVER_PERSIST_PLAINTEXT",
-        }
-    }
-    /// Creates an enum from field names used in the ProtoBuf definition.
-    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
-        match value {
-            "RESPONSE_SENSITIVITY_UNSPECIFIED" => Some(Self::Unspecified),
-            "RESPONSE_SENSITIVITY_LOGGABLE" => Some(Self::Loggable),
-            "RESPONSE_SENSITIVITY_REDACTED" => Some(Self::Redacted),
-            "RESPONSE_SENSITIVITY_ENCRYPTED" => Some(Self::Encrypted),
-            "RESPONSE_SENSITIVITY_NEVER_PERSIST_PLAINTEXT" => Some(Self::NeverPersistPlaintext),
             _ => None,
         }
     }

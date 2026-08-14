@@ -74,6 +74,15 @@ message DescendantGrantProvenance {
   ContinuationAuthorityProvenance continuation_authority = 3;
 }
 
+// Complete authority contribution carried by the one promotion replay unit.
+// The nested descendant is installed directly from SpawnPromotionCommitted;
+// it is never emitted first as a standalone grant event.
+message SpawnPromotionAuthorityEvidence {
+  GrantId spawning_grant_id = 1;
+  ContinuationAuthorityProvenance continuation_authority = 2;
+  DescendantGrant descendant_grant = 3;
+}
+
 message GrantRevocationEffect {
   CommandId command_id = 1;
   OperationState from_state = 2;

@@ -257,6 +257,9 @@ impl OperatorRegistry {
             | StoredEventKind::ResourceState
             | StoredEventKind::SpawnClaim
             | StoredEventKind::SpawnExecutionEvidence
+            | StoredEventKind::SpawnSuccessorEvidenceStaged
+            | StoredEventKind::QuarantinedRuntimeEvidence
+            | StoredEventKind::SpawnPromotionCommitted
             | StoredEventKind::CommandTransition
             | StoredEventKind::SecurityLockdown
             | StoredEventKind::AuditRecord => Ok(()),

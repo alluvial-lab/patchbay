@@ -8,7 +8,8 @@ use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
     AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition, FailureCode, Observation,
-    ObservationKind, Operation, OperationKind, OperationState, Revocation, StoredEventKind,
+    ObservationKind, Operation, OperationKind, OperationState, Revocation, SpawnPromotionCommitted,
+    StoredEventKind,
 };
 use prost::Message;
 
@@ -65,6 +66,7 @@ impl CommandIndex {
             // retained here is a successful spawn result whose terminalization
             // is deliberately deferred to the descendant-completion owner.
             StoredEventKind::Observation => self.apply_observation(event),
+            StoredEventKind::SpawnPromotionCommitted => self.apply_spawn_promotion(event),
             StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
@@ -72,6 +74,8 @@ impl CommandIndex {
             | StoredEventKind::ResourceState
             | StoredEventKind::SpawnClaim
             | StoredEventKind::SpawnExecutionEvidence
+            | StoredEventKind::SpawnSuccessorEvidenceStaged
+            | StoredEventKind::QuarantinedRuntimeEvidence
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::OperatorSessionRevocation
@@ -246,6 +250,59 @@ impl CommandIndex {
         Ok(())
     }
 
+    fn apply_spawn_promotion(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
+        let (_, event_lsn) = event_identity(event)?;
+        let promotion =
+            SpawnPromotionCommitted::decode(event.payload.payload.as_slice()).map_err(|error| {
+                AcceptanceError::CorruptRecord(format!(
+                    "cannot decode spawn promotion at LSN {event_lsn}: {error}"
+                ))
+            })?;
+        crate::session::validate_spawn_promotion_envelope(&promotion, &event.event_id)
+            .map_err(|error| AcceptanceError::CorruptLog(error.to_string()))?;
+        let accepted = promotion
+            .accepted_claim
+            .as_ref()
+            .expect("promotion validated");
+        let accepted_operation = accepted
+            .accepted_operation
+            .as_ref()
+            .expect("promotion validated");
+        let operation = accepted_operation.operation.as_ref().ok_or_else(|| {
+            AcceptanceError::CorruptRecord("promotion accepted claim has no operation".to_owned())
+        })?;
+        let command_id = operation.command_id.as_ref().expect("promotion validated");
+        let record = self.commands.get_mut(command_id).ok_or_else(|| {
+            AcceptanceError::CorruptLog(format!(
+                "spawn promotion at LSN {event_lsn} references unknown command {command_id:?}"
+            ))
+        })?;
+        let final_state = promotion
+            .lifecycle
+            .last()
+            .and_then(|evidence| evidence.transition.as_ref())
+            .and_then(|transition| OperationState::try_from(transition.to_state).ok())
+            .expect("promotion lifecycle validated");
+        if record.operation != *operation
+            || record.grant_id != accepted_operation.authorizing_grant_id
+            || record.state != final_state
+            || !matches!(
+                record.state,
+                OperationState::Delivered | OperationState::Running
+            )
+            || record.terminal_lsn.is_some()
+        {
+            return Err(AcceptanceError::CorruptLog(format!(
+                "spawn promotion at LSN {event_lsn} disagrees with command exact pre-state"
+            )));
+        }
+        record.state = OperationState::Completed;
+        record.failure_code = None;
+        record.terminal_lsn = Some(event_lsn);
+        self.deferred_spawn_successes.remove(command_id);
+        Ok(())
+    }
+
     fn apply_revocation(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
         // One revocation may carry several command effects. Stage the complete
         // event so a later invalid effect cannot leave earlier commands
@@ -256,10 +313,7 @@ impl CommandIndex {
         Ok(())
     }
 
-    fn apply_revocation_in_place(
-        &mut self,
-        event: &RecordedEvent,
-    ) -> Result<(), AcceptanceError> {
+    fn apply_revocation_in_place(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
         let (_, event_lsn) = event_identity(event)?;
         let revocation = Revocation::decode(event.payload.payload.as_slice()).map_err(|error| {
             AcceptanceError::CorruptRecord(format!(

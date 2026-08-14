@@ -814,7 +814,7 @@ fn identified_external_runtime_is_bounded_to_original_claim() {
 }
 
 #[test]
-fn promotion_stays_guarded_until_leaf_six() {
+fn legacy_two_event_claim_promotion_is_rejected() {
     let mut registry = SpawnClaimRegistry::new(domain()).unwrap();
     registry
         .observe(&accepted_event(1, continuation_accepted("spawn-a")))

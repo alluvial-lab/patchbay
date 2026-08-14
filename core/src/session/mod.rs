@@ -13,6 +13,7 @@ pub mod logical_target;
 pub mod registry;
 pub mod replay;
 pub mod resolver;
+pub mod runtime_evidence;
 pub mod spawn_claim;
 pub mod state;
 
@@ -28,6 +29,12 @@ pub use logical_target::{
 pub use patchbay_contracts::patchbay::SessionReport;
 pub use registry::{SessionRecord, SessionRegistry, SessionTombstone};
 pub use replay::rebuild_from_log;
+pub use runtime_evidence::{
+    classify_session_report, encode_quarantined_runtime_evidence, encode_spawn_promotion,
+    encode_staged_successor, fold_spawn_promotion_ordered,
+    validate_quarantined_runtime_evidence, validate_spawn_promotion_envelope,
+    validate_staged_successor, RuntimeEvidenceError, SpawnPromotionFoldError,
+};
 pub use spawn_claim::{
     allowed_external_effect_disposition, allowed_spawn_claim_transition,
     encode_spawn_claim_event, encode_spawn_execution_evidence, rebuild_spawn_claims_from_log,

@@ -74,6 +74,93 @@ message SessionReport {
   SessionReportSourceCursor source_cursor = 12;
 }
 
+// Shared runtime-generation fence result. ClaimedSuccessor is deliberately a
+// typed variant rather than a SessionReport exception: every ingress family
+// uses this same classifier and only the exact claimed report may stage.
+message RuntimeGenerationDisposition {
+  oneof disposition {
+    RuntimeGenerationCurrent current = 1;
+    RuntimeGenerationClaimedSuccessor claimed_successor = 2;
+    RuntimeGenerationTombstoned tombstoned = 3;
+    RuntimeGenerationUnknown unknown = 4;
+    RuntimeGenerationIdentityMismatch identity_mismatch = 5;
+  }
+}
+
+message RuntimeGenerationCurrent {}
+
+message RuntimeGenerationClaimedSuccessor {
+  CommandId claim_operation_id = 1;
+  RuntimeGenerationRef expected_prior = 2;
+  Generation claimed_generation = 3;
+}
+
+message RuntimeGenerationTombstoned {
+  Lsn superseded_at_lsn = 1;
+}
+
+message RuntimeGenerationUnknown {}
+message RuntimeGenerationIdentityMismatch {}
+
+// Durable source binding for staged and quarantined runtime evidence. The
+// process-local attachment token is intentionally absent.
+message RuntimeEvidenceSourceAttachment {
+  AdapterId adapter_id = 1;
+  Generation adapter_generation = 2;
+  EventId attachment_event_id = 3;
+}
+
+// Exact successor report admitted by ClaimedSuccessor. Folding this event may
+// reserve the external identity, but must not create a current/live session.
+message SpawnSuccessorEvidenceStaged {
+  AuthorityDomainId authority_domain_id = 1;
+  SpawnGenerationClaim exact_claim = 2;
+  SessionReport report = 3;
+  RuntimeGenerationRef classified_target = 4;
+  RuntimeGenerationDisposition disposition = 5;
+  RuntimeEvidenceSourceAttachment source_attachment = 6;
+  ExternalRuntimeRef external_runtime_reservation = 7;
+}
+
+message SpawnPromotionLifecycleEvidence {
+  EventId event_id = 1;
+  CommandTransition transition = 2;
+}
+
+message SpawnPromotionResultEvidence {
+  EventId event_id = 1;
+  CommandId command_id = 2;
+  TargetScope target_scope = 3;
+  FailureCode failure_code = 4;
+  google.protobuf.Timestamp observed_at = 5;
+}
+
+message SpawnPromotionStagedEvidence {
+  EventId event_id = 1;
+  SpawnSuccessorEvidenceStaged staged = 2;
+}
+
+// One semantic replay decision shared by authority, session, claim, and
+// command projections. Storage assigns promotion_event_id and
+// completion_audit_event_id together and stamps the nested descendant audit
+// link in the same transaction. The event is self-contained; references bind
+// its facts to the preceding durable prefix rather than requiring another
+// post-promotion source event.
+message SpawnPromotionCommitted {
+  AuthorityDomainId authority_domain_id = 1;
+  EventId promotion_event_id = 2;
+  EventId completion_audit_event_id = 3;
+  EventId accepted_claim_event_id = 4;
+  SpawnClaimAccepted accepted_claim = 5;
+  repeated SpawnPromotionLifecycleEvidence lifecycle = 6;
+  SpawnPromotionResultEvidence successful_result = 7;
+  SpawnPromotionStagedEvidence staged_successor = 8;
+  RuntimeGenerationRef promoted_runtime = 9;
+  ExternalRuntimeRef external_runtime_reservation = 10;
+  SpawnPromotionAuthorityEvidence authority = 11;
+  google.protobuf.Timestamp committed_at = 12;
+}
+
 message SessionSnapshot {
   AuthorityDomainId authority_domain_id = 1;
   Lsn snapshot_lsn = 2;

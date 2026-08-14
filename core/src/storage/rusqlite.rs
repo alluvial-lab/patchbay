@@ -31,17 +31,18 @@ use std::{
 
 use patchbay_contracts::patchbay::{
     AuditEventKind, AuditPage, AuditRecord, AuthorityDomainId, DescendantGrant, EventId,
-    FailureCode, Generation, Grant, IdempotencyKey, Lsn, StoredEventKind, StoredEventPayload,
+    FailureCode, Generation, Grant, IdempotencyKey, Lsn, SpawnPromotionCommitted, StoredEventKind,
+    StoredEventPayload,
 };
 use prost::Message;
-use rusqlite::{params_from_iter, types::Value, Connection};
+use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 use super::port::{
     event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedBatchAppend,
     AuditedDecisionAppend, AuditedDedupOutcome, CoreGenerationStore, DedupOutcome,
-    GrantAppendOutcome, GrantIdentityKey, RecordedEvent, Storage, StorageError, StoredSnapshot,
-    TargetKey,
+    GrantAppendOutcome, GrantIdentityKey, RecordedEvent, SpawnPromotionAppend, Storage,
+    StorageError, StoredSnapshot, TargetKey,
 };
 
 pub const LATEST_SCHEMA_VERSION: u32 = 5;
@@ -351,6 +352,24 @@ fn decoded_grant_boundary(
                 "descendant_grant_created",
             )
         }
+        StoredEventKind::SpawnPromotionCommitted => {
+            let promotion = SpawnPromotionCommitted::decode(payload.payload.as_slice()).map_err(|error| {
+                StorageError::CorruptRecord(format!(
+                    "cannot decode promotion descendant grant identity: {error}"
+                ))
+            })?;
+            let grant = promotion
+                .authority
+                .and_then(|authority| authority.descendant_grant)
+                .ok_or_else(|| StorageError::CorruptRecord(
+                    "promotion identity source has no descendant grant".to_owned(),
+                ))?;
+            (
+                grant.grant_id,
+                grant.authority_domain_id,
+                "descendant_grant_created",
+            )
+        }
         _ => {
             return Err(StorageError::CorruptRecord(
                 "grant identity source is not a grant or descendant grant".to_owned(),
@@ -373,7 +392,7 @@ fn authoritative_grant_identities(
         .prepare(
             "SELECT lsn, authority_domain_id, kind, payload
              FROM events
-             WHERE kind IN (?1, ?2)
+             WHERE kind IN (?1, ?2, ?3)
              ORDER BY lsn",
         )
         .map_err(map_write_err)?;
@@ -381,7 +400,8 @@ fn authoritative_grant_identities(
         .query_map(
             rusqlite::params![
                 StoredEventKind::Grant as i32,
-                StoredEventKind::DescendantGrant as i32
+                StoredEventKind::DescendantGrant as i32,
+                StoredEventKind::SpawnPromotionCommitted as i32
             ],
             |row| {
                 Ok((
@@ -406,7 +426,9 @@ fn authoritative_grant_identities(
         if envelope_kind as i32 != sql_kind
             || !matches!(
                 envelope_kind,
-                StoredEventKind::Grant | StoredEventKind::DescendantGrant
+                StoredEventKind::Grant
+                    | StoredEventKind::DescendantGrant
+                    | StoredEventKind::SpawnPromotionCommitted
             )
         {
             return Err(StorageError::CorruptRecord(format!(
@@ -674,6 +696,12 @@ enum WriterCommand {
         audits: Vec<AuditRecordDraft>,
         reply: oneshot::Sender<Result<AuditedDecisionAppend, StorageError>>,
     },
+    AppendSpawnPromotionAudited {
+        authority_domain_id: String,
+        promotion: Box<SpawnPromotionCommitted>,
+        audit: AuditRecordDraft,
+        reply: oneshot::Sender<Result<SpawnPromotionAppend, StorageError>>,
+    },
 }
 
 /// rusqlite-backed storage. Cloneable — the actor handle and read connection
@@ -877,6 +905,20 @@ async fn writer_actor(
                 reply,
             } => {
                 let result = do_append_decision_audited_many(&mut db, &authority_domain_id, source, audits);
+                let _ = reply.send(result);
+            }
+            WriterCommand::AppendSpawnPromotionAudited {
+                authority_domain_id,
+                promotion,
+                audit,
+                reply,
+            } => {
+                let result = do_append_spawn_promotion_audited(
+                    &mut db,
+                    &authority_domain_id,
+                    *promotion,
+                    audit,
+                );
                 let _ = reply.send(result);
             }
         }
@@ -1346,6 +1388,144 @@ fn do_append_decision_audited_many(
     Ok(AuditedDecisionAppend { source_event_id, audit_event_ids })
 }
 
+fn do_append_spawn_promotion_audited(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    mut promotion: SpawnPromotionCommitted,
+    mut audit: AuditRecordDraft,
+) -> Result<SpawnPromotionAppend, StorageError> {
+    if authority_domain_id.is_empty()
+        || promotion.promotion_event_id.is_some()
+        || promotion.completion_audit_event_id.is_some()
+    {
+        return Err(StorageError::CorruptRecord(
+            "promotion append requires a non-empty domain and unstamped event ids".to_owned(),
+        ));
+    }
+    let descendant = promotion
+        .authority
+        .as_mut()
+        .and_then(|authority| authority.descendant_grant.as_mut())
+        .ok_or_else(|| StorageError::CorruptRecord("promotion has no descendant grant".to_owned()))?;
+    if descendant.audit_id.is_some() {
+        return Err(StorageError::CorruptRecord(
+            "promotion descendant audit id must be assigned by storage".to_owned(),
+        ));
+    }
+    let grant_id = descendant
+        .grant_id
+        .as_ref()
+        .filter(|grant_id| !grant_id.value.is_empty())
+        .ok_or_else(|| StorageError::CorruptRecord("promotion descendant has no grant id".to_owned()))?
+        .value
+        .clone();
+    let command_id = promotion
+        .accepted_claim
+        .as_ref()
+        .and_then(|accepted| accepted.claim.as_ref())
+        .and_then(|claim| claim.claim_operation_id.as_ref())
+        .filter(|command_id| !command_id.value.is_empty())
+        .ok_or_else(|| StorageError::CorruptRecord("promotion has no claim operation id".to_owned()))?
+        .clone();
+    if audit.kind != AuditEventKind::CommandCompleted
+        || audit.reason_code != "spawn_completion"
+        || audit.command_id.as_ref() != Some(&command_id)
+    {
+        return Err(StorageError::InvalidAuditRecord(
+            "promotion requires CommandCompleted/spawn_completion audit for the exact operation"
+                .to_owned(),
+        ));
+    }
+    audit.source_event_id = None;
+    audit.validate(&AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    })?;
+
+    let tx = db.transaction().map_err(map_write_err)?;
+    let source_lsn = tx
+        .query_row("SELECT COALESCE(MAX(lsn), 0) + 1 FROM events", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map_err(map_write_err)?;
+    if source_lsn <= 0 {
+        return Err(StorageError::CorruptRecord(
+            "promotion source LSN is not positive".to_owned(),
+        ));
+    }
+    let source_event_id = event_id(
+        AuthorityDomainId {
+            value: authority_domain_id.to_owned(),
+        },
+        source_lsn as u64,
+    );
+    let audit_event_id = event_id(
+        AuthorityDomainId {
+            value: authority_domain_id.to_owned(),
+        },
+        source_lsn
+            .checked_add(1)
+            .ok_or_else(|| StorageError::CorruptRecord("promotion audit LSN overflow".to_owned()))?
+            as u64,
+    );
+    promotion.authority_domain_id = Some(AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    });
+    promotion.promotion_event_id = Some(source_event_id.clone());
+    promotion.completion_audit_event_id = Some(audit_event_id.clone());
+    promotion
+        .authority
+        .as_mut()
+        .and_then(|authority| authority.descendant_grant.as_mut())
+        .expect("descendant validated above")
+        .audit_id = Some(audit_event_id.clone());
+    crate::session::validate_spawn_promotion_envelope(&promotion, &source_event_id)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+
+    let existing_identity = tx
+        .query_row(
+            "SELECT source_lsn FROM grant_identities WHERE authority_domain_id = ?1 AND grant_id = ?2",
+            rusqlite::params![authority_domain_id, grant_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(map_write_err)?;
+    if let Some(existing_lsn) = existing_identity {
+        return Err(StorageError::GrantIdentityConflict {
+            grant_id,
+            existing_lsn: existing_lsn as u64,
+        });
+    }
+
+    let source = StoredEventPayload {
+        kind: StoredEventKind::SpawnPromotionCommitted as i32,
+        payload: promotion.encode_to_vec(),
+    };
+    let (actual_source_lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
+    if actual_source_lsn != source_lsn {
+        return Err(StorageError::CorruptRecord(format!(
+            "SQLite assigned promotion LSN {actual_source_lsn}, expected {source_lsn}"
+        )));
+    }
+    tx.execute(
+        "INSERT INTO grant_identities (authority_domain_id, grant_id, source_lsn) VALUES (?1, ?2, ?3)",
+        rusqlite::params![authority_domain_id, grant_id, source_lsn],
+    )
+    .map_err(map_write_err)?;
+    audit.source_event_id = Some(source_event_id.clone());
+    let actual_audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
+    if actual_audit_event_id != audit_event_id {
+        return Err(StorageError::CorruptRecord(
+            "promotion audit did not receive the stamped immediate-successor id".to_owned(),
+        ));
+    }
+    tx.commit().map_err(map_write_err)?;
+    Ok(SpawnPromotionAppend {
+        source_event_id,
+        audit_event_id,
+        promotion,
+    })
+}
+
 fn do_append_dedup_audited(
     db: &mut Connection,
     authority_domain_id: &str,
@@ -1737,12 +1917,27 @@ impl CoreGenerationStore for RusqliteStorage {
     }
 }
 
+fn reject_generic_unaudited_special(payload: &StoredEventPayload) -> Result<(), StorageError> {
+    if matches!(
+        StoredEventKind::try_from(payload.kind).ok(),
+        Some(
+            StoredEventKind::SpawnPromotionCommitted
+                | StoredEventKind::QuarantinedRuntimeEvidence
+        )
+    ) {
+        Err(StorageError::UnsupportedOperation)
+    } else {
+        Ok(())
+    }
+}
+
 impl Storage for RusqliteStorage {
     async fn append(
         &self,
         authority_domain_id: &AuthorityDomainId,
         payload: StoredEventPayload,
     ) -> Result<EventId, StorageError> {
+        reject_generic_unaudited_special(&payload)?;
         let (reply_tx, reply_rx) = oneshot::channel();
         self.writer_tx
             .send(WriterCommand::Append {
@@ -1775,6 +1970,7 @@ impl Storage for RusqliteStorage {
         payload: StoredEventPayload,
         logical_payload: Vec<u8>,
     ) -> Result<DedupOutcome, StorageError> {
+        reject_generic_unaudited_special(&payload)?;
         let (reply_tx, reply_rx) = oneshot::channel();
         self.writer_tx
             .send(WriterCommand::AppendDedup {
@@ -1956,6 +2152,27 @@ impl Storage for RusqliteStorage {
             .send(WriterCommand::AppendBatchAudited {
                 authority_domain_id: authority_domain_id.value.clone(),
                 sources,
+                audit,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_spawn_promotion_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        promotion: SpawnPromotionCommitted,
+        audit: AuditRecordDraft,
+    ) -> Result<SpawnPromotionAppend, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendSpawnPromotionAudited {
+                authority_domain_id: authority_domain_id.value.clone(),
+                promotion: Box::new(promotion),
                 audit,
                 reply: reply_tx,
             })

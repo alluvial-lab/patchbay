@@ -22,8 +22,8 @@
 
 use patchbay_contracts::patchbay::{
     ActorId, AdapterDiagnosticDetail, AuditEventKind, AuditPage, AuthorityDomainId, CommandId,
-    EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn, StoredEventPayload,
-    TargetScope,
+    EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn, SpawnPromotionCommitted,
+    StoredEventPayload, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -290,6 +290,15 @@ pub struct AuditedBatchAppend {
 pub struct AuditedDecisionAppend {
     pub source_event_id: EventId,
     pub audit_event_ids: Vec<EventId>,
+}
+
+/// Complete result of the dedicated atomic promotion append. The returned
+/// message is the exact stamped source bytes committed by storage.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpawnPromotionAppend {
+    pub source_event_id: EventId,
+    pub audit_event_id: EventId,
+    pub promotion: SpawnPromotionCommitted,
 }
 
 /// Errors at the storage boundary.
@@ -608,6 +617,20 @@ pub trait Storage: Send + Sync {
         _logical_payload: Vec<u8>,
     ) -> impl std::future::Future<Output = Result<AuditedDedupOutcome, StorageError>> + Send {
         async move { self.append_dedup_audited(authority_domain_id, key, target, source, audit).await }
+    }
+
+    /// Atomically assign and stamp the promotion source id, its immediate
+    /// completion-audit id, and the nested descendant Grant audit link, then
+    /// commit source + audit in one backend transaction. Generic append paths
+    /// must not be used for `SpawnPromotionCommitted` because they cannot stamp
+    /// the self-contained replay envelope before durability.
+    fn append_spawn_promotion_audited(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _promotion: SpawnPromotionCommitted,
+        _audit: AuditRecordDraft,
+    ) -> impl std::future::Future<Output = Result<SpawnPromotionAppend, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
     }
 
     /// Atomically append one decision source and all of its typed audit

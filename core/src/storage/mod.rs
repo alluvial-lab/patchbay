@@ -17,8 +17,8 @@ pub use audited::{audit_draft_for_source, AuditedStorage};
 pub use port::{
     event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedBatchAppend,
     AuditedDecisionAppend, AuditedDedupOutcome, CoreGenerationStore, DedupOutcome,
-    GrantAppendOutcome, GrantIdentityKey, RecordedEvent, Storage, StorageError, StoredSnapshot,
-    TargetKey,
+    GrantAppendOutcome, GrantIdentityKey, RecordedEvent, SpawnPromotionAppend, Storage,
+    StorageError, StoredSnapshot, TargetKey,
 };
 pub use prefix::{
     validate_next_replay_event, ReplayIntegrityError, ValidatedReplayEvent,

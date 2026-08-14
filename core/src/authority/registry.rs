@@ -9,14 +9,14 @@ use std::collections::{HashMap, HashSet};
 use patchbay_contracts::patchbay::{
     ActorId, AuditRecord, AuthorityDomainId, CommandTransition, DescendantGrant, EventId,
     FailureCode, Grant, GrantId, GrantRevocationPolicy, Observation, ObservationKind,
-    OperationKind, OperationState, Revocation, StoredEventKind, TargetScope, TargetScopeKind,
+    OperationKind, OperationState, Revocation, SpawnPromotionCommitted, StoredEventKind,
+    TargetScope, TargetScopeKind,
 };
 use prost::Message;
 
 use crate::{
     acceptance::exact_command_correlation,
-    contract_validation::validate_continuation_authority_provenance,
-    resource::ResourceIdentity,
+    contract_validation::validate_continuation_authority_provenance, resource::ResourceIdentity,
     storage::RecordedEvent,
 };
 
@@ -68,12 +68,15 @@ impl AuthorityRegistry {
             StoredEventKind::Observation => self.observe_completion_observation(event),
             StoredEventKind::CommandTransition => self.observe_completion_transition(event),
             StoredEventKind::AuditRecord => self.observe_completion_audit(event),
+            StoredEventKind::SpawnPromotionCommitted => self.observe_spawn_promotion(event),
             StoredEventKind::Operation
             | StoredEventKind::Elicitation
             | StoredEventKind::SessionState
             | StoredEventKind::ResourceState
             | StoredEventKind::SpawnClaim
             | StoredEventKind::SpawnExecutionEvidence
+            | StoredEventKind::SpawnSuccessorEvidenceStaged
+            | StoredEventKind::QuarantinedRuntimeEvidence
             | StoredEventKind::OperatorRecord
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::OperatorSessionRevocation
@@ -268,8 +271,140 @@ impl AuthorityRegistry {
             )
         })?;
         validate_descendant_audit_link(&grant, audit_event, source_event)?;
-        let record = descendant_grant_record(grant, event_domain, event_lsn)?;
+        let record = descendant_grant_record(grant, event_domain, event_lsn, false)?;
         self.insert_grant(record, event_lsn)
+    }
+
+    fn observe_spawn_promotion(&mut self, event: &RecordedEvent) -> Result<(), AuthorityError> {
+        let (event_domain, event_lsn) = event_identity(event)?;
+        let promotion =
+            SpawnPromotionCommitted::decode(event.payload.payload.as_slice()).map_err(|error| {
+                AuthorityError::CorruptRecord(format!(
+                    "cannot decode spawn promotion at LSN {event_lsn}: {error}"
+                ))
+            })?;
+        crate::session::validate_spawn_promotion_envelope(&promotion, &event.event_id)
+            .map_err(|error| AuthorityError::CorruptLog(error.to_string()))?;
+        let accepted = promotion
+            .accepted_claim
+            .as_ref()
+            .expect("promotion validated");
+        let accepted_operation = accepted
+            .accepted_operation
+            .as_ref()
+            .expect("promotion validated");
+        let operation = accepted_operation.operation.as_ref().ok_or_else(|| {
+            AuthorityError::CorruptRecord("promotion accepted decision has no operation".to_owned())
+        })?;
+        let committed_at = promotion
+            .committed_at
+            .as_ref()
+            .expect("promotion validated");
+        let spawning_grant_id = accepted_operation
+            .authorizing_grant_id
+            .as_ref()
+            .expect("promotion validated");
+        let spawning_grant = self.grants.get(spawning_grant_id).ok_or_else(|| {
+            AuthorityError::InvalidGrant(format!(
+                "spawn promotion at LSN {event_lsn} references unknown spawning grant"
+            ))
+        })?;
+        if spawning_grant.authority_domain_id != *event_domain
+            || spawning_grant.subject_actor_id
+                != operation
+                    .sender
+                    .as_ref()
+                    .and_then(|sender| sender.actor_id.clone())
+                    .ok_or_else(|| {
+                        AuthorityError::InvalidGrant(
+                            "promotion operation has no sender actor".to_owned(),
+                        )
+                    })?
+            || spawning_grant.subject_endpoint_id
+                != operation
+                    .sender
+                    .as_ref()
+                    .and_then(|sender| sender.endpoint_id.clone())
+        {
+            return Err(AuthorityError::InvalidGrant(format!(
+                "spawn promotion at LSN {event_lsn} spawning grant is not live for the accepted issuer"
+            )));
+        }
+        if let Some(continuation) = accepted.compound_authority.as_ref() {
+            let replacement_id = continuation
+                .replacement_grant_id
+                .as_ref()
+                .expect("promotion validated continuation");
+            let replacement = self.grants.get(replacement_id).ok_or_else(|| {
+                AuthorityError::InvalidGrant(format!(
+                    "spawn promotion at LSN {event_lsn} references unknown replacement grant"
+                ))
+            })?;
+            if !replacement.is_live_at(committed_at)
+                || replacement.authority_domain_id != *event_domain
+                || replacement.subject_actor_id != spawning_grant.subject_actor_id
+                || replacement.subject_endpoint_id != spawning_grant.subject_endpoint_id
+                || !replacement
+                    .allowed_operation_kinds
+                    .contains(&OperationKind::SessionManagement)
+            {
+                return Err(AuthorityError::InvalidGrant(format!(
+                    "spawn promotion at LSN {event_lsn} exact-prior replacement authority is not live"
+                )));
+            }
+            let prior = continuation
+                .exact_prior
+                .as_ref()
+                .expect("promotion validated continuation");
+            let external = prior
+                .external_runtime
+                .as_ref()
+                .expect("promotion validated continuation");
+            let scope = &replacement.target_scope;
+            if TargetScopeKind::try_from(scope.kind).ok() != Some(TargetScopeKind::RuntimeSession)
+                || scope.adapter_id != external.adapter_id
+                || scope.deployment_scope != external.deployment_scope
+                || scope.runtime_session_id != external.runtime_session_id
+                || scope.session_generation != external.generation
+            {
+                return Err(AuthorityError::InvalidGrant(format!(
+                    "spawn promotion at LSN {event_lsn} replacement grant is not exact-prior scoped"
+                )));
+            }
+        }
+        let descendant = promotion
+            .authority
+            .as_ref()
+            .and_then(|authority| authority.descendant_grant.clone())
+            .expect("promotion validated descendant");
+        let promoted = promotion
+            .promoted_runtime
+            .as_ref()
+            .expect("promotion validated");
+        let external = promoted
+            .external_runtime
+            .as_ref()
+            .expect("promotion validated");
+        let target = descendant.target_scope.as_ref().ok_or_else(|| {
+            AuthorityError::InvalidGrant("promotion descendant has no target".to_owned())
+        })?;
+        if TargetScopeKind::try_from(target.kind).ok() != Some(TargetScopeKind::RuntimeSession)
+            || target.adapter_id != external.adapter_id
+            || target.deployment_scope != external.deployment_scope
+            || target.runtime_session_id != external.runtime_session_id
+            || target.session_generation != external.generation
+        {
+            return Err(AuthorityError::InvalidGrant(format!(
+                "spawn promotion at LSN {event_lsn} descendant does not target promoted runtime"
+            )));
+        }
+        let record = descendant_grant_record(descendant, event_domain, event_lsn, true)?;
+        self.insert_grant(record, event_lsn)?;
+        insert_recorded_event(
+            &mut self.completion_sources,
+            event,
+            "promotion completion source",
+        )
     }
 
     fn observe_revocation(&mut self, event: &RecordedEvent) -> Result<(), AuthorityError> {
@@ -432,6 +567,7 @@ fn descendant_grant_record(
     grant: DescendantGrant,
     event_domain: &AuthorityDomainId,
     event_lsn: u64,
+    embedded_in_promotion: bool,
 ) -> Result<GrantRecord, AuthorityError> {
     let (authority_domain_id, grant_id) = authority_identity(
         grant.authority_domain_id.as_ref(),
@@ -503,10 +639,14 @@ fn descendant_grant_record(
         .audit_id
         .filter(|id| {
             id.authority_domain_id.as_ref() == Some(&authority_domain_id)
-                && id
-                    .lsn
-                    .as_ref()
-                    .is_some_and(|lsn| lsn.value > 0 && lsn.value < event_lsn)
+                && id.lsn.as_ref().is_some_and(|lsn| {
+                    lsn.value > 0
+                        && if embedded_in_promotion {
+                            lsn.value == event_lsn.saturating_add(1)
+                        } else {
+                            lsn.value < event_lsn
+                        }
+                })
         })
         .ok_or_else(|| {
             AuthorityError::InvalidGrant(format!(
@@ -794,6 +934,27 @@ fn validate_completion_source_matches_audit(
             {
                 return Err(AuthorityError::CorruptLog(format!(
                     "spawn-completion audit at LSN {audit_lsn} references a non-matching transition"
+                )));
+            }
+        }
+        Some(StoredEventKind::SpawnPromotionCommitted) => {
+            let promotion = SpawnPromotionCommitted::decode(source.payload.payload.as_slice())
+                .map_err(|error| {
+                    AuthorityError::CorruptRecord(format!(
+                        "cannot decode promotion completion source at LSN {source_lsn}: {error}"
+                    ))
+                })?;
+            if promotion.promotion_event_id.as_ref() != Some(&source.event_id)
+                || promotion.completion_audit_event_id.as_ref() != audit.audit_event_id.as_ref()
+                || promotion
+                    .accepted_claim
+                    .as_ref()
+                    .and_then(|accepted| accepted.claim.as_ref())
+                    .and_then(|claim| claim.claim_operation_id.as_ref())
+                    != Some(command_id)
+            {
+                return Err(AuthorityError::CorruptLog(format!(
+                    "spawn-completion audit at LSN {audit_lsn} does not match its promotion source"
                 )));
             }
         }

@@ -194,6 +194,9 @@ impl SpawnDescendantTail {
             StoredEventKind::ResourceState
             | StoredEventKind::SpawnClaim
             | StoredEventKind::SpawnExecutionEvidence
+            | StoredEventKind::SpawnSuccessorEvidenceStaged
+            | StoredEventKind::QuarantinedRuntimeEvidence
+            | StoredEventKind::SpawnPromotionCommitted
             | StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::OperatorRecord

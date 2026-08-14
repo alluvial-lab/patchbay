@@ -214,6 +214,14 @@ enum StoredEventKind {
   // Exact claim-correlated spawn execution/crash evidence
   // (adapter_control.proto). This is evidence, never promotion authority.
   STORED_EVENT_KIND_SPAWN_EXECUTION_EVIDENCE = 17;
+  // Exact claimed-successor report staged behind the generation fence
+  // (sessions.proto). It reserves identity but does not publish a live session.
+  STORED_EVENT_KIND_SPAWN_SUCCESSOR_EVIDENCE_STAGED = 18;
+  // Diagnostic-only outer envelope for stale/mismatched runtime evidence
+  // (observations.proto). Projections must never dispatch its nested candidate.
+  STORED_EVENT_KIND_QUARANTINED_RUNTIME_EVIDENCE = 19;
+  // One authority-bearing spawn promotion replay decision (sessions.proto).
+  STORED_EVENT_KIND_SPAWN_PROMOTION_COMMITTED = 20;
 }
 
 // A durably-recorded state-transition event in the authority-domain log.

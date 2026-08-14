@@ -234,6 +234,9 @@ impl DiagnosticsProjection {
             | StoredEventKind::ResourceState
             | StoredEventKind::SpawnClaim
             | StoredEventKind::SpawnExecutionEvidence
+            | StoredEventKind::SpawnSuccessorEvidenceStaged
+            | StoredEventKind::QuarantinedRuntimeEvidence
+            | StoredEventKind::SpawnPromotionCommitted
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
             | StoredEventKind::OperatorRecord

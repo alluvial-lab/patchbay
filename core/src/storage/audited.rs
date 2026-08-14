@@ -10,14 +10,14 @@
 use patchbay_contracts::patchbay::{
     AcceptedOperation, AuditEventKind, AuthorityDomainId, CommandTransition, FailureCode,
     Observation, ObservationKind, OperationKind, OperatorRecord, Revocation,
-    SecurityLockdownEvent, StoredEventKind, StoredEventPayload,
+    SecurityLockdownEvent, SpawnPromotionCommitted, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
 use super::{
     AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDecisionAppend, AuditedDedupOutcome,
-    CoreGenerationStore, DedupOutcome, GrantAppendOutcome, GrantIdentityKey, RecordedEvent, Storage,
-    StorageError, StoredSnapshot, TargetKey,
+    CoreGenerationStore, DedupOutcome, GrantAppendOutcome, GrantIdentityKey, RecordedEvent,
+    SpawnPromotionAppend, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 use crate::time::{Clock, SystemClock};
 
@@ -240,6 +240,9 @@ pub fn audit_draft_for_source(
         | StoredEventKind::ResourceState
         | StoredEventKind::SpawnClaim
         | StoredEventKind::SpawnExecutionEvidence
+        | StoredEventKind::SpawnSuccessorEvidenceStaged
+        | StoredEventKind::QuarantinedRuntimeEvidence
+        | StoredEventKind::SpawnPromotionCommitted
         | StoredEventKind::Elicitation => {
             return Err(StorageError::UnsupportedOperation);
         }
@@ -260,7 +263,12 @@ fn operation_kind_reason(kind: i32) -> String {
 fn reject_generic_grant_creation(payload: &StoredEventPayload) -> Result<(), StorageError> {
     let kind =
         StoredEventKind::try_from(payload.kind).map_err(|_| StorageError::InvalidEventKind)?;
-    if matches!(kind, StoredEventKind::Grant | StoredEventKind::DescendantGrant) {
+    if matches!(
+        kind,
+        StoredEventKind::Grant
+            | StoredEventKind::DescendantGrant
+            | StoredEventKind::SpawnPromotionCommitted
+    ) {
         Err(StorageError::UnsupportedOperation)
     } else {
         Ok(())
@@ -296,7 +304,12 @@ where
         // different: it is already a domain-owned lifecycle mutation and must
         // never bypass the paired writer boundary.
         let kind = StoredEventKind::try_from(payload.kind).map_err(|_| StorageError::InvalidEventKind)?;
-        if matches!(kind, StoredEventKind::Grant | StoredEventKind::DescendantGrant) {
+        if matches!(
+            kind,
+            StoredEventKind::Grant
+                | StoredEventKind::DescendantGrant
+                | StoredEventKind::SpawnPromotionCommitted
+        ) {
             return Err(StorageError::UnsupportedOperation);
         }
         if kind == StoredEventKind::SessionState {
@@ -437,6 +450,17 @@ where
             .append_audited(authority_domain_id, source, audit)
             .await
             .map(|result| result.source_event_id)
+    }
+
+    async fn append_spawn_promotion_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        promotion: SpawnPromotionCommitted,
+        audit: AuditRecordDraft,
+    ) -> Result<SpawnPromotionAppend, StorageError> {
+        self.inner
+            .append_spawn_promotion_audited(authority_domain_id, promotion, audit)
+            .await
     }
 
     async fn append_decision_audited_many(
