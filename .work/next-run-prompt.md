@@ -42,11 +42,8 @@ NEXT → runtime-evidence-promotion-contract (Leaf 6: SpawnPromotionCommitted + 
        (manifest-profile + reload + lifecycle + the Pi feature itself BLOCKED on capability-manifest-durability — see below)
 ```
 
-## ⚠️ Pi/durability blocker (operator decision needed BEFORE the Pi half can finish)
-The **Pi feature itself + 3 of its 6 children** (`manifest-profile`, `resource-reload-rehydration`, `lifecycle-conformance`) hard-`depends_on` `capability-manifest-durability-and-reconciliation-depth` (at `stage: drafting`, off-limits per original scope). The Pi manifest consumes its generic-assurance fields. So "both features done, all 22 children" is **not achievable under 'don't touch capability-manifest-durability.'** Options the operator must pick:
-- **(A)** Lift the off-limits flag → design+implement `capability-manifest-durability` first (small, well-scoped: extends v0.2.0 manifest with declared durability dims + reconciliation-strength; default uncertain→false).
-- **(B)** Deliver the spawn feature `done` + the 3 unblocked Pi children (`control-session-integrity`, `rpc-process-supervisor`, `cursor-replay-resync`); the Pi feature + 3 manifest-gated children land `blocked` pending the durability sibling.
-3 unblocked Pi children can be done either way. Raise this if the operator hasn't answered by the time you reach the Pi manifest gate (~wave 3 of the Pi side).
+## Pi/durability — RESOLVED: operator chose (A), capability-manifest-durability is IN SCOPE
+`capability-manifest-durability-and-reconciliation-depth` (at `stage: drafting`, `parent: null`) is now **in scope** — the operator lifted the original off-limits flag (session 2026-08-13). It is a hard `depends_on` for the Pi feature + 3 Pi children (`manifest-profile`, `resource-reload-rehydration`, `lifecycle-conformance`). Plan: when approaching the Pi manifest gate, **run `feature-design` on it** (design-bearing: extends the shipped v0.2.0 capability manifest with declared durability dims — dedup/continuation-proof/cursor/generation-fence — + reconciliation-strength, default uncertain→false), decompose into children, implement, review. It does NOT block any spawn-side work, so the spawn contract chain + operation waves proceed first.
 
 ## HOW — conventions (non-negotiable, learned the hard way)
 - **Autopilot runs TOP-LEVEL (you). Do NOT delegate autopilot itself.** pi-subagents' recursion guard strips spawn tools from children → a delegated orchestrator's worker/review spawns silently degrade to inline. Spawn workers/reviewers top-level (they run cleanly).
