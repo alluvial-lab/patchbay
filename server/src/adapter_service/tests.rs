@@ -1810,6 +1810,38 @@ async fn managed_spawn_report_stages_exclusively_and_never_registers_current_ses
         )
         .await
         .unwrap();
+    let omitted_origin = session_report(SessionConnectivityState::Live);
+    let omitted = service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    omitted_origin,
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("active claimed candidate without correlation is quarantined")
+        .into_inner();
+    let omitted_event = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|event| event.event_id == omitted.event_id.clone().unwrap())
+        .unwrap();
+    assert_eq!(
+        omitted_event.payload.kind,
+        StoredEventKind::QuarantinedRuntimeEvidence as i32
+    );
+    assert!(service
+        .conformance_session_registry()
+        .await
+        .sessions()
+        .next()
+        .is_none());
+
     let mut report = session_report(SessionConnectivityState::Live);
     report.spawn_origin = Some(TypedCorrelation {
         r#ref: Some(typed_correlation::Ref::CommandId(
@@ -2066,8 +2098,9 @@ async fn authenticated_session_ingress_fences_delayed_and_old_generation_cursors
         .as_mut()
         .unwrap()
         .adapter_generation = Some(Generation { value: 0 });
+    let mut quarantine_ids = Vec::new();
     for stale in [delayed, old_generation] {
-        let status = service
+        let result = service
             .ingest_observation(authenticated_with_attachment_token(
                 ObservationRequest {
                     authority_domain_id: Some(domain.clone()),
@@ -2076,8 +2109,9 @@ async fn authenticated_session_ingress_fences_delayed_and_old_generation_cursors
                 &attachment_token,
             ))
             .await
-            .expect_err("stale source cursor must reject");
-        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+            .expect("authenticated stale report is retained only as outer quarantine")
+            .into_inner();
+        quarantine_ids.push(result.event_id.unwrap());
     }
 
     let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
@@ -2089,19 +2123,46 @@ async fn authenticated_session_ingress_fences_delayed_and_old_generation_cursors
         session_events_before,
         "stale reports cannot append session-state mutations"
     );
+    let quarantines = events
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::QuarantinedRuntimeEvidence as i32)
+        .collect::<Vec<_>>();
+    assert_eq!(quarantines.len(), 2);
+    assert!(quarantines
+        .iter()
+        .all(|event| quarantine_ids.contains(&event.event_id)));
+    assert!(quarantines.iter().all(|event| {
+        patchbay_contracts::patchbay::QuarantinedRuntimeEvidence::decode(
+            event.payload.payload.as_slice(),
+        )
+        .ok()
+        .is_some_and(|quarantine| {
+            matches!(
+                quarantine.candidate,
+                Some(patchbay_contracts::patchbay::quarantined_runtime_evidence::Candidate::SessionReport(_))
+            )
+        })
+    }));
     let stale_audits = events
         .iter()
         .filter(|event| event.payload.kind == StoredEventKind::AuditRecord as i32)
         .filter_map(|event| {
             patchbay_contracts::patchbay::AuditRecord::decode(event.payload.payload.as_slice()).ok()
         })
-        .filter(|audit| audit.reason_code == "session_report_source_cursor_stale")
+        .filter(|audit| audit.reason_code.starts_with("runtime_evidence_stale_"))
         .collect::<Vec<_>>();
     assert_eq!(stale_audits.len(), 2);
     assert!(stale_audits.iter().all(|audit| {
         audit.kind == AuditEventKind::StaleEventIgnored as i32
             && audit.failure_code == FailureCode::StaleEvent as i32
     }));
+    let hot = service.conformance_session_registry().await;
+    assert_eq!(
+        hot.get_live_session(&adapter_id(), "machine-a", &runtime_session_id())
+            .unwrap()
+            .model,
+        "provider/model-b"
+    );
 
     let replayed = session::rebuild_from_log(&storage, &domain)
         .await

@@ -3,9 +3,9 @@ use patchbay_contracts::patchbay::{
     typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
     AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AuditEventKind,
     AuthorityDomainId, CommandId, CommandTransition, ContinuationAuthorityProvenance,
-    DescendantGrant, DescendantGrantProvenance, Elicitation, ElicitationState, EndpointId, EventId,
-    ExternalRuntimeRef, FailureCode, Generation, Grant, GrantId, GrantProvenance,
-    GrantRevocationPolicy, IdempotencyKey, LogicalTargetCreated, LogicalTargetId,
+    DescendantGrant, DescendantGrantProvenance, Elicitation, ElicitationId, ElicitationState,
+    EndpointId, EventId, ExternalRuntimeRef, FailureCode, Generation, Grant, GrantId,
+    GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LogicalTargetCreated, LogicalTargetId,
     LogicalTargetInitialCurrentAssigned, Lsn, Observation, ObservationKind, Operation,
     OperationKind, OperationState, PayloadContentType, PayloadEnvelope, QuarantinedRuntimeEvidence,
     Revocation, RuntimeDeliveryAcknowledgementEvidence, RuntimeElicitationMutationEvidence,
@@ -27,8 +27,8 @@ use patchbay_core::{
     resource::ResourceRegistry,
     session::{
         classify_session_report, encode_quarantined_runtime_evidence, encode_spawn_claim_event,
-        encode_staged_successor, fold_spawn_promotion_ordered, LogicalTargetRegistry,
-        SessionRegistry, SpawnClaimQuery, SpawnClaimRegistry,
+        encode_staged_successor, fold_spawn_promotion_ordered, SessionRegistry, SpawnClaimQuery,
+        SpawnClaimRegistry,
     },
     storage::{
         AuditRecordDraft, AuditedStorage, RecordedEvent, RusqliteStorage, Storage, StorageError,
@@ -782,8 +782,9 @@ fn classifier_admits_only_the_exact_active_claimed_successor() {
     }
     let mut adapters = AdapterRegistry::new();
     adapters.observe(&prefix[0]).unwrap();
-    let mut targets = LogicalTargetRegistry::new(domain()).unwrap();
-    targets
+    let mut sessions = SessionRegistry::new(domain()).unwrap();
+    sessions
+        .logical_targets_mut()
         .create(
             LogicalTargetId {
                 value: "logical-a".to_owned(),
@@ -801,24 +802,28 @@ fn classifier_admits_only_the_exact_active_claimed_successor() {
         &source_attachment(),
         &adapters,
         &claims,
-        &targets,
+        &sessions,
     );
     assert!(matches!(
         exact.disposition,
         Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_))
     ));
-    let wrong_operation = classify_session_report(
-        &domain(),
-        &report("spawn-b"),
-        &source_attachment(),
-        &adapters,
-        &claims,
-        &targets,
-    );
-    assert!(!matches!(
-        wrong_operation.disposition,
-        Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_))
-    ));
+    let mut omitted_origin = report("spawn-a");
+    omitted_origin.spawn_origin = None;
+    for bypass in [report("spawn-b"), omitted_origin] {
+        let rejected = classify_session_report(
+            &domain(),
+            &bypass,
+            &source_attachment(),
+            &adapters,
+            &claims,
+            &sessions,
+        );
+        assert!(matches!(
+            rejected.disposition,
+            Some(runtime_generation_disposition::Disposition::IdentityMismatch(_))
+        ));
+    }
     assert_eq!(
         claims.claim_for_operation(&command()).unwrap().disposition,
         SpawnClaimDisposition::Active
@@ -834,9 +839,10 @@ fn classifier_kills_each_attachment_claim_prior_deployment_and_generation_mutati
     }
     let mut adapters = AdapterRegistry::new();
     adapters.observe(&prefix[0]).unwrap();
-    let base_targets = {
-        let mut targets = LogicalTargetRegistry::new(domain()).unwrap();
-        targets
+    let base_sessions = {
+        let mut sessions = SessionRegistry::new(domain()).unwrap();
+        sessions
+            .logical_targets_mut()
             .create(
                 LogicalTargetId {
                     value: "logical-a".to_owned(),
@@ -847,13 +853,13 @@ fn classifier_kills_each_attachment_claim_prior_deployment_and_generation_mutati
                 "machine-a".to_owned(),
             )
             .unwrap();
-        targets
+        sessions
     };
     let is_claimed = |report: &SessionReport,
                       source: &RuntimeEvidenceSourceAttachment,
-                      targets: &LogicalTargetRegistry| {
+                      sessions: &SessionRegistry| {
         matches!(
-            classify_session_report(&domain(), report, source, &adapters, &claims, targets)
+            classify_session_report(&domain(), report, source, &adapters, &claims, sessions)
                 .disposition,
             Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_))
         )
@@ -861,7 +867,7 @@ fn classifier_kills_each_attachment_claim_prior_deployment_and_generation_mutati
     assert!(is_claimed(
         &report("spawn-a"),
         &source_attachment(),
-        &base_targets
+        &base_sessions
     ));
 
     let mut wrong_attachment = source_attachment();
@@ -869,36 +875,37 @@ fn classifier_kills_each_attachment_claim_prior_deployment_and_generation_mutati
     assert!(!is_claimed(
         &report("spawn-a"),
         &wrong_attachment,
-        &base_targets
+        &base_sessions
     ));
     let mut wrong_adapter_generation = source_attachment();
     wrong_adapter_generation.adapter_generation = Some(Generation { value: 2 });
     assert!(!is_claimed(
         &report("spawn-a"),
         &wrong_adapter_generation,
-        &base_targets
+        &base_sessions
     ));
     assert!(!is_claimed(
         &report("spawn-other"),
         &source_attachment(),
-        &base_targets
+        &base_sessions
     ));
     let mut wrong_deployment = report("spawn-a");
     wrong_deployment.deployment_scope = "machine-b".to_owned();
     assert!(!is_claimed(
         &wrong_deployment,
         &source_attachment(),
-        &base_targets
+        &base_sessions
     ));
     let mut wrong_generation = report("spawn-a");
     wrong_generation.session_generation = Some(Generation { value: 2 });
     assert!(!is_claimed(
         &wrong_generation,
         &source_attachment(),
-        &base_targets
+        &base_sessions
     ));
-    let mut wrong_prior = base_targets.clone();
+    let mut wrong_prior = base_sessions.clone();
     wrong_prior
+        .logical_targets_mut()
         .assign_initial_current(
             &LogicalTargetId {
                 value: "logical-a".to_owned(),
@@ -912,9 +919,11 @@ fn classifier_kills_each_attachment_claim_prior_deployment_and_generation_mutati
         &wrong_prior
     ));
 
+    let mut ordinary_current_report = report("spawn-a");
+    ordinary_current_report.spawn_origin = None;
     let current = classify_session_report(
         &domain(),
-        &report("spawn-a"),
+        &ordinary_current_report,
         &source_attachment(),
         &adapters,
         &claims,
@@ -926,7 +935,7 @@ fn classifier_kills_each_attachment_claim_prior_deployment_and_generation_mutati
     ));
     let unauthenticated_current = classify_session_report(
         &domain(),
-        &report("spawn-a"),
+        &ordinary_current_report,
         &wrong_attachment,
         &adapters,
         &claims,
@@ -940,20 +949,21 @@ fn classifier_kills_each_attachment_claim_prior_deployment_and_generation_mutati
 
 #[test]
 fn every_quarantine_family_is_outer_only_across_all_normal_hot_and_replay_folds() {
+    let runtime_scope = TargetScope {
+        kind: TargetScopeKind::RuntimeSession as i32,
+        adapter_id: external(1).adapter_id,
+        deployment_scope: "machine-a".to_owned(),
+        runtime_session_id: external(1).runtime_session_id,
+        session_generation: Some(Generation { value: 1 }),
+        ..TargetScope::default()
+    };
     let nested_observation = Observation {
         authority_domain_id: Some(domain()),
         kind: ObservationKind::Result as i32,
         correlations: vec![TypedCorrelation {
             r#ref: Some(typed_correlation::Ref::CommandId(command())),
         }],
-        target_scope: Some(TargetScope {
-            kind: TargetScopeKind::RuntimeSession as i32,
-            adapter_id: external(1).adapter_id,
-            deployment_scope: "machine-a".to_owned(),
-            runtime_session_id: external(1).runtime_session_id,
-            session_generation: Some(Generation { value: 1 }),
-            ..TargetScope::default()
-        }),
+        target_scope: Some(runtime_scope.clone()),
         failure_code: FailureCode::Unspecified as i32,
         ..Observation::default()
     };
@@ -961,49 +971,154 @@ fn every_quarantine_family_is_outer_only_across_all_normal_hot_and_replay_folds(
         logical_target_id: None,
         external_runtime: Some(external(1)),
     };
+    let mut nested_report = report("spawn-a");
+    nested_report.spawn_origin = None;
+    nested_report.source_cursor.as_mut().unwrap().revision = 2;
+    let nested_elicitation = Elicitation {
+        elicitation_id: Some(ElicitationId {
+            value: "pending-runtime-elicitation".to_owned(),
+        }),
+        authority_domain_id: Some(domain()),
+        target_context: Some(runtime_scope.clone()),
+        state: ElicitationState::Pending as i32,
+        ..Elicitation::default()
+    };
     let candidates = vec![
-        quarantined_runtime_evidence::Candidate::Observation(nested_observation.clone()),
-        quarantined_runtime_evidence::Candidate::SessionReport(report("spawn-a")),
-        quarantined_runtime_evidence::Candidate::DeliveryAcknowledgement(
-            RuntimeDeliveryAcknowledgementEvidence {
-                command_id: Some(command()),
-                target: Some(runtime_target.clone()),
-                observed_at: Some(Timestamp {
-                    seconds: 10,
-                    nanos: 0,
-                }),
-            },
+        (
+            "observation",
+            quarantined_runtime_evidence::Candidate::Observation(nested_observation.clone()),
         ),
-        quarantined_runtime_evidence::Candidate::TranscriptStatus(
-            RuntimeTranscriptStatusEvidence {
-                observation: Some(nested_observation.clone()),
-            },
+        (
+            "session-report",
+            quarantined_runtime_evidence::Candidate::SessionReport(nested_report),
         ),
-        quarantined_runtime_evidence::Candidate::ElicitationMutation(
-            RuntimeElicitationMutationEvidence {
-                elicitation: Some(Elicitation {
-                    authority_domain_id: Some(domain()),
-                    target_context: nested_observation.target_scope.clone(),
-                    state: ElicitationState::Opened as i32,
-                    ..Elicitation::default()
-                }),
-                from_state: ElicitationState::Opened as i32,
-                to_state: ElicitationState::Stale as i32,
-            },
+        (
+            "delivery-acknowledgement",
+            quarantined_runtime_evidence::Candidate::DeliveryAcknowledgement(
+                RuntimeDeliveryAcknowledgementEvidence {
+                    command_id: Some(command()),
+                    target: Some(runtime_target.clone()),
+                    observed_at: Some(Timestamp {
+                        seconds: 10,
+                        nanos: 0,
+                    }),
+                },
+            ),
+        ),
+        (
+            "transcript-status",
+            quarantined_runtime_evidence::Candidate::TranscriptStatus(
+                RuntimeTranscriptStatusEvidence {
+                    observation: Some(nested_observation.clone()),
+                },
+            ),
+        ),
+        (
+            "elicitation-mutation",
+            quarantined_runtime_evidence::Candidate::ElicitationMutation(
+                RuntimeElicitationMutationEvidence {
+                    elicitation: Some(nested_elicitation.clone()),
+                    from_state: ElicitationState::Pending as i32,
+                    to_state: ElicitationState::Stale as i32,
+                },
+            ),
         ),
     ];
 
-    for candidate in candidates {
+    for (family, candidate) in candidates {
         let mut envelope = quarantined(nested_observation.clone());
         envelope.candidate = Some(candidate);
-        let event = recorded(1, encode_quarantined_runtime_evidence(&envelope).unwrap());
+        let event = recorded(3, encode_quarantined_runtime_evidence(&envelope).unwrap());
+
+        // Every admitted family receives independently useful pre-state. A
+        // recursive-dispatch mutant therefore has a visible effect instead of
+        // being allowed to redispatch into an empty projection.
+        let mut nested_accepted = accepted_operation();
+        nested_accepted.operation.as_mut().unwrap().target_scope = Some(runtime_scope.clone());
+        let accepted_event = recorded(
+            1,
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: nested_accepted.encode_to_vec(),
+            },
+        );
+        let delivered_event = recorded(
+            2,
+            StoredEventPayload {
+                kind: StoredEventKind::CommandTransition as i32,
+                payload: transition(OperationState::Accepted, OperationState::Delivered)
+                    .encode_to_vec(),
+            },
+        );
+        let filler_event = recorded(
+            2,
+            StoredEventPayload {
+                kind: StoredEventKind::AuditRecord as i32,
+                payload: vec![],
+            },
+        );
+
         let mut authority = AuthorityRegistry::new();
+        authority
+            .observe(&recorded(
+                1,
+                StoredEventPayload {
+                    kind: StoredEventKind::Grant as i32,
+                    payload: parent_grant().encode_to_vec(),
+                },
+            ))
+            .unwrap();
         let mut sessions = SessionRegistry::new(domain()).unwrap();
+        sessions
+            .observe(&recorded(
+                1,
+                patchbay_core::session::events::encode(
+                    &patchbay_core::session::events::registered(
+                        domain(),
+                        SessionRegistered {
+                            adapter_id: external(1).adapter_id,
+                            deployment_scope: "machine-a".to_owned(),
+                            runtime_session_id: external(1).runtime_session_id,
+                            session_generation: Some(Generation { value: 1 }),
+                            initial_state: Some(SessionState {
+                                connectivity: SessionConnectivityState::Offline as i32,
+                                activity: SessionActivityState::Unknown as i32,
+                            }),
+                            source_cursor: Some(SessionReportSourceCursor {
+                                adapter_generation: Some(Generation { value: 3 }),
+                                revision: 1,
+                            }),
+                            ..SessionRegistered::default()
+                        },
+                    ),
+                ),
+            ))
+            .unwrap();
         let mut claims = SpawnClaimRegistry::new(domain()).unwrap();
+        claims.observe(&accepted_event).unwrap();
+        claims.observe(&filler_event).unwrap();
         let mut commands = CommandIndex::new();
+        commands.apply(&accepted_event).unwrap();
+        if matches!(family, "observation" | "transcript-status") {
+            commands.apply(&delivered_event).unwrap();
+        }
         let mut elicitations = ElicitationSlotLayer::new();
+        elicitations
+            .observe(&recorded(
+                1,
+                StoredEventPayload {
+                    kind: StoredEventKind::Elicitation as i32,
+                    payload: nested_elicitation.encode_to_vec(),
+                },
+            ))
+            .unwrap();
         let mut diagnostics = DiagnosticsProjection::new(domain()).unwrap();
+        diagnostics.observe(&accepted_event).unwrap();
+        if matches!(family, "observation" | "transcript-status") {
+            diagnostics.observe(&delivered_event).unwrap();
+        }
         let mut adapters = AdapterRegistry::new();
+        adapters.observe(&attachment_event(1)).unwrap();
         let before = (
             authority.clone(),
             sessions.clone(),
@@ -1030,7 +1145,8 @@ fn every_quarantine_family_is_outer_only_across_all_normal_hot_and_replay_folds(
                 diagnostics,
                 adapters
             ),
-            before
+            before,
+            "nested {family} must remain inert across hot fold and replay"
         );
         assert!(claims.claim_for_operation(&command()).is_none());
     }
@@ -1594,6 +1710,99 @@ async fn quarantine_rejects_non_durable_attachment_and_semantic_mismatch_without
 }
 
 #[tokio::test]
+async fn quarantine_rejects_each_forged_classification_context_field() {
+    let base = quarantined(Observation {
+        kind: ObservationKind::Status as i32,
+        ..Observation::default()
+    });
+    let mut mutations = Vec::new();
+
+    let mut fake_owner = base.clone();
+    fake_owner
+        .classification
+        .as_mut()
+        .unwrap()
+        .classified_target
+        .as_mut()
+        .unwrap()
+        .logical_target_id = Some(LogicalTargetId {
+        value: "invented-owner".to_owned(),
+    });
+    mutations.push(("fake logical owner", fake_owner));
+
+    let mut wrong_current = base.clone();
+    wrong_current.classification.as_mut().unwrap().current = Some(RuntimeGenerationRef {
+        logical_target_id: None,
+        external_runtime: Some(external(1)),
+    });
+    mutations.push(("wrong current", wrong_current));
+
+    let mut fake_claim = base.clone();
+    fake_claim.classification.as_mut().unwrap().active_claim = Some(claim());
+    mutations.push(("fake active claim", fake_claim));
+
+    let mut mismatched_claim = base.clone();
+    let mut wrong_claim = claim();
+    wrong_claim.claimed_generation = Some(Generation { value: 2 });
+    mismatched_claim
+        .classification
+        .as_mut()
+        .unwrap()
+        .active_claim = Some(wrong_claim);
+    mutations.push(("mismatched active claim", mismatched_claim));
+
+    let mut wrong_tombstone = base;
+    wrong_tombstone.classification.as_mut().unwrap().tombstone =
+        Some(patchbay_contracts::patchbay::LogicalTargetTombstone {
+            external_runtime_ref: Some(external(1)),
+            superseded_at_lsn: Some(Lsn { value: 99 }),
+        });
+    mutations.push(("wrong tombstone", wrong_tombstone));
+
+    for (name, envelope) in mutations {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        storage
+            .append(&domain(), attachment_event(1).payload)
+            .await
+            .unwrap();
+        let mut audit = AuditRecordDraft::new(
+            Timestamp {
+                seconds: 10,
+                nanos: 0,
+            },
+            AuditEventKind::StaleEventIgnored,
+        );
+        audit.failure_code = Some(FailureCode::StaleEvent);
+        audit.reason_code = "runtime_evidence_unknown_target".to_owned();
+        audit.target_scope = envelope
+            .candidate
+            .as_ref()
+            .and_then(|candidate| match candidate {
+                quarantined_runtime_evidence::Candidate::Observation(observation) => {
+                    observation.target_scope.clone()
+                }
+                _ => None,
+            });
+        assert!(
+            storage
+                .append_quarantined_runtime_evidence_audited(&domain(), envelope, audit)
+                .await
+                .is_err(),
+            "{name} must be rejected against the rebuilt durable context"
+        );
+        assert_eq!(
+            storage
+                .read_after(&domain(), Lsn { value: 0 })
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "{name} rejection must be atomic"
+        );
+    }
+}
+
+#[tokio::test]
 async fn malformed_quarantine_wire_is_rejected_on_every_generic_storage_route() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let malformed = StoredEventPayload {
@@ -1649,6 +1858,115 @@ async fn malformed_quarantine_wire_is_rejected_on_every_generic_storage_route() 
         .await
         .unwrap()
         .is_empty());
+}
+
+#[tokio::test]
+async fn promotion_rejects_result_before_delivered_or_later_running_evidence() {
+    for result_position in ["before-delivery", "before-running"] {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let mut prefix = valid_prefix();
+        prefix.truncate(5);
+        let ordered_tail = if result_position == "before-delivery" {
+            vec![
+                recorded(
+                    6,
+                    StoredEventPayload {
+                        kind: StoredEventKind::Observation as i32,
+                        payload: successful_result().encode_to_vec(),
+                    },
+                ),
+                recorded(
+                    7,
+                    StoredEventPayload {
+                        kind: StoredEventKind::CommandTransition as i32,
+                        payload: transition(OperationState::Accepted, OperationState::Delivered)
+                            .encode_to_vec(),
+                    },
+                ),
+                recorded(
+                    8,
+                    StoredEventPayload {
+                        kind: StoredEventKind::CommandTransition as i32,
+                        payload: transition(OperationState::Delivered, OperationState::Running)
+                            .encode_to_vec(),
+                    },
+                ),
+            ]
+        } else {
+            vec![
+                recorded(
+                    6,
+                    StoredEventPayload {
+                        kind: StoredEventKind::CommandTransition as i32,
+                        payload: transition(OperationState::Accepted, OperationState::Delivered)
+                            .encode_to_vec(),
+                    },
+                ),
+                recorded(
+                    7,
+                    StoredEventPayload {
+                        kind: StoredEventKind::Observation as i32,
+                        payload: successful_result().encode_to_vec(),
+                    },
+                ),
+                recorded(
+                    8,
+                    StoredEventPayload {
+                        kind: StoredEventKind::CommandTransition as i32,
+                        payload: transition(OperationState::Delivered, OperationState::Running)
+                            .encode_to_vec(),
+                    },
+                ),
+            ]
+        };
+        prefix.extend(ordered_tail);
+        prefix.push(recorded(9, encode_staged_successor(&staged())));
+        for event in &prefix {
+            storage
+                .append(&domain(), event.payload.clone())
+                .await
+                .unwrap();
+        }
+
+        let mut promotion = unstamped_promotion();
+        promotion.lifecycle[0].event_id = Some(event_id(if result_position == "before-delivery" {
+            7
+        } else {
+            6
+        }));
+        promotion.lifecycle[1].event_id = Some(event_id(8));
+        promotion.successful_result.as_mut().unwrap().event_id =
+            Some(event_id(if result_position == "before-delivery" {
+                6
+            } else {
+                7
+            }));
+        let mut audit = AuditRecordDraft::new(
+            Timestamp {
+                seconds: 10,
+                nanos: 0,
+            },
+            AuditEventKind::CommandCompleted,
+        );
+        audit.command_id = Some(command());
+        audit.reason_code = "spawn_completion".to_owned();
+        assert!(
+            storage
+                .append_spawn_promotion_audited(&domain(), promotion, audit)
+                .await
+                .is_err(),
+            "{result_position} must not become authority-bearing promotion evidence"
+        );
+        assert_eq!(
+            storage
+                .read_after(&domain(), Lsn { value: 0 })
+                .await
+                .unwrap()
+                .len(),
+            9,
+            "rejected promotion must not append source or audit"
+        );
+    }
 }
 
 #[tokio::test]

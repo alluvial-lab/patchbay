@@ -1716,24 +1716,39 @@ fn do_append_quarantined_runtime_evidence_audited(
     }
     let source_is_current =
         crate::session::source_matches_current_attachment(&domain, source, &adapters);
-    if (reason == RuntimeEvidenceQuarantineReason::StaleAttachment && source_is_current)
-        || (reason != RuntimeEvidenceQuarantineReason::StaleAttachment && !source_is_current)
+    let candidate_producer_is_current = match quarantined
+        .candidate
+        .as_ref()
+        .expect("candidate validated")
+    {
+        patchbay_contracts::patchbay::quarantined_runtime_evidence::Candidate::SessionReport(
+            report,
+        ) => {
+            report
+                .source_cursor
+                .as_ref()
+                .and_then(|cursor| cursor.adapter_generation)
+                == source.adapter_generation
+        }
+        _ => true,
+    };
+    if (reason == RuntimeEvidenceQuarantineReason::StaleAttachment
+        && source_is_current
+        && candidate_producer_is_current)
+        || (reason != RuntimeEvidenceQuarantineReason::StaleAttachment
+            && (!source_is_current || !candidate_producer_is_current))
     {
         return Err(StorageError::CorruptRecord(
-            "quarantine stale/current attachment classification disagrees with the durable prefix"
+            "quarantine stale/current producer classification disagrees with the durable prefix"
                 .to_owned(),
         ));
     }
-    let actual_disposition = match quarantined.candidate.as_ref().expect("candidate validated") {
+    let candidate = quarantined.candidate.as_ref().expect("candidate validated");
+    let actual_disposition = match candidate {
         patchbay_contracts::patchbay::quarantined_runtime_evidence::Candidate::SessionReport(
             report,
         ) => crate::session::classify_session_report(
-            &domain,
-            report,
-            source,
-            &adapters,
-            &claims,
-            sessions.logical_targets(),
+            &domain, report, source, &adapters, &claims, &sessions,
         ),
         _ => crate::session::classify_runtime_target(
             &domain,
@@ -1744,19 +1759,29 @@ fn do_append_quarantined_runtime_evidence_audited(
             &sessions,
         ),
     };
-    let framed_disposition = quarantined
+    let framed_context = quarantined
         .classification
         .as_ref()
-        .and_then(|context| context.disposition.as_ref())
-        .expect("quarantine disposition validated");
-    if &actual_disposition != framed_disposition
+        .expect("quarantine classification validated");
+    let candidate_external = crate::session::quarantined_candidate_target(&quarantined)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let expected_context = crate::session::canonical_runtime_evidence_classification_context(
+        &domain,
+        candidate,
+        &candidate_external,
+        actual_disposition.clone(),
+        &sessions,
+        &claims,
+    );
+    if framed_context != &expected_context
         || matches!(
             actual_disposition.disposition,
             Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_))
         )
     {
         return Err(StorageError::CorruptRecord(
-            "quarantine classification does not match the durable runtime/claim prefix".to_owned(),
+            "quarantine classification context does not exactly match the durable runtime/claim prefix"
+                .to_owned(),
         ));
     }
 

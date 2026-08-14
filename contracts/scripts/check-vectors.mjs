@@ -267,11 +267,11 @@ const INVARIANT_EXPECTATION_CHECKS = Object.freeze({
       && vector.input?.runtime_generation_reset?.accepted_revision === 1
       && vector.input?.runtime_generation_reset?.old_session_generation === 1
       && JSON.stringify(vector.expected_outcome?.primary?.accepted_models) === JSON.stringify(['A', 'B'])
-      && vector.expected_outcome?.primary?.delayed_status === 'FAILED_PRECONDITION'
+      && vector.expected_outcome?.primary?.delayed_status === 'QUARANTINED_RUNTIME_EVIDENCE'
       && vector.expected_outcome?.primary?.session_state_event_count === 2
       && vector.expected_outcome?.primary?.audit_kind === 'AUDIT_EVENT_KIND_STALE_EVENT_IGNORED'
       && vector.expected_outcome?.primary?.audit_failure_code === 'FAILURE_CODE_STALE_EVENT'
-      && vector.expected_outcome?.primary?.audit_reason_code === 'session_report_source_cursor_stale'
+      && vector.expected_outcome?.primary?.audit_reason_code === 'runtime_evidence_stale_source_order'
       && vector.expected_outcome?.primary?.snapshot_model === 'B'
       && vector.expected_outcome?.primary?.snapshot_adapter_generation === 1
       && vector.expected_outcome?.primary?.snapshot_revision === 3
@@ -279,13 +279,13 @@ const INVARIANT_EXPECTATION_CHECKS = Object.freeze({
       && vector.expected_outcome?.adapter_generation_reset?.accepted_model === 'C'
       && vector.expected_outcome?.adapter_generation_reset?.snapshot_adapter_generation === 2
       && vector.expected_outcome?.adapter_generation_reset?.snapshot_revision === 1
-      && vector.expected_outcome?.adapter_generation_reset?.old_producer_status === 'FAILED_PRECONDITION'
+      && vector.expected_outcome?.adapter_generation_reset?.old_producer_status === 'QUARANTINED_RUNTIME_EVIDENCE'
       && vector.expected_outcome?.adapter_generation_reset?.old_producer_mutated === false
       && vector.expected_outcome?.runtime_generation_reset?.accepted_model === 'D'
       && vector.expected_outcome?.runtime_generation_reset?.snapshot_session_generation === 2
       && vector.expected_outcome?.runtime_generation_reset?.snapshot_adapter_generation === 2
       && vector.expected_outcome?.runtime_generation_reset?.snapshot_revision === 1
-      && vector.expected_outcome?.runtime_generation_reset?.old_runtime_status === 'FAILED_PRECONDITION'
+      && vector.expected_outcome?.runtime_generation_reset?.old_runtime_status === 'QUARANTINED_RUNTIME_EVIDENCE'
       && vector.expected_outcome?.runtime_generation_reset?.old_runtime_mutated === false,
     'A/r1 then B/r3 must fence delayed A/r2 with stale audit and B/r3 snapshot; only newer adapter/runtime generations reset revision',
   ),

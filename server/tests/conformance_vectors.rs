@@ -1887,26 +1887,19 @@ async fn run_session_report_source_trace(
             .map_err(MutationExecutionError::harness)?,
         )
         .await;
-    match stale {
-        Err(status) if status.code() == Code::FailedPrecondition => {}
-        Err(status) => {
-            return Err(MutationExecutionError::oracle(format!(
-                "delayed report returned {:?}, expected FAILED_PRECONDITION",
-                status.code()
-            )));
-        }
-        Ok(_) => {
-            return Err(MutationExecutionError::oracle(
-                "delayed non-increasing report was accepted",
-            ));
-        }
-    }
+    let stale_event_id = stale
+        .map_err(|error| MutationExecutionError::oracle(format!(
+            "delayed report did not reach outer quarantine: {error}"
+        )))?
+        .into_inner()
+        .event_id
+        .ok_or_else(|| MutationExecutionError::oracle("stale report returned no event id"))?;
     if string(&vector.expected_outcome, "/primary/delayed_status")
         .map_err(MutationExecutionError::harness)?
-        != "FAILED_PRECONDITION"
+        != "QUARANTINED_RUNTIME_EVIDENCE"
     {
         return Err(MutationExecutionError::harness(
-            "vector expected stale status is not FAILED_PRECONDITION",
+            "vector expected stale outcome is not outer quarantine",
         ));
     }
 
@@ -1926,11 +1919,19 @@ async fn run_session_report_source_trace(
             "delayed report changed the session-state event count",
         ));
     }
+    if after_stale.iter().all(|event| {
+        event.event_id != stale_event_id
+            || event.payload.kind != StoredEventKind::QuarantinedRuntimeEvidence as i32
+    }) {
+        return Err(MutationExecutionError::oracle(
+            "delayed report was not stored as the returned outer quarantine event",
+        ));
+    }
     let stale_audit = after_stale
         .iter()
         .filter(|event| event.payload.kind == StoredEventKind::AuditRecord as i32)
         .filter_map(|event| AuditRecord::decode(event.payload.payload.as_slice()).ok())
-        .find(|audit| audit.reason_code == "session_report_source_cursor_stale")
+        .find(|audit| audit.reason_code == "runtime_evidence_stale_source_order")
         .ok_or_else(|| MutationExecutionError::oracle("stale source audit was not durable"))?;
     if stale_audit.kind != AuditEventKind::StaleEventIgnored as i32
         || stale_audit.failure_code != FailureCode::StaleEvent as i32
@@ -2042,16 +2043,22 @@ async fn run_session_report_source_trace(
             .map_err(MutationExecutionError::harness)?,
         )
         .await;
-    if !matches!(old_producer, Err(ref status) if status.code() == Code::FailedPrecondition)
-        || string(
-            &vector.expected_outcome,
-            "/adapter_generation_reset/old_producer_status",
-        )
-        .map_err(MutationExecutionError::harness)?
-            != "FAILED_PRECONDITION"
+    let old_producer_event_id = old_producer
+        .map_err(|error| MutationExecutionError::oracle(format!(
+            "old adapter producer did not reach outer quarantine: {error}"
+        )))?
+        .into_inner()
+        .event_id
+        .ok_or_else(|| MutationExecutionError::oracle("old producer returned no event id"))?;
+    if string(
+        &vector.expected_outcome,
+        "/adapter_generation_reset/old_producer_status",
+    )
+    .map_err(MutationExecutionError::harness)?
+        != "QUARANTINED_RUNTIME_EVIDENCE"
     {
-        return Err(MutationExecutionError::oracle(
-            "old adapter producer was not fenced",
+        return Err(MutationExecutionError::harness(
+            "vector expected old producer outcome is not outer quarantine",
         ));
     }
     let after_old_producer = storage
@@ -2065,9 +2072,13 @@ async fn run_session_report_source_trace(
             "/adapter_generation_reset/old_producer_mutated",
         )
         .map_err(MutationExecutionError::harness)?
+        || after_old_producer.iter().all(|event| {
+            event.event_id != old_producer_event_id
+                || event.payload.kind != StoredEventKind::QuarantinedRuntimeEvidence as i32
+        })
     {
         return Err(MutationExecutionError::oracle(
-            "old adapter producer changed session state",
+            "old adapter producer was not outer-only or changed session state",
         ));
     }
     assert_session_snapshot(
@@ -2158,16 +2169,22 @@ async fn run_session_report_source_trace(
             .map_err(MutationExecutionError::harness)?,
         )
         .await;
-    if !matches!(old_runtime, Err(ref status) if status.code() == Code::FailedPrecondition)
-        || string(
-            &vector.expected_outcome,
-            "/runtime_generation_reset/old_runtime_status",
-        )
-        .map_err(MutationExecutionError::harness)?
-            != "FAILED_PRECONDITION"
+    let old_runtime_event_id = old_runtime
+        .map_err(|error| MutationExecutionError::oracle(format!(
+            "old runtime generation did not reach outer quarantine: {error}"
+        )))?
+        .into_inner()
+        .event_id
+        .ok_or_else(|| MutationExecutionError::oracle("old runtime returned no event id"))?;
+    if string(
+        &vector.expected_outcome,
+        "/runtime_generation_reset/old_runtime_status",
+    )
+    .map_err(MutationExecutionError::harness)?
+        != "QUARANTINED_RUNTIME_EVIDENCE"
     {
-        return Err(MutationExecutionError::oracle(
-            "old runtime generation was not fenced",
+        return Err(MutationExecutionError::harness(
+            "vector expected old runtime outcome is not outer quarantine",
         ));
     }
     let after_old_runtime = storage
@@ -2181,9 +2198,13 @@ async fn run_session_report_source_trace(
             "/runtime_generation_reset/old_runtime_mutated",
         )
         .map_err(MutationExecutionError::harness)?
+        || after_old_runtime.iter().all(|event| {
+            event.event_id != old_runtime_event_id
+                || event.payload.kind != StoredEventKind::QuarantinedRuntimeEvidence as i32
+        })
     {
         return Err(MutationExecutionError::oracle(
-            "old runtime generation changed session state",
+            "old runtime generation was not outer-only or changed session state",
         ));
     }
     assert_session_snapshot(

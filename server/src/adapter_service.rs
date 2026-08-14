@@ -10,7 +10,7 @@ use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, runtime_generation_disposition,
     AcceptedOperation, ActorEndpointRef, ActorId, AdapterDiagnosticReport,
     AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport, AttachRequest, AttachResult,
-    AuthorityDomainId, Delivery, FailureCode, Generation, Observation, ObservationRequest,
+    AuthorityDomainId, Delivery, EventId, FailureCode, Generation, Observation, ObservationRequest,
     ObservationResult, OperationState, ReceiveRequest, RuntimeEvidenceQuarantineReason,
     RuntimeEvidenceSourceAttachment, RuntimeGenerationRef, SpawnEvidenceAttachment,
     SpawnExecutionEvidenceProducer, SpawnSuccessorEvidenceStaged, StoredEventKind, TargetScopeKind,
@@ -376,6 +376,79 @@ type DisconnectCallback = Box<dyn FnOnce() + Send + 'static>;
 struct CommandProjection {
     index: CommandIndex,
     cursor: u64,
+}
+
+async fn append_quarantined_session_report<S: Storage>(
+    storage: &S,
+    domain: &AuthorityDomainId,
+    report: patchbay_contracts::patchbay::SessionReport,
+    disposition: patchbay_contracts::patchbay::RuntimeGenerationDisposition,
+    reason: patchbay_contracts::patchbay::RuntimeEvidenceQuarantineReason,
+    source_attachment: RuntimeEvidenceSourceAttachment,
+    projections: (&SessionRegistry, &session::SpawnClaimRegistry),
+) -> Result<EventId, Status> {
+    let (sessions, claims) = projections;
+    let quarantined = session::quarantined_session_report(
+        domain,
+        report,
+        disposition,
+        reason,
+        source_attachment,
+        sessions,
+        claims,
+    )
+    .map_err(|error| Status::failed_precondition(error.to_string()))?;
+    let mut audit = AuditRecordDraft::new(
+        crate::identity::now_timestamp().map_err(|error| Status::internal(error.to_string()))?,
+        patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored,
+    );
+    audit.failure_code = Some(FailureCode::StaleEvent);
+    audit.reason_code = session::quarantine_reason_code(reason).to_owned();
+    audit.target_scope = Some(
+        session::quarantined_candidate_scope(&quarantined)
+            .map_err(|error| Status::failed_precondition(error.to_string()))?,
+    );
+    storage
+        .append_quarantined_runtime_evidence_audited(domain, quarantined, audit)
+        .await
+        .map(|committed| committed.source_event_id)
+        .map_err(map_storage_error_to_status)
+}
+
+fn session_report_has_stale_source_order(
+    report: &patchbay_contracts::patchbay::SessionReport,
+    sessions: &SessionRegistry,
+) -> bool {
+    let Some((adapter_id, runtime_id, generation, reported)) = report
+        .adapter_id
+        .as_ref()
+        .zip(report.runtime_session_id.as_ref())
+        .zip(report.session_generation.as_ref())
+        .zip(report.source_cursor.as_ref())
+        .map(|(((adapter_id, runtime_id), generation), reported)| {
+            (adapter_id, runtime_id, generation, reported)
+        })
+    else {
+        return false;
+    };
+    let Some(current) = sessions
+        .get_live_session(adapter_id, &report.deployment_scope, runtime_id)
+        .filter(|current| current.identity.session_generation == *generation)
+    else {
+        return false;
+    };
+    let Some(last) = current.last_source_cursor.as_ref() else {
+        return false;
+    };
+    let Some((reported_generation, last_generation)) = reported
+        .adapter_generation
+        .as_ref()
+        .zip(last.adapter_generation.as_ref())
+    else {
+        return false;
+    };
+    reported_generation.value < last_generation.value
+        || (reported_generation == last_generation && reported.revision <= last.revision)
 }
 
 async fn rebuild_command_projection<S: Storage>(
@@ -878,23 +951,11 @@ where
                         adapters.clone(),
                     )
                 };
-                if reported_adapter_generation != current_adapter_generation {
-                    record_adapter_audit(
-                        self.audit.as_ref(),
-                        patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored,
-                        &authenticated_adapter,
-                        Some(FailureCode::StaleEvent),
-                        "session_report_source_cursor_stale",
-                    )
-                    .await?;
-                    return Err(Status::failed_precondition(
-                        "session report adapter generation is stale",
-                    ));
-                }
-                // Replace producer identity with facts from the authenticated
-                // attachment before the generated report reaches core logic.
+                // Replace producer identity with the authenticated adapter. The
+                // candidate's reported producer generation is retained until
+                // classification so stale-producer evidence can be quarantined
+                // atomically rather than escaping as a standalone audit.
                 report.adapter_id = Some(authenticated_adapter.clone());
-                source_cursor.adapter_generation = Some(current_adapter_generation);
                 // The adapter owns an independent session projection. Rebuild
                 // it at the gate boundary before deriving the next report
                 // delta; otherwise a lockdown (or any core-side append) can
@@ -947,111 +1008,123 @@ where
                             .revision = revision;
                     }
                 }
-                if report.spawn_origin.is_some() {
-                    let claims = session::rebuild_spawn_claims_from_log(&self.storage, &domain)
-                        .await
-                        .map_err(map_spawn_claim_error)?;
-                    let disposition = session::classify_session_report(
+                let claims = session::rebuild_spawn_claims_from_log(&self.storage, &domain)
+                    .await
+                    .map_err(map_spawn_claim_error)?;
+                let disposition = session::classify_session_report(
+                    &domain,
+                    &report,
+                    &source_attachment,
+                    &adapter_projection,
+                    &claims,
+                    &rebuilt,
+                );
+
+                if reported_adapter_generation != current_adapter_generation {
+                    let event_id = append_quarantined_session_report(
+                        &self.storage,
                         &domain,
-                        &report,
-                        &source_attachment,
-                        &adapter_projection,
-                        &claims,
-                        rebuilt.logical_targets(),
-                    );
-                    match disposition.disposition.as_ref() {
-                        Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(
-                            claimed,
-                        )) => {
-                            let command_id =
-                                claimed.claim_operation_id.as_ref().ok_or_else(|| {
-                                    Status::internal("claimed successor has no operation id")
+                        report,
+                        disposition,
+                        RuntimeEvidenceQuarantineReason::StaleAttachment,
+                        source_attachment,
+                        (&rebuilt, &claims),
+                    )
+                    .await?;
+                    return Ok(Response::new(ObservationResult {
+                        event_id: Some(event_id),
+                    }));
+                }
+
+                if matches!(
+                    disposition.disposition.as_ref(),
+                    Some(runtime_generation_disposition::Disposition::Current(_))
+                ) && session_report_has_stale_source_order(&report, &rebuilt)
+                {
+                    let event_id = append_quarantined_session_report(
+                        &self.storage,
+                        &domain,
+                        report,
+                        disposition,
+                        RuntimeEvidenceQuarantineReason::StaleSourceOrder,
+                        source_attachment,
+                        (&rebuilt, &claims),
+                    )
+                    .await?;
+                    return Ok(Response::new(ObservationResult {
+                        event_id: Some(event_id),
+                    }));
+                }
+
+                match disposition.disposition.as_ref() {
+                    Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(
+                        claimed,
+                    )) => {
+                        let command_id = claimed.claim_operation_id.as_ref().ok_or_else(|| {
+                            Status::internal("claimed successor has no operation id")
+                        })?;
+                        let claim_record =
+                            session::SpawnClaimQuery::claim_for_operation(&claims, command_id)
+                                .ok_or_else(|| {
+                                    Status::internal("claimed successor lost its claim")
                                 })?;
-                            let claim_record =
-                                session::SpawnClaimQuery::claim_for_operation(&claims, command_id)
-                                    .ok_or_else(|| {
-                                        Status::internal("claimed successor lost its claim")
-                                    })?;
-                            let external = patchbay_contracts::patchbay::ExternalRuntimeRef {
-                                adapter_id: report.adapter_id.clone(),
-                                deployment_scope: report.deployment_scope.clone(),
-                                runtime_session_id: report.runtime_session_id.clone(),
-                                generation: report.session_generation,
-                            };
-                            let staged = SpawnSuccessorEvidenceStaged {
-                                authority_domain_id: Some(domain.clone()),
-                                exact_claim: Some(claim_record.claim.clone()),
-                                report: Some(report),
-                                classified_target: Some(RuntimeGenerationRef {
-                                    logical_target_id: claim_record.claim.logical_target_id.clone(),
-                                    external_runtime: Some(external.clone()),
-                                }),
-                                disposition: Some(disposition),
-                                source_attachment: Some(source_attachment),
-                                external_runtime_reservation: Some(external),
-                            };
-                            session::validate_staged_successor(&staged)
-                                .map_err(|error| Status::failed_precondition(error.to_string()))?;
-                            let event_id = self
-                                .storage
-                                .append(&domain, session::encode_staged_successor(&staged))
-                                .await
-                                .map_err(map_storage_error_to_status)?;
-                            *self.sessions.lock().await = recover_session_registry(
-                                &self.storage,
-                                &domain,
-                                &self.core_generation,
-                            )
-                            .await
-                            .map_err(map_session_error)?
-                            .registry;
-                            return Ok(Response::new(ObservationResult {
-                                event_id: Some(event_id),
-                            }));
-                        }
-                        Some(runtime_generation_disposition::Disposition::Current(_)) => {
-                            return Err(Status::failed_precondition(
-                                "managed spawn report names an already-current runtime; omit spawn_origin for ordinary current reports",
-                            ));
-                        }
-                        _ => {
-                            let reason = session::quarantine_reason_for(&disposition);
-                            let quarantined = session::quarantined_session_report(
-                                &domain,
-                                report,
-                                disposition,
-                                reason,
-                                source_attachment,
-                                &rebuilt,
-                                &claims,
-                            )
+                        let external = patchbay_contracts::patchbay::ExternalRuntimeRef {
+                            adapter_id: report.adapter_id.clone(),
+                            deployment_scope: report.deployment_scope.clone(),
+                            runtime_session_id: report.runtime_session_id.clone(),
+                            generation: report.session_generation,
+                        };
+                        let staged = SpawnSuccessorEvidenceStaged {
+                            authority_domain_id: Some(domain.clone()),
+                            exact_claim: Some(claim_record.claim.clone()),
+                            report: Some(report),
+                            classified_target: Some(RuntimeGenerationRef {
+                                logical_target_id: claim_record.claim.logical_target_id.clone(),
+                                external_runtime: Some(external.clone()),
+                            }),
+                            disposition: Some(disposition),
+                            source_attachment: Some(source_attachment),
+                            external_runtime_reservation: Some(external),
+                        };
+                        session::validate_staged_successor(&staged)
                             .map_err(|error| Status::failed_precondition(error.to_string()))?;
-                            let mut audit = AuditRecordDraft::new(
-                                crate::identity::now_timestamp()
-                                    .map_err(|error| Status::internal(error.to_string()))?,
-                                patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored,
-                            );
-                            audit.failure_code = Some(FailureCode::StaleEvent);
-                            audit.reason_code = session::quarantine_reason_code(reason).to_owned();
-                            audit.target_scope =
-                                Some(session::quarantined_candidate_scope(&quarantined).map_err(
-                                    |error| Status::failed_precondition(error.to_string()),
-                                )?);
-                            let committed = self
-                                .storage
-                                .append_quarantined_runtime_evidence_audited(
-                                    &domain,
-                                    quarantined,
-                                    audit,
-                                )
+                        let event_id = self
+                            .storage
+                            .append(&domain, session::encode_staged_successor(&staged))
+                            .await
+                            .map_err(map_storage_error_to_status)?;
+                        *self.sessions.lock().await =
+                            recover_session_registry(&self.storage, &domain, &self.core_generation)
                                 .await
-                                .map_err(map_storage_error_to_status)?;
-                            return Ok(Response::new(ObservationResult {
-                                event_id: Some(committed.source_event_id),
-                            }));
-                        }
+                                .map_err(map_session_error)?
+                                .registry;
+                        return Ok(Response::new(ObservationResult {
+                            event_id: Some(event_id),
+                        }));
+                    }
+                    Some(runtime_generation_disposition::Disposition::Current(_)) => {}
+                    Some(runtime_generation_disposition::Disposition::Unknown(_))
+                        if report.spawn_origin.is_none() => {}
+                    _ => {
+                        let reason = session::quarantine_reason_for(&disposition);
+                        let event_id = append_quarantined_session_report(
+                            &self.storage,
+                            &domain,
+                            report,
+                            disposition,
+                            reason,
+                            source_attachment,
+                            (&rebuilt, &claims),
+                        )
+                        .await?;
+                        return Ok(Response::new(ObservationResult {
+                            event_id: Some(event_id),
+                        }));
                     }
                 }
+                let ordinary_report = report.clone();
+                let ordinary_disposition = disposition.clone();
+                let ordinary_source = source_attachment.clone();
                 let mut sessions = self.sessions.lock().await;
                 *sessions = rebuilt;
                 let result = match session::ingest_session_report(
@@ -1063,30 +1136,40 @@ where
                 .await
                 {
                     Ok(result) => result,
-                    Err(error) => {
-                        let (kind, failure_code, reason) = match &error {
-                            session::SessionError::StaleSourceCursor { .. } => (
-                                patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored,
-                                Some(FailureCode::StaleEvent),
-                                "session_report_source_cursor_stale",
-                            ),
-                            session::SessionError::StaleGeneration { .. } => (
-                                patchbay_contracts::patchbay::AuditEventKind::TargetGenerationMismatch,
-                                Some(FailureCode::StaleEvent),
-                                "session_report_generation_stale",
-                            ),
-                            _ => (
-                                patchbay_contracts::patchbay::AuditEventKind::AdapterFailed,
-                                None,
-                                "session_report_rejected",
-                            ),
+                    Err(
+                        error @ (session::SessionError::StaleSourceCursor { .. }
+                        | session::SessionError::StaleGeneration { .. }),
+                    ) => {
+                        let reason = match error {
+                            session::SessionError::StaleSourceCursor { .. } => {
+                                RuntimeEvidenceQuarantineReason::StaleSourceOrder
+                            }
+                            session::SessionError::StaleGeneration { .. } => {
+                                session::quarantine_reason_for(&ordinary_disposition)
+                            }
+                            _ => unreachable!("matched stale session-ingress error"),
                         };
+                        let event_id = append_quarantined_session_report(
+                            &self.storage,
+                            &domain,
+                            ordinary_report,
+                            ordinary_disposition,
+                            reason,
+                            ordinary_source,
+                            (&sessions, &claims),
+                        )
+                        .await?;
+                        return Ok(Response::new(ObservationResult {
+                            event_id: Some(event_id),
+                        }));
+                    }
+                    Err(error) => {
                         record_adapter_audit(
                             self.audit.as_ref(),
-                            kind,
+                            patchbay_contracts::patchbay::AuditEventKind::AdapterFailed,
                             &authenticated_adapter,
-                            failure_code,
-                            reason,
+                            None,
+                            "session_report_rejected",
                         )
                         .await?;
                         return Err(map_session_error(error));

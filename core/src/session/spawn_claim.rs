@@ -337,6 +337,8 @@ impl SpawnClaimRegistry {
         event_id: &EventId,
         event_lsn: u64,
     ) -> Result<(), SpawnClaimError> {
+        super::validate_spawn_promotion_result_order(&promotion)
+            .map_err(|error| corrupt_log(error.to_string()))?;
         super::validate_spawn_promotion_envelope(&promotion, event_id)
             .map_err(|error| corrupt_log(error.to_string()))?;
         let accepted = promotion
@@ -922,6 +924,7 @@ fn validate_embedded_promotion_history(
         ));
     }
 
+    let mut latest_lifecycle_lsn = 0;
     for evidence in &promotion.lifecycle {
         let id = evidence
             .event_id
@@ -945,6 +948,11 @@ fn validate_embedded_promotion_history(
                 "promotion lifecycle reference bytes do not match",
             ));
         }
+        latest_lifecycle_lsn = id
+            .lsn
+            .as_ref()
+            .expect("referenced event id validated")
+            .value;
     }
 
     let result = promotion
@@ -966,7 +974,12 @@ fn validate_embedded_promotion_history(
     }
     let observation = Observation::decode(result_payload.payload.as_slice())
         .map_err(|error| corrupt_record(format!("cannot decode promotion result: {error}")))?;
-    if ObservationKind::try_from(observation.kind).ok() != Some(ObservationKind::Result)
+    if result
+        .event_id
+        .as_ref()
+        .and_then(|id| id.lsn)
+        .is_none_or(|lsn| lsn.value <= latest_lifecycle_lsn)
+        || ObservationKind::try_from(observation.kind).ok() != Some(ObservationKind::Result)
         || FailureCode::try_from(observation.failure_code).ok() != Some(FailureCode::Unspecified)
         || observation.target_scope != result.target_scope
         || observation.observed_at != result.observed_at

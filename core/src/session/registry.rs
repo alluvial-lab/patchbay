@@ -537,6 +537,8 @@ impl SessionRegistry {
         event_id: &patchbay_contracts::patchbay::EventId,
         event_lsn: u64,
     ) -> Result<(), SessionError> {
+        super::validate_spawn_promotion_result_order(promotion)
+            .map_err(|error| SessionError::CorruptLog(error.to_string()))?;
         super::validate_spawn_promotion_envelope(promotion, event_id)
             .map_err(|error| SessionError::CorruptLog(error.to_string()))?;
         let accepted = promotion

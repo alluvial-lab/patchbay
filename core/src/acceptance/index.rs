@@ -258,6 +258,8 @@ impl CommandIndex {
                     "cannot decode spawn promotion at LSN {event_lsn}: {error}"
                 ))
             })?;
+        crate::session::validate_spawn_promotion_result_order(&promotion)
+            .map_err(|error| AcceptanceError::CorruptLog(error.to_string()))?;
         crate::session::validate_spawn_promotion_envelope(&promotion, &event.event_id)
             .map_err(|error| AcceptanceError::CorruptLog(error.to_string()))?;
         let accepted = promotion
@@ -291,6 +293,7 @@ impl CommandIndex {
                 OperationState::Delivered | OperationState::Running
             )
             || record.terminal_lsn.is_some()
+            || !self.deferred_spawn_successes.contains(command_id)
         {
             return Err(AcceptanceError::CorruptLog(format!(
                 "spawn promotion at LSN {event_lsn} disagrees with command exact pre-state"

@@ -9,7 +9,7 @@
     {
       "mutation_id": "accept-nonincreasing-session-revision",
       "runner": "rust-server",
-      "invariant": "The authenticated server oracle must reject a delayed lower revision before session-state append, preserve the B/r3 snapshot and hot/replay state, and emit stale-event audit evidence."
+      "invariant": "The authenticated server oracle must quarantine a delayed lower revision before session-state append, preserve the B/r3 snapshot and hot/replay state, and emit atomic stale-event audit evidence."
     }
   ],
   "proto_fields_constrained": [
@@ -31,7 +31,7 @@
     "patchbay.AuditRecord.failure_code",
     "patchbay.AuditRecord.reason_code"
   ],
-  "description": "Authenticated session ingress accepts A/r1 then B/r3, rejects delayed A/r2 with durable stale audit and no session-state append, materializes B/r3, agrees across hot/replay state, and permits only newer adapter/runtime generations to reset local revision.",
+  "description": "Authenticated session ingress accepts A/r1 then B/r3, retains delayed A/r2 only inside an atomically audited outer quarantine with no session-state append, materializes B/r3, agrees across hot/replay state, and permits only newer adapter/runtime generations to reset local revision.",
   "input": {
     "authority_domain_id": "auth-main",
     "adapter_id": "pi",
@@ -64,11 +64,11 @@
   "expected_outcome": {
     "primary": {
       "accepted_models": ["A", "B"],
-      "delayed_status": "FAILED_PRECONDITION",
+      "delayed_status": "QUARANTINED_RUNTIME_EVIDENCE",
       "session_state_event_count": 2,
       "audit_kind": "AUDIT_EVENT_KIND_STALE_EVENT_IGNORED",
       "audit_failure_code": "FAILURE_CODE_STALE_EVENT",
-      "audit_reason_code": "session_report_source_cursor_stale",
+      "audit_reason_code": "runtime_evidence_stale_source_order",
       "snapshot_model": "B",
       "snapshot_adapter_generation": 1,
       "snapshot_revision": 3,
@@ -78,7 +78,7 @@
       "accepted_model": "C",
       "snapshot_adapter_generation": 2,
       "snapshot_revision": 1,
-      "old_producer_status": "FAILED_PRECONDITION",
+      "old_producer_status": "QUARANTINED_RUNTIME_EVIDENCE",
       "old_producer_mutated": false
     },
     "runtime_generation_reset": {
@@ -86,9 +86,9 @@
       "snapshot_session_generation": 2,
       "snapshot_adapter_generation": 2,
       "snapshot_revision": 1,
-      "old_runtime_status": "FAILED_PRECONDITION",
+      "old_runtime_status": "QUARANTINED_RUNTIME_EVIDENCE",
       "old_runtime_mutated": false
     }
   },
-  "invariant_check": "SessionReportSourceOrdering: pending source evidence older than the current runtime/adapter/revision tuple is inert before append; accepted newer evidence atomically advances the full report and watermark, and authenticated adapter/runtime replacement alone may reset revision to one."
+  "invariant_check": "SessionReportSourceOrdering: pending source evidence older than the current runtime/adapter/revision tuple is inert for session mutation and is retained only inside an atomic outer quarantine; accepted newer evidence atomically advances the full report and watermark, and authenticated adapter/runtime replacement alone may reset revision to one."
 }

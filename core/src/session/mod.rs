@@ -29,14 +29,16 @@ pub use logical_target::{
 pub use patchbay_contracts::patchbay::SessionReport;
 pub use registry::{SessionRecord, SessionRegistry, SessionTombstone};
 pub use replay::rebuild_from_log;
+pub(crate) use runtime_evidence::validate_spawn_promotion_result_order;
 pub use runtime_evidence::{
-    classify_runtime_target, classify_session_report, encode_quarantined_runtime_evidence,
-    encode_spawn_promotion, encode_staged_successor, fold_spawn_promotion_ordered,
-    next_spawn_promotion, quarantine_reason_code, quarantine_reason_for,
-    quarantined_candidate_scope, quarantined_candidate_target, quarantined_observation,
-    quarantined_session_report, source_matches_current_attachment,
-    validate_quarantined_runtime_evidence, validate_spawn_promotion_envelope,
-    validate_staged_successor, RuntimeEvidenceError, SpawnPromotionFoldError,
+    canonical_runtime_evidence_classification_context, classify_runtime_target,
+    classify_session_report, encode_quarantined_runtime_evidence, encode_spawn_promotion,
+    encode_staged_successor, fold_spawn_promotion_ordered, next_spawn_promotion,
+    quarantine_reason_code, quarantine_reason_for, quarantined_candidate_scope,
+    quarantined_candidate_target, quarantined_observation, quarantined_session_report,
+    source_matches_current_attachment, validate_quarantined_runtime_evidence,
+    validate_spawn_promotion_envelope, validate_staged_successor, RuntimeEvidenceError,
+    SpawnPromotionFoldError,
 };
 pub use spawn_claim::{
     allowed_external_effect_disposition, allowed_spawn_claim_transition, encode_spawn_claim_event,

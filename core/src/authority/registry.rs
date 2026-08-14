@@ -284,6 +284,8 @@ impl AuthorityRegistry {
                     "cannot decode spawn promotion at LSN {event_lsn}: {error}"
                 ))
             })?;
+        crate::session::validate_spawn_promotion_result_order(&promotion)
+            .map_err(|error| AuthorityError::CorruptLog(error.to_string()))?;
         crate::session::validate_spawn_promotion_envelope(&promotion, &event.event_id)
             .map_err(|error| AuthorityError::CorruptLog(error.to_string()))?;
         let accepted = promotion

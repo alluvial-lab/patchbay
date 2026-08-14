@@ -516,25 +516,29 @@ async fn status_emits_running_transition() {
 }
 
 #[tokio::test]
-async fn accepted_to_running_status_is_rejected_without_corrupt_transition() {
-    let storage = RusqliteStorage::open_in_memory().unwrap();
-    let states = TestCommandStates::with(command_id(), OperationState::Accepted);
+async fn disallowed_status_or_result_is_rejected_before_raw_evidence_append() {
+    for (kind, operation_kind) in [
+        (ObservationKind::Status, OperationKind::Instruct),
+        (ObservationKind::Result, OperationKind::Spawn),
+    ] {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let states =
+            TestCommandStates::with_kind(command_id(), OperationState::Accepted, operation_kind);
 
-    let error = ingest_observation(
-        &storage,
-        &states,
-        observation(ObservationKind::Status, FailureCode::Unspecified),
-    )
-    .await
-    .unwrap_err();
+        let error = ingest_observation(
+            &storage,
+            &states,
+            observation(kind, FailureCode::Unspecified),
+        )
+        .await
+        .unwrap_err();
 
-    assert!(matches!(error, AcceptanceError::CorruptRecord(_)));
-    let recorded = events(&storage).await;
-    assert_eq!(recorded.len(), 1);
-    assert_eq!(
-        StoredEventKind::try_from(recorded[0].payload.kind).unwrap(),
-        StoredEventKind::Observation
-    );
+        assert!(matches!(error, AcceptanceError::CorruptRecord(_)));
+        assert!(
+            events(&storage).await.is_empty(),
+            "a rejected {kind:?} must not remain as later-qualifying raw evidence"
+        );
+    }
 }
 
 #[tokio::test]

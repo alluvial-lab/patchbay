@@ -5,10 +5,10 @@
 //! fences it by adapter source order, and appends one schema-owned session event.
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, AdapterId, AuthorityDomainId, EventId, Generation, RuntimeSessionId,
-    SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
-    SessionGenerationBumped, SessionRegistered, SessionReport, SessionReportApplied,
-    SessionReportSourceCursor, SessionState, TypedCorrelation,
+    AdapterId, AuthorityDomainId, EventId, Generation, RuntimeSessionId, SessionActivityState,
+    SessionConnectivityChanged, SessionConnectivityState, SessionGenerationBumped,
+    SessionRegistered, SessionReport, SessionReportApplied, SessionReportSourceCursor,
+    SessionState,
 };
 
 use crate::{
@@ -115,6 +115,12 @@ where
     if authority_domain_id.value.is_empty() {
         return Err(SessionError::CorruptRecord(
             "session report authority_domain_id is empty".to_owned(),
+        ));
+    }
+    if report.spawn_origin.is_some() {
+        return Err(SessionError::CorruptRecord(
+            "ordinary session report ingress rejects spawn_origin; managed reports require the staged-successor boundary"
+                .to_owned(),
         ));
     }
     let mut validated = validate_report(&report)?;
@@ -392,7 +398,6 @@ pub(crate) fn validate_report(
         SessionError::CorruptRecord("session report is missing source_cursor".to_owned())
     })?;
     validate_source_cursor(&source_cursor, "session report")?;
-    validate_spawn_origin(report.spawn_origin.as_ref())?;
 
     Ok(ValidatedSessionReport {
         identity: SessionIdentity {
@@ -440,26 +445,6 @@ pub(crate) fn source_cursor_strictly_after(
         .expect("validated live source cursor");
     reported_generation.value > live_generation.value
         || (reported_generation == live_generation && reported.revision > live.revision)
-}
-
-fn validate_spawn_origin(origin: Option<&TypedCorrelation>) -> Result<(), SessionError> {
-    let Some(origin) = origin else {
-        return Ok(());
-    };
-    match origin.r#ref.as_ref() {
-        Some(typed_correlation::Ref::CommandId(command_id)) if !command_id.value.is_empty() => {
-            Ok(())
-        }
-        Some(typed_correlation::Ref::CommandId(_)) => Err(SessionError::CorruptRecord(
-            "session report spawn_origin command_id is empty".to_owned(),
-        )),
-        Some(_) => Err(SessionError::CorruptRecord(
-            "session report spawn_origin is not a command correlation".to_owned(),
-        )),
-        None => Err(SessionError::CorruptRecord(
-            "session report spawn_origin has no typed reference".to_owned(),
-        )),
-    }
 }
 
 fn invalid_transition<T: std::fmt::Debug>(from: T, to: T) -> SessionError {

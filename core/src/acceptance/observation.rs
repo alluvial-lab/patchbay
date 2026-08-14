@@ -83,9 +83,9 @@ pub enum IngestResult {
 
 /// Ingest an adapter-reported observation.
 ///
-/// The raw observation is appended before any derived state transition. A
-/// terminal command turns every derived candidate into an audit-only stale
-/// result, so no transition out of terminal state reaches the durable log.
+/// The implied lifecycle transition is validated before the raw observation is
+/// appended. A terminal or otherwise-disallowed candidate therefore cannot
+/// survive as replayable evidence that acquires authority from later events.
 pub async fn ingest_observation<S, L>(
     storage: &S,
     state_lookup: &L,
@@ -188,14 +188,13 @@ where
         });
     }
 
-    let observation_event_id = storage
-        .append(authority_domain_id, observation_payload)
-        .await?;
-    validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
-
     // Repeated status reports are useful evidence but do not represent a new
     // lifecycle transition.
     if snapshot.state == candidate.to_state {
+        let observation_event_id = storage
+            .append(authority_domain_id, observation_payload)
+            .await?;
+        validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
         return Ok(IngestResult::Recorded {
             event_id: observation_event_id,
         });
@@ -207,6 +206,11 @@ where
             snapshot.state, candidate.to_state, candidate.command_id
         )));
     }
+
+    let observation_event_id = storage
+        .append(authority_domain_id, observation_payload)
+        .await?;
+    validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
 
     let transition = CommandTransition {
         command_id: Some(candidate.command_id.clone()),

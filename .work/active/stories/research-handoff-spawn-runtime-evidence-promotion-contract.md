@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-runtime-evidence-promotion-contract
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, security, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-continuation-payload-authority-contract, research-handoff-spawn-claim-registry-contract, research-handoff-spawn-crash-external-effect-evidence-contract]
@@ -50,13 +50,13 @@ Promotion readiness requires accepted compound provenance, delivered/running lif
 
 ## Acceptance evidence
 
-- [ ] Legitimate first fresh/N+1 reports classify `ClaimedSuccessor` only on exact durable claim provenance.
-- [ ] Wrong Operation, expected prior, adapter/deployment, logical id, runtime id, or generation never stages.
-- [ ] Every quarantined candidate is carried by an admitted generated `oneof`; unknown/untyped candidates reject, and nested Observation/report/transcript/ack/Elicitation evidence cannot mutate any normal projection on hot fold or replay.
-- [ ] Promotion source is a self-contained replay unit carrying the complete descendant Grant; its distinct audit record commits in the same storage transaction, and no crash prefix publishes N+1 without authority.
-- [ ] Every consuming projection validates the same promotion event and exact pre-state; disagreement fails closed.
-- [ ] Revoked/expired exact-prior replacement authority before promotion suppresses promotion.
-- [ ] Mutations dispatching quarantine as raw evidence or exposing staged successor as current fail.
+- [x] Legitimate first fresh/N+1 reports classify `ClaimedSuccessor` only on exact durable claim provenance.
+- [x] Wrong Operation, expected prior, adapter/deployment, logical id, runtime id, or generation never stages.
+- [x] Every quarantined candidate is carried by an admitted generated `oneof`; unknown/untyped candidates reject, and nested Observation/report/transcript/ack/Elicitation evidence cannot mutate any normal projection on hot fold or replay.
+- [x] Promotion source is a self-contained replay unit carrying the complete descendant Grant; its distinct audit record commits in the same storage transaction, and no crash prefix publishes N+1 without authority.
+- [x] Every consuming projection validates the same promotion event and exact pre-state; disagreement fails closed.
+- [x] Revoked/expired exact-prior replacement authority before promotion suppresses promotion.
+- [x] Mutations dispatching quarantine as raw evidence or exposing staged successor as current fail.
 
 ## Ordering constraint
 
@@ -88,9 +88,20 @@ Final invariant contract leaf. Target resolution waits on this leaf and the para
 - Pi adapter integration orders a generation-changing Result before the ordinary N+1 report so the accepted generation-N result cannot become stale, while in-generation transcript/report tails remain ordered before terminal Result. The e2e stale-generation assertions now match the quarantine/tombstone contract.
 - No protobuf or generated contract files changed in the BLOCKER convergence pass.
 
+### Leaf 6 round-2 BLOCKER convergence — 2026-08-14
+
+- Ordinary core session ingress now rejects every non-`None` `spawn_origin`. Authenticated server ingress classifies every SessionReport before choosing ordinary ingestion, so an omitted correlation cannot escape an active managed claim and stale producer/source/runtime evidence commits only as an atomically audited outer quarantine.
+- Observation ingestion validates implied transitions before append. Successful spawn Result evidence qualifies only at its own delivered/running replay position, every promotion envelope requires lifecycle LSNs before Result LSN, and authority/session/claim/command consumers independently enforce the same ordering.
+- Dedicated quarantine append reconstructs the complete canonical classification context from the durable adapter/session/logical-target/tombstone/claim prefix and requires exact equality. One-field forged owner, current, tombstone, and claim contexts reject without writes.
+- Promotion ordering now uses a private authority-installed witness before session publication. Every nested quarantine family receives independently mutable projection pre-state, making recursive-dispatch mutants observable.
+- The promoted `session-report-source-ordering` vector and its independent expectation checker now specify outer quarantine for delayed, old-producer, and old-runtime reports while retaining the unchanged hot/replay session snapshot.
+- Injected mutations killed: ordinary managed-origin admission; omitted-origin active-claim escape; raw append before transition validation; coordinated removal of Result-time producer qualification and all consuming order gates; weakened disposition-only quarantine validation; an authority↔session source-order swap (non-compiling without the private witness) plus coordinated authority-witness omission; and exact nested-Observation redispatch through the command fold. Each mutation was reverted before completion and the restored tree remained clean.
+- No protobuf or generated contract artifacts changed in the round-2 pass.
+
 ## Verification evidence
 
 - `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings` — passed 2026-08-14.
 - `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build` — passed; 54 vectors, 38 mutation witnesses killed, generated bindings clean.
 - `cd operator-domain && npm run build && npm test` — passed; 9/9 tests.
 - `cd pi-adapter && npm test` — passed; 29/29 tests including real core/adapter restart e2e.
+- Round-2 re-run after the five fixes: all four groups above passed again; contract checks covered 54 vectors, 22 implementation checks, and 38 registered mutation witnesses. `git diff --check` also passed.

@@ -451,8 +451,13 @@ async fn malformed_report_fields_fail_before_append() {
 }
 
 #[tokio::test]
-async fn malformed_spawn_origin_is_rejected_before_append() {
+async fn ordinary_ingress_rejects_every_spawn_origin_before_append() {
     for origin in [
+        TypedCorrelation {
+            r#ref: Some(typed_correlation::Ref::CommandId(CommandId {
+                value: "valid-managed-origin".to_owned(),
+            })),
+        },
         TypedCorrelation {
             r#ref: Some(typed_correlation::Ref::CommandId(CommandId {
                 value: String::new(),
@@ -464,11 +469,12 @@ async fn malformed_spawn_origin_is_rejected_before_append() {
         let mut registry = SessionRegistry::new(domain()).unwrap();
         let mut candidate = report(1, 4, 1);
         candidate.spawn_origin = Some(origin);
+        let error = ingest(&storage, &mut registry, candidate)
+            .await
+            .unwrap_err();
         assert!(matches!(
-            ingest(&storage, &mut registry, candidate)
-                .await
-                .unwrap_err(),
-            SessionError::CorruptRecord(_)
+            error,
+            SessionError::CorruptRecord(ref message) if message.contains("ordinary session report ingress rejects spawn_origin")
         ));
         assert!(events(&storage).await.is_empty());
     }
