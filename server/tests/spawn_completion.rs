@@ -696,6 +696,17 @@ async fn acknowledge_delivery<S>(
         .unwrap();
 }
 
+fn spawn_result(failure_code: FailureCode) -> Observation {
+    Observation {
+        authority_domain_id: Some(domain()),
+        kind: ObservationKind::Result as i32,
+        correlations: vec![correlation(), correlation()],
+        target_scope: Some(adapter_scope()),
+        failure_code: failure_code as i32,
+        ..Observation::default()
+    }
+}
+
 async fn report_successful_spawn<S>(service: &AdapterControlServiceImpl<S>, token: &str) -> EventId
 where
     S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
@@ -704,14 +715,9 @@ where
         .ingest_observation(authenticated(
             ObservationRequest {
                 authority_domain_id: Some(domain()),
-                observation: Some(observation_request::Observation::Event(Observation {
-                    authority_domain_id: Some(domain()),
-                    kind: ObservationKind::Result as i32,
-                    correlations: vec![correlation(), correlation()],
-                    target_scope: Some(adapter_scope()),
-                    failure_code: FailureCode::Unspecified as i32,
-                    ..Observation::default()
-                })),
+                observation: Some(observation_request::Observation::Event(spawn_result(
+                    FailureCode::Unspecified,
+                ))),
             },
             token,
         ))
@@ -1377,6 +1383,127 @@ async fn managed_evidence_retries_complete_once_and_restart_as_a_replayable_pref
     .expect("completion driver restart remains quiescent");
     drop(restarted);
     assert_eq!(completion_counts(&all_events(&storage).await), (1, 1, 1));
+}
+
+#[tokio::test]
+async fn transition_fault_cannot_strand_authenticated_result_and_legacy_strand_fences_promotion() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory
+        .path()
+        .join("spawn-result-transition-fault.sqlite3");
+    let storage = AuditedStorage::new(RusqliteStorage::open(path.to_str().unwrap()).unwrap());
+    seed_parent_grant(&storage).await;
+    let gate = CoreDecisionGate::default();
+    let service = AdapterControlServiceImpl::new_with_decision_gate(
+        storage.clone(),
+        domain(),
+        AdapterEvidenceVerifier::new([("pi", "adapter-test-secret")]).unwrap(),
+        gate.clone(),
+    )
+    .await
+    .unwrap();
+    let token = attach_adapter(&service).await;
+    {
+        let _guard = gate.acquire().await;
+        seed_adapter_scoped_spawn(&storage).await;
+    }
+    report_successful_spawn(&service, &token).await;
+    let before_fault = all_events(&storage).await;
+
+    let trigger_sql = format!(
+        "CREATE TRIGGER abort_spawn_result_transition\n\
+         BEFORE INSERT ON events\n\
+         WHEN NEW.kind = {}\n\
+         BEGIN SELECT RAISE(ABORT, 'injected transition failure'); END;",
+        StoredEventKind::CommandTransition as i32
+    );
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch(&trigger_sql).unwrap();
+
+    let route_error = service
+        .ingest_observation(authenticated(
+            ObservationRequest {
+                authority_domain_id: Some(domain()),
+                observation: Some(observation_request::Observation::Event(spawn_result(
+                    FailureCode::ExecutionFailed,
+                ))),
+            },
+            &token,
+        ))
+        .await
+        .expect_err("the injected transition failure must fail authenticated ingress");
+    assert_eq!(route_error.code(), tonic::Code::Internal);
+    assert_eq!(
+        all_events(&storage).await,
+        before_fault,
+        "the dedicated transaction must roll back Result, transition, and audit together"
+    );
+
+    // Reproduce the pre-fix source-without-transition prefix through explicit
+    // low-level writes. Production authenticated ingress above cannot create
+    // it, but replay must still fence one already present in durable history.
+    let mut stranded_failure = spawn_result(FailureCode::ExecutionFailed);
+    stranded_failure.sender = Some(ActorEndpointRef {
+        actor_id: Some(ActorId {
+            value: "pi".to_owned(),
+        }),
+        endpoint_id: adapter_registration().endpoint_id,
+        ..ActorEndpointRef::default()
+    });
+    let stranded_event_id = storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: stranded_failure.encode_to_vec(),
+            },
+        )
+        .await
+        .expect("the legacy source commits before its separately faulted transition");
+    let transition_error = storage
+        .append(
+            &domain(),
+            StoredEventPayload {
+                kind: StoredEventKind::CommandTransition as i32,
+                payload: CommandTransition {
+                    command_id: Some(command_id()),
+                    from_state: OperationState::Delivered as i32,
+                    to_state: OperationState::Failed as i32,
+                    failure_code: FailureCode::ExecutionFailed as i32,
+                    ..CommandTransition::default()
+                }
+                .encode_to_vec(),
+            },
+        )
+        .await
+        .expect_err("the emulated separate transition insert must fault");
+    assert!(matches!(transition_error, StorageError::WriteFailed { .. }));
+    let stranded_prefix = all_events(&storage).await;
+    assert_eq!(stranded_prefix.len(), before_fault.len() + 1);
+    assert_eq!(stranded_prefix.last().unwrap().event_id, stranded_event_id);
+
+    connection
+        .execute_batch("DROP TRIGGER abort_spawn_result_transition;")
+        .unwrap();
+    report_session(&service, &token, 1, Some(correlation())).await;
+    let driver_error = match SpawnCompletionDriver::bootstrap(
+        storage.clone(),
+        domain(),
+        CoreDecisionGate::default(),
+        production_audit(storage.clone()),
+        clock(),
+    )
+    .await
+    {
+        Ok(_) => panic!("a conflicting stranded Result must not promote"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        driver_error,
+        SpawnCompletionError::CorruptLog(message)
+            if message.contains("conflicting Result evidence")
+    ));
+    assert_eq!(completion_counts(&all_events(&storage).await), (0, 0, 0));
 }
 
 #[tokio::test]

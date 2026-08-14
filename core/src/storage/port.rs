@@ -22,8 +22,9 @@
 
 use patchbay_contracts::patchbay::{
     ActorId, AdapterDiagnosticDetail, AuditEventKind, AuditPage, AuthorityDomainId, CommandId,
-    EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn, QuarantinedRuntimeEvidence,
-    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventPayload, TargetScope,
+    CommandTransition, EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn,
+    Observation, QuarantinedRuntimeEvidence, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged,
+    StoredEventPayload, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -295,6 +296,15 @@ pub struct AuditPageSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditedBatchAppend {
     pub source_event_ids: Vec<EventId>,
+    pub audit_event_id: EventId,
+}
+
+/// Complete result of atomically recording an Observation, its derived
+/// lifecycle transition, and the transition's audit record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservationTransitionAppend {
+    pub observation_event_id: EventId,
+    pub transition_event_id: EventId,
     pub audit_event_id: EventId,
 }
 
@@ -613,6 +623,21 @@ pub trait Storage: Send + Sync {
         _source: StoredEventPayload,
         _audit: AuditRecordDraft,
     ) -> impl std::future::Future<Output = Result<AuditedAppend, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    /// Atomically append one status/Result Observation, its already-validated
+    /// derived command transition, and the transition's audit record. This
+    /// removes the source-without-transition crash prefix; implementations
+    /// must validate the typed pair and must not split this into generic calls.
+    fn append_observation_transition_audited(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _observation: Observation,
+        _transition: CommandTransition,
+        _audit: AuditRecordDraft,
+    ) -> impl std::future::Future<Output = Result<ObservationTransitionAppend, StorageError>> + Send
+    {
         async { Err(StorageError::UnsupportedOperation) }
     }
 

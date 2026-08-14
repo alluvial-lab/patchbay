@@ -65,7 +65,7 @@ struct PromotionFacts {
     accepted: SpawnClaimAccepted,
     lifecycle: Vec<SpawnPromotionLifecycleEvidence>,
     successful_result: Option<SpawnPromotionResultEvidence>,
-    successful_result_source: Option<Observation>,
+    canonical_result_source: Option<Observation>,
     staged_successor: Option<SpawnPromotionStagedEvidence>,
     promoted: bool,
 }
@@ -111,7 +111,7 @@ pub fn next_spawn_promotion(
                                 accepted,
                                 lifecycle: Vec::new(),
                                 successful_result: None,
-                                successful_result_source: None,
+                                canonical_result_source: None,
                                 staged_successor: None,
                                 promoted: false,
                             },
@@ -161,10 +161,13 @@ pub fn next_spawn_promotion(
                         malformed(format!("cannot decode promotion Result: {error}"))
                     })?;
                 if ObservationKind::try_from(observation.kind).ok() == Some(ObservationKind::Result)
-                    && FailureCode::try_from(observation.failure_code).ok()
-                        == Some(FailureCode::Unspecified)
                 {
                     if let Some(command_id) = exact_command_correlation(&observation.correlations) {
+                        // Reconcile every exact target-matched Result while the
+                        // spawn is delivered/running before considering its
+                        // outcome. This makes a stranded failed Result a
+                        // durable promotion fence rather than evidence the
+                        // success-only filter can skip.
                         let qualified_at_result_lsn =
                             commands.get_command(&command_id).is_some_and(|record| {
                                 record.operation.kind == OperationKind::Spawn as i32
@@ -175,23 +178,31 @@ pub fn next_spawn_promotion(
                                     )
                             });
                         if qualified_at_result_lsn {
+                            let failure_code = FailureCode::try_from(observation.failure_code)
+                                .map_err(|_| {
+                                    malformed(
+                                        "promotion producer observed Result with unknown failure code",
+                                    )
+                                })?;
                             if let Some(progress) = facts.get_mut(&command_id) {
-                                if let Some(existing) = progress.successful_result_source.as_ref() {
+                                if let Some(existing) = progress.canonical_result_source.as_ref() {
                                     if existing != &observation {
                                         return Err(fence(
-                                            "promotion producer observed conflicting successful Result evidence",
+                                            "promotion producer observed conflicting Result evidence",
                                         ));
                                     }
                                 } else {
-                                    progress.successful_result =
-                                        Some(SpawnPromotionResultEvidence {
-                                            event_id: Some(event_id),
-                                            command_id: Some(command_id),
-                                            target_scope: observation.target_scope.clone(),
-                                            failure_code: observation.failure_code,
-                                            observed_at: observation.observed_at,
-                                        });
-                                    progress.successful_result_source = Some(observation);
+                                    if failure_code == FailureCode::Unspecified {
+                                        progress.successful_result =
+                                            Some(SpawnPromotionResultEvidence {
+                                                event_id: Some(event_id),
+                                                command_id: Some(command_id),
+                                                target_scope: observation.target_scope.clone(),
+                                                failure_code: observation.failure_code,
+                                                observed_at: observation.observed_at,
+                                            });
+                                    }
+                                    progress.canonical_result_source = Some(observation);
                                 }
                             }
                         }

@@ -17,8 +17,9 @@ use prost::Message;
 
 use super::{
     AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDecisionAppend, AuditedDedupOutcome,
-    CoreGenerationStore, DedupOutcome, GrantAppendOutcome, GrantIdentityKey, RecordedEvent,
-    SpawnPromotionAppend, Storage, StorageError, StoredSnapshot, TargetKey,
+    CoreGenerationStore, DedupOutcome, GrantAppendOutcome, GrantIdentityKey,
+    ObservationTransitionAppend, RecordedEvent, SpawnPromotionAppend, Storage, StorageError,
+    StoredSnapshot, TargetKey,
 };
 use crate::time::{Clock, SystemClock};
 
@@ -546,6 +547,23 @@ where
         reject_generic_special(&source)?;
         self.inner
             .append_audited(authority_domain_id, source, audit)
+            .await
+    }
+
+    async fn append_observation_transition_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        observation: Observation,
+        transition: CommandTransition,
+        audit: AuditRecordDraft,
+    ) -> Result<ObservationTransitionAppend, StorageError> {
+        self.inner
+            .append_observation_transition_audited(
+                authority_domain_id,
+                observation,
+                transition,
+                audit,
+            )
             .await
     }
 

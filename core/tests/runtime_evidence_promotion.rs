@@ -412,7 +412,7 @@ fn parent_grant() -> Grant {
     }
 }
 
-fn successful_result() -> Observation {
+fn result(failure_code: FailureCode) -> Observation {
     Observation {
         authority_domain_id: Some(domain()),
         kind: ObservationKind::Result as i32,
@@ -422,13 +422,17 @@ fn successful_result() -> Observation {
         target_scope: accepted_operation()
             .operation
             .and_then(|operation| operation.target_scope),
-        failure_code: FailureCode::Unspecified as i32,
+        failure_code: failure_code as i32,
         observed_at: Some(Timestamp {
             seconds: 10,
             nanos: 0,
         }),
         ..Observation::default()
     }
+}
+
+fn successful_result() -> Observation {
+    result(FailureCode::Unspecified)
 }
 
 fn valid_prefix() -> Vec<RecordedEvent> {
@@ -591,31 +595,109 @@ fn promotion_producer_keeps_earliest_exact_success_result_retry_on_both_sides_of
         Some(&event_id(9))
     );
 
-    let mut conflicting = valid_prefix();
-    let mut changed_result = successful_result();
-    changed_result.observed_at = Some(Timestamp {
+    let mut changed_time = successful_result();
+    changed_time.observed_at = Some(Timestamp {
         seconds: 11,
         nanos: 0,
     });
-    conflicting.push(recorded(
-        10,
-        StoredEventPayload {
-            kind: StoredEventKind::Observation as i32,
-            payload: changed_result.encode_to_vec(),
-        },
-    ));
-    let error = next_spawn_promotion(
+    let mut changed_payload = successful_result();
+    changed_payload.payload = Some(PayloadEnvelope {
+        payload: vec![1, 2, 3],
+        schema_ref: "adapter.spawn-result".to_owned(),
+        ..PayloadEnvelope::default()
+    });
+    let mut changed_identity = successful_result();
+    changed_identity.sender = Some(ActorEndpointRef {
+        actor_id: Some(ActorId {
+            value: "another-observer".to_owned(),
+        }),
+        ..ActorEndpointRef::default()
+    });
+    for changed_result in [changed_time, changed_payload, changed_identity] {
+        let mut conflicting = valid_prefix();
+        conflicting.push(recorded(
+            10,
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: changed_result.encode_to_vec(),
+            },
+        ));
+        let error = next_spawn_promotion(
+            &domain(),
+            &conflicting,
+            Timestamp {
+                seconds: 10,
+                nanos: 0,
+            },
+        )
+        .expect_err("changed successful evidence is not an exact retry");
+        assert!(error.to_string().contains("conflicting Result evidence"));
+    }
+}
+
+#[test]
+fn promotion_producer_fences_conflicting_result_outcomes_in_both_orders() {
+    for (first, second) in [
+        (FailureCode::ExecutionFailed, FailureCode::Unspecified),
+        (FailureCode::Unspecified, FailureCode::ExecutionFailed),
+    ] {
+        let mut prefix = valid_prefix();
+        prefix.truncate(7);
+        prefix.push(recorded(
+            8,
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: result(first).encode_to_vec(),
+            },
+        ));
+        prefix.push(recorded(
+            9,
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: result(second).encode_to_vec(),
+            },
+        ));
+        prefix.push(recorded(10, encode_staged_successor(&staged())));
+
+        let error = next_spawn_promotion(
+            &domain(),
+            &prefix,
+            Timestamp {
+                seconds: 10,
+                nanos: 0,
+            },
+        )
+        .expect_err("conflicting Result outcomes must fence promotion in either order");
+        assert!(error.to_string().contains("conflicting Result evidence"));
+    }
+}
+
+#[test]
+fn promotion_producer_treats_exact_failed_result_retries_as_one_non_success() {
+    let mut prefix = valid_prefix();
+    prefix.truncate(7);
+    let failed = result(FailureCode::ExecutionFailed);
+    for lsn in [8, 9] {
+        prefix.push(recorded(
+            lsn,
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: failed.encode_to_vec(),
+            },
+        ));
+    }
+    prefix.push(recorded(10, encode_staged_successor(&staged())));
+
+    assert!(next_spawn_promotion(
         &domain(),
-        &conflicting,
+        &prefix,
         Timestamp {
             seconds: 10,
             nanos: 0,
         },
     )
-    .expect_err("changed successful evidence is not an exact retry");
-    assert!(error
-        .to_string()
-        .contains("conflicting successful Result evidence"));
+    .expect("exact failed Result retries are canonical no-ops")
+    .is_none());
 }
 
 #[tokio::test]

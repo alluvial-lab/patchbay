@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-runtime-evidence-promotion-contract
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, security, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-continuation-payload-authority-contract, research-handoff-spawn-claim-registry-contract, research-handoff-spawn-crash-external-effect-evidence-contract]
@@ -110,6 +110,22 @@ Final invariant contract leaf. Target resolution waits on this leaf and the para
 - Discrepancies from design/review: none. This implements the review's preferred dedicated atomic staged append and its permitted earliest-exact-Result producer rule without changing wire contracts. No protobuf or generated artifact changed. Already-corrupt pre-fix duplicate-staged histories remain fail-closed rather than receiving a compatibility repair; this contract leaf is not released and has no verified external durable-data consumer.
 - Adjacent issues parked: none.
 - Verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS** after correcting one pre-final `clone_on_copy` lint; the quoted command then passed in full.
+- Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; 54 vectors, 17 promoted, 22 implementation checks, 38 mutation witnesses, generated bindings clean.
+- Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 9/9 tests.
+- Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 29/29 tests including the real core/adapter restart e2e.
+
+### Leaf 6 round-4 BLOCKER convergence — 2026-08-14
+
+- Execution capability: `openai-codex/gpt-5.6-sol` — caller-selected strongest worker for the security-critical promotion/quarantine/authority boundary. Review weight remains caller-selected `thorough`; this pass advances only to `review` for the independent pass-5 deep re-review.
+- Conflicting-Result fence: `next_spawn_promotion` now reconciles every exact-correlation, exact-target spawn `Result` observed while the command is `delivered`/`running` before outcome filtering. The first full generated `Observation` is canonical; byte/semantic-exact repeats are no-ops, while any changed failure outcome, timestamp, payload, sender/observed identity, or other generated field fails closed. Only a canonical `FailureCode::Unspecified` Result can populate `SpawnPromotionResultEvidence`.
+- Atomic Result/transition append: `Storage::append_observation_transition_audited` is a dedicated fail-closed port implemented by the SQLite writer actor. It validates the typed status/Result, exact command correlation, derived transition outcome/failure, and canonical audit framing, then inserts Observation → CommandTransition → transition-linked audit inside one transaction. A transition insert fault rolls back all three records; authenticated ingress can no longer admit the source-without-transition prefix.
+- Files changed: `core/src/acceptance/observation.rs`; `core/src/session/runtime_evidence.rs`; `core/src/storage/{port,audited,mod,rusqlite}.rs`; `core/tests/{acceptance_observation,runtime_evidence_promotion}.rs`; `server/tests/spawn_completion.rs`.
+- Tests added/extended: `promotion_producer_fences_conflicting_result_outcomes_in_both_orders` covers failure-before-success and success-before-failure; `promotion_producer_treats_exact_failed_result_retries_as_one_non_success` proves failed exact retries remain canonical but non-authoritative; the round-3 exact-success test now also fences changed timestamp, payload, and sender identity; `transition_fault_cannot_strand_authenticated_result_and_legacy_strand_fences_promotion` uses the authenticated adapter route plus a file-backed SQLite transition trigger to prove transactional rollback, then reconstructs the pre-fix stranded source through explicit low-level writes and proves completion remains `(promotion, completion audit, descendant Grant) = (0, 0, 0)`.
+- Mutation kills: removing canonical Result inequality made the two-order conflict oracle fail (`expected Err`, got `None`); treating every repeat as conflicting killed the exact-success retry oracle before staging; restoring the old split Observation then transition writes made the authenticated SQLite trigger oracle observe one stranded Result. Each focused test failed against its mutant; each mutant was reverted with `git restore --worktree`, no mutant was committed, and the restored probes passed.
+- Simplification: reused the existing single-writer SQLite actor, event table, typed audit draft, and full generated `Observation` equality. No side table, wire field, compatibility repair, second producer, or protobuf/generated-contract change was added.
+- Discrepancies from design/review: none. The review's pre-fix fault shape is now asserted in two halves: authenticated ingress proves the source cannot commit when the transition faults, while an explicit low-level legacy-prefix reconstruction proves an already-stranded failed Result still fences promotion. The staged-report idempotency rule and every round-1/2/3 fix were left unchanged.
+- Adjacent issues parked: none.
+- Verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS**.
 - Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; 54 vectors, 17 promoted, 22 implementation checks, 38 mutation witnesses, generated bindings clean.
 - Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 9/9 tests.
 - Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 29/29 tests including the real core/adapter restart e2e.

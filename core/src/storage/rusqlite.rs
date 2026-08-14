@@ -30,8 +30,9 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    runtime_generation_disposition, AuditEventKind, AuditPage, AuditRecord, AuthorityDomainId,
-    DescendantGrant, EventId, FailureCode, Generation, Grant, IdempotencyKey, Lsn,
+    runtime_generation_disposition, typed_correlation, AuditEventKind, AuditPage, AuditRecord,
+    AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, EventId, FailureCode,
+    Generation, Grant, IdempotencyKey, Lsn, Observation, ObservationKind, OperationState,
     QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason, SpawnPromotionCommitted,
     SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
@@ -42,8 +43,8 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use super::port::{
     event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedBatchAppend,
     AuditedDecisionAppend, AuditedDedupOutcome, CoreGenerationStore, DedupOutcome,
-    GrantAppendOutcome, GrantIdentityKey, RecordedEvent, SpawnPromotionAppend, Storage,
-    StorageError, StoredSnapshot, TargetKey,
+    GrantAppendOutcome, GrantIdentityKey, ObservationTransitionAppend, RecordedEvent,
+    SpawnPromotionAppend, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 
 pub const LATEST_SCHEMA_VERSION: u32 = 5;
@@ -705,6 +706,13 @@ enum WriterCommand {
         audit: AuditRecordDraft,
         reply: oneshot::Sender<Result<AuditedAppend, StorageError>>,
     },
+    AppendObservationTransitionAudited {
+        authority_domain_id: String,
+        observation: Box<Observation>,
+        transition: Box<CommandTransition>,
+        audit: AuditRecordDraft,
+        reply: oneshot::Sender<Result<ObservationTransitionAppend, StorageError>>,
+    },
     AppendGrantAudited {
         authority_domain_id: String,
         identity: String,
@@ -903,6 +911,22 @@ async fn writer_actor(
                 reply,
             } => {
                 let result = do_append_audited(&mut db, &authority_domain_id, source, audit);
+                let _ = reply.send(result);
+            }
+            WriterCommand::AppendObservationTransitionAudited {
+                authority_domain_id,
+                observation,
+                transition,
+                audit,
+                reply,
+            } => {
+                let result = do_append_observation_transition_audited(
+                    &mut db,
+                    &authority_domain_id,
+                    *observation,
+                    *transition,
+                    audit,
+                );
                 let _ = reply.send(result);
             }
             WriterCommand::AppendGrantAudited {
@@ -1310,6 +1334,163 @@ fn do_append_audited(
     tx.commit().map_err(map_write_err)?;
     Ok(AuditedAppend {
         source_event_id,
+        audit_event_id,
+    })
+}
+
+fn exact_observation_command_id(observation: &Observation) -> Result<&CommandId, StorageError> {
+    let mut command_id = None;
+    for correlation in &observation.correlations {
+        let Some(typed_correlation::Ref::CommandId(candidate)) = correlation.r#ref.as_ref() else {
+            continue;
+        };
+        if candidate.value.is_empty() {
+            return Err(StorageError::CorruptRecord(
+                "observation transition pair has an empty command correlation".to_owned(),
+            ));
+        }
+        match command_id {
+            None => command_id = Some(candidate),
+            Some(existing) if existing == candidate => {}
+            Some(_) => {
+                return Err(StorageError::CorruptRecord(
+                    "observation transition pair has conflicting command correlations".to_owned(),
+                ));
+            }
+        }
+    }
+    command_id.ok_or_else(|| {
+        StorageError::CorruptRecord(
+            "observation transition pair has no command correlation".to_owned(),
+        )
+    })
+}
+
+fn validate_observation_transition_pair(
+    authority_domain_id: &str,
+    observation: &Observation,
+    transition: &CommandTransition,
+    audit: &AuditRecordDraft,
+) -> Result<(), StorageError> {
+    if authority_domain_id.is_empty()
+        || observation
+            .authority_domain_id
+            .as_ref()
+            .map(|domain| domain.value.as_str())
+            != Some(authority_domain_id)
+    {
+        return Err(StorageError::CorruptRecord(
+            "observation transition pair belongs to another or empty authority domain".to_owned(),
+        ));
+    }
+    let observation_kind = ObservationKind::try_from(observation.kind).map_err(|_| {
+        StorageError::CorruptRecord(
+            "observation transition pair has an unknown observation kind".to_owned(),
+        )
+    })?;
+    let (expected_to, expected_failure) = match observation_kind {
+        ObservationKind::Status => (OperationState::Running, FailureCode::Unspecified),
+        ObservationKind::Result => {
+            let failure = FailureCode::try_from(observation.failure_code).map_err(|_| {
+                StorageError::CorruptRecord(
+                    "observation transition pair has an unknown failure code".to_owned(),
+                )
+            })?;
+            let state = match failure {
+                FailureCode::Unspecified => OperationState::Completed,
+                FailureCode::UnsupportedCommand | FailureCode::DeliveryRejected => {
+                    OperationState::Rejected
+                }
+                _ => OperationState::Failed,
+            };
+            (state, failure)
+        }
+        ObservationKind::Unspecified | ObservationKind::Event | ObservationKind::Delta => {
+            return Err(StorageError::CorruptRecord(
+                "only status/Result Observations may use the atomic transition append".to_owned(),
+            ));
+        }
+    };
+    let command_id = exact_observation_command_id(observation)?;
+    if transition.command_id.as_ref() != Some(command_id)
+        || OperationState::try_from(transition.from_state).is_err()
+        || OperationState::try_from(transition.to_state).ok() != Some(expected_to)
+        || FailureCode::try_from(transition.failure_code).ok() != Some(expected_failure)
+    {
+        return Err(StorageError::CorruptRecord(
+            "derived command transition disagrees with its Observation".to_owned(),
+        ));
+    }
+    let expected_audit_kind = match expected_to {
+        OperationState::Delivered => AuditEventKind::CommandDelivered,
+        OperationState::Running => AuditEventKind::CommandRunning,
+        OperationState::Completed => AuditEventKind::CommandCompleted,
+        OperationState::Rejected => AuditEventKind::CommandRejected,
+        OperationState::Failed => AuditEventKind::CommandFailed,
+        OperationState::Expired => AuditEventKind::CommandExpired,
+        OperationState::Cancelled => AuditEventKind::CommandCancelled,
+        OperationState::Superseded => AuditEventKind::CommandSuperseded,
+        OperationState::Accepted | OperationState::Unspecified => {
+            return Err(StorageError::CorruptRecord(
+                "observation transition pair selected a non-transition state".to_owned(),
+            ));
+        }
+    };
+    let expected_audit_failure =
+        (expected_failure != FailureCode::Unspecified).then_some(expected_failure);
+    if audit.kind != expected_audit_kind
+        || audit.command_id.as_ref() != Some(command_id)
+        || audit.failure_code != expected_audit_failure
+        || audit.reason_code != "command_state_transition"
+    {
+        return Err(StorageError::InvalidAuditRecord(
+            "Observation transition audit does not match the derived lifecycle decision".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn do_append_observation_transition_audited(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    observation: Observation,
+    transition: CommandTransition,
+    mut audit: AuditRecordDraft,
+) -> Result<ObservationTransitionAppend, StorageError> {
+    validate_observation_transition_pair(authority_domain_id, &observation, &transition, &audit)?;
+    audit.source_event_id = None;
+    audit.validate(&AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    })?;
+    let observation_payload = StoredEventPayload {
+        kind: StoredEventKind::Observation as i32,
+        payload: observation.encode_to_vec(),
+    };
+    let transition_payload = StoredEventPayload {
+        kind: StoredEventKind::CommandTransition as i32,
+        payload: transition.encode_to_vec(),
+    };
+    let tx = db.transaction().map_err(map_write_err)?;
+    let (observation_lsn, _) = insert_event(&tx, authority_domain_id, &observation_payload)?;
+    let observation_event_id = event_id(
+        AuthorityDomainId {
+            value: authority_domain_id.to_owned(),
+        },
+        observation_lsn as u64,
+    );
+    let (transition_lsn, _) = insert_event(&tx, authority_domain_id, &transition_payload)?;
+    let transition_event_id = event_id(
+        AuthorityDomainId {
+            value: authority_domain_id.to_owned(),
+        },
+        transition_lsn as u64,
+    );
+    audit.source_event_id = Some(transition_event_id.clone());
+    let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
+    tx.commit().map_err(map_write_err)?;
+    Ok(ObservationTransitionAppend {
+        observation_event_id,
+        transition_event_id,
         audit_event_id,
     })
 }
@@ -2813,6 +2994,29 @@ impl Storage for RusqliteStorage {
             .send(WriterCommand::AppendAudited {
                 authority_domain_id: authority_domain_id.value.clone(),
                 source,
+                audit,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_observation_transition_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        observation: Observation,
+        transition: CommandTransition,
+        audit: AuditRecordDraft,
+    ) -> Result<ObservationTransitionAppend, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendObservationTransitionAudited {
+                authority_domain_id: authority_domain_id.value.clone(),
+                observation: Box::new(observation),
+                transition: Box::new(transition),
                 audit,
                 reply: reply_tx,
             })

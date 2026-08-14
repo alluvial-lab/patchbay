@@ -276,7 +276,7 @@ async fn result_without_failure_emits_completed_transition() {
         }
     ));
     let recorded = events(&storage).await;
-    assert_eq!(recorded.len(), 2);
+    assert_eq!(recorded.len(), 3);
     let transition = decode_transition(&recorded[1]);
     assert_eq!(transition.command_id, Some(command_id()));
     assert_eq!(transition.from_state, OperationState::Delivered as i32);
@@ -435,7 +435,7 @@ async fn delivery_rejected_result_emits_rejected_transition() {
         }
     ));
     let recorded = events(&storage).await;
-    assert_eq!(recorded.len(), 2);
+    assert_eq!(recorded.len(), 3);
     let transition = decode_transition(&recorded[1]);
     assert_eq!(transition.from_state, OperationState::Delivered as i32);
     assert_eq!(transition.to_state, OperationState::Rejected as i32);
@@ -480,7 +480,7 @@ async fn assert_failed_result_preserves_code(failure_code: FailureCode) {
         }
     ));
     let recorded = events(&storage).await;
-    assert_eq!(recorded.len(), 2);
+    assert_eq!(recorded.len(), 3);
     let transition = decode_transition(&recorded[1]);
     assert_eq!(transition.from_state, OperationState::Running as i32);
     assert_eq!(transition.to_state, OperationState::Failed as i32);
@@ -508,7 +508,7 @@ async fn status_emits_running_transition() {
         }
     ));
     let recorded = events(&storage).await;
-    assert_eq!(recorded.len(), 2);
+    assert_eq!(recorded.len(), 3);
     let transition = decode_transition(&recorded[1]);
     assert_eq!(transition.from_state, OperationState::Delivered as i32);
     assert_eq!(transition.to_state, OperationState::Running as i32);

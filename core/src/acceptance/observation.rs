@@ -83,9 +83,10 @@ pub enum IngestResult {
 
 /// Ingest an adapter-reported observation.
 ///
-/// The implied lifecycle transition is validated before the raw observation is
-/// appended. A terminal or otherwise-disallowed candidate therefore cannot
-/// survive as replayable evidence that acquires authority from later events.
+/// The implied lifecycle transition is validated before durability, then the
+/// Observation, derived transition, and transition audit commit atomically. A
+/// terminal, disallowed, or faulted candidate therefore cannot survive as a
+/// replayable source-without-transition prefix that later acquires authority.
 pub async fn ingest_observation<S, L>(
     storage: &S,
     state_lookup: &L,
@@ -95,7 +96,7 @@ where
     S: Storage,
     L: CommandStateLookup,
 {
-    let authority_domain_id = validate_authority_domain(&observation)?;
+    let authority_domain_id = validate_authority_domain(&observation)?.clone();
     let observation_kind = ObservationKind::try_from(observation.kind).ok();
     let Some(candidate) = derive_transition(&observation) else {
         if matches!(observation_kind, Some(ObservationKind::Result))
@@ -109,14 +110,14 @@ where
         }
         let observation_event_id = storage
             .append(
-                authority_domain_id,
+                &authority_domain_id,
                 StoredEventPayload {
                     kind: StoredEventKind::Observation as i32,
                     payload: observation.encode_to_vec(),
                 },
             )
             .await?;
-        validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
+        validate_event_id(&observation_event_id, &authority_domain_id, "observation")?;
         return Ok(IngestResult::Recorded {
             event_id: observation_event_id,
         });
@@ -180,9 +181,9 @@ where
         audit.target_scope = observation.target_scope.clone();
         audit.reason_code = "spawn_completion_deferred".to_owned();
         let observation_event_id = storage
-            .append_decision(authority_domain_id, observation_payload, audit)
+            .append_decision(&authority_domain_id, observation_payload, audit)
             .await?;
-        validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
+        validate_event_id(&observation_event_id, &authority_domain_id, "observation")?;
         return Ok(IngestResult::CompletionDeferred {
             observation_event_id,
         });
@@ -192,9 +193,9 @@ where
     // lifecycle transition.
     if snapshot.state == candidate.to_state {
         let observation_event_id = storage
-            .append(authority_domain_id, observation_payload)
+            .append(&authority_domain_id, observation_payload)
             .await?;
-        validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
+        validate_event_id(&observation_event_id, &authority_domain_id, "observation")?;
         return Ok(IngestResult::Recorded {
             event_id: observation_event_id,
         });
@@ -206,11 +207,6 @@ where
             snapshot.state, candidate.to_state, candidate.command_id
         )));
     }
-
-    let observation_event_id = storage
-        .append(authority_domain_id, observation_payload)
-        .await?;
-    validate_event_id(&observation_event_id, authority_domain_id, "observation")?;
 
     let transition = CommandTransition {
         command_id: Some(candidate.command_id.clone()),
@@ -228,10 +224,6 @@ where
         // correlation flows from the Operation, through the transition, to the
         // slot layer. De-duplicate by reference equality.
         correlations: merge_correlations(&snapshot.correlations, &candidate.correlations),
-    };
-    let transition_payload = StoredEventPayload {
-        kind: StoredEventKind::CommandTransition as i32,
-        payload: transition.encode_to_vec(),
     };
     let audit_kind = match candidate.to_state {
         OperationState::Delivered => patchbay_contracts::patchbay::AuditEventKind::CommandDelivered,
@@ -256,18 +248,33 @@ where
     audit.failure_code =
         (candidate.failure_code != FailureCode::Unspecified).then_some(candidate.failure_code);
     audit.reason_code = "command_state_transition".to_owned();
-    let transition_event_id = storage
-        .append_decision(authority_domain_id, transition_payload, audit)
+    let committed = storage
+        .append_observation_transition_audited(
+            &authority_domain_id,
+            observation,
+            transition,
+            audit,
+        )
         .await?;
     validate_event_id(
-        &transition_event_id,
-        authority_domain_id,
+        &committed.observation_event_id,
+        &authority_domain_id,
+        "observation",
+    )?;
+    validate_event_id(
+        &committed.transition_event_id,
+        &authority_domain_id,
         "command transition",
+    )?;
+    validate_event_id(
+        &committed.audit_event_id,
+        &authority_domain_id,
+        "command transition audit",
     )?;
 
     Ok(IngestResult::Transitioned {
-        observation_event_id,
-        transition_event_id,
+        observation_event_id: committed.observation_event_id,
+        transition_event_id: committed.transition_event_id,
         to_state: candidate.to_state,
     })
 }
