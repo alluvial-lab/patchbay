@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-runtime-evidence-promotion-contract
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, security, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-continuation-payload-authority-contract, research-handoff-spawn-claim-registry-contract, research-handoff-spawn-crash-external-effect-evidence-contract]
@@ -145,6 +145,32 @@ Final invariant contract leaf. Target resolution waits on this leaf and the para
 - Verification group 3 — `./formal/run-model-checks.sh`: **PASS**, 20/20 (11 Quint typechecks plus 9 promoted bounded checks), with model-promotion metadata and generated traceability current.
 - Verification group 4 — `cargo fmt --all --check`: **PASS**. `git diff --check` also passed.
 - Adjacent issues parked: none.
+
+### Leaf 6 round-6 dedicated-writer exclusivity convergence — 2026-08-14
+
+- Execution capability: `openai-codex/gpt-5.6-sol` — caller-selected strongest worker for the security-critical promotion/quarantine/authority boundary. Review weight remains caller-selected `thorough`; this pass advances only to `review` for the independent pass-7 deep re-review.
+- Fix mechanism: `ObservationWriteRoute` and `classify_observation_write_route` are the single typed classifier for the two dedicated Observation writers. After SQLite rebuilds the exact durable command prefix inside the writer transaction, both `append_observation_transition_audited` and `append_spawn_result_deferred_audited` classify the durable `OperationKind`, generated Observation kind, derived state, and failure. `Spawn + Result + Completed + Unspecified` is admitted only by the deferred-evidence writer; the ordinary writer returns `UnsupportedOperation` before any insert. Status plus failed/rejected spawn Results remain on the ordinary Observation → transition → audit transaction. Retry-prefix validation uses the same classifier, removing the prior duplicated route predicate.
+- Files changed: `core/src/storage/port.rs`; `core/src/storage/rusqlite.rs`; `core/tests/runtime_evidence_promotion.rs`; this story record. No protobuf or generated-contract artifact changed.
+- Tests added: `successful_spawn_result_is_exclusive_to_deferred_writer` runs both delivered and running spawn prefixes, proves ordinary zero-write rejection, proves deferred source/audit commit and exact idempotent retry, and replays the command as non-terminal. `non_success_spawn_observations_stay_on_atomic_writer` table-checks valid spawn Status, rejected Result, and failed Result cases through the ordinary boundary and proves the deferred boundary zero-write rejects each. `leaf6_dedicated_writers_have_pairwise_disjoint_admitted_shapes` table-checks the shared classifier, including non-spawn success, then compares every dedicated writer source class pair.
+- Probe/mutation evidence: the new cross-dedicated probe failed against the pre-fix tree because the ordinary writer committed the successful spawn Result. Removing the ordinary writer's route-exclusion guard made `successful_spawn_result_is_exclusive_to_deferred_writer` fail with exit 101. Removing the `OperationKind::Spawn` conjunct from the shared classifier made the pairwise table fail on successful non-spawn Result with exit 101. Both mutants were reverted with `git restore --worktree`; the restored focused tests passed and no mutation remained.
+- Dedicated-writer disjointness audit:
+
+  | Dedicated writer | Admitted source shape | Disjointness evidence |
+  |---|---|---|
+  | `append_observation_transition_audited` | transition-producing Observation except successful spawn `Result → Completed` | shared typed route = `AtomicTransition`; actual valid Status/rejected/failed tests; generic routes remain closed |
+  | `append_spawn_result_deferred_audited` | successful spawn Result at delivered/running, persisted as Observation + deferred audit without transition | shared typed route = `DeferredSpawnResult`; cross-writer zero-write probe and exact retry test |
+  | `append_spawn_successor_staged_idempotent` | typed `SpawnSuccessorEvidenceStaged` outer event | distinct Rust input/envelope and `StoredEventKind::SpawnSuccessorEvidenceStaged`; existing dedicated identity/retry/replay test |
+  | `append_quarantined_runtime_evidence_audited` | typed `QuarantinedRuntimeEvidence` outer event + stale audit | distinct Rust input/envelope and `StoredEventKind::QuarantinedRuntimeEvidence`; existing canonical-context/outer-only tests |
+  | `append_spawn_promotion_audited` | typed unstamped `SpawnPromotionCommitted` outer event + completion audit | distinct Rust input/envelope and `StoredEventKind::SpawnPromotionCommitted`; existing stamp/rollback/aggregate-replay tests |
+
+  The only same-outer-kind overlap was the two Observation writers; the shared durable-command-aware classifier closes it. The other three writers have pairwise-distinct typed method inputs and outer stored-event kinds, and their existing canonical validators found no further admitted-shape overlap.
+- Simplification: replaced the replay validator's duplicate spawn-success route test with the shared classifier; no side table, wire field, compatibility repair, or additional writer was introduced.
+- Discrepancies from design/review: none. The fix follows the review's authoritative concrete fix and preserves all round-1 through round-5 boundaries.
+- Adjacent issues parked: none.
+- Verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS**, including the new route-classification unit test, 25 runtime-evidence promotion tests, server integration, doctests, and warnings-denied clippy.
+- Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; generated bindings clean, 54 vectors, 17 promoted vectors, 22 implementation checks, and 38 mutation witnesses.
+- Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 9/9 tests.
+- Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 29/29 tests including the real core/adapter restart e2e.
 
 ## Verification evidence
 

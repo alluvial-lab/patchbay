@@ -41,10 +41,11 @@ use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 use super::port::{
-    event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedBatchAppend,
-    AuditedDecisionAppend, AuditedDedupOutcome, CoreGenerationStore, DedupOutcome,
-    GrantAppendOutcome, GrantIdentityKey, ObservationTransitionAppend, RecordedEvent,
-    SpawnPromotionAppend, Storage, StorageError, StoredSnapshot, TargetKey,
+    classify_observation_write_route, event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend,
+    AuditedBatchAppend, AuditedDecisionAppend, AuditedDedupOutcome, CoreGenerationStore,
+    DedupOutcome, GrantAppendOutcome, GrantIdentityKey, ObservationTransitionAppend,
+    ObservationWriteRoute, RecordedEvent, SpawnPromotionAppend, Storage, StorageError,
+    StoredSnapshot, TargetKey,
 };
 
 pub const LATEST_SCHEMA_VERSION: u32 = 5;
@@ -1496,6 +1497,30 @@ fn validate_observation_transition_pair(
     Ok(())
 }
 
+fn durable_observation_write_route(
+    operation_kind: i32,
+    observation: &Observation,
+    candidate: &crate::acceptance::TransitionCandidate,
+) -> Result<ObservationWriteRoute, StorageError> {
+    let operation_kind = OperationKind::try_from(operation_kind).map_err(|_| {
+        StorageError::CorruptRecord(
+            "durable command has an unknown OperationKind at the Observation writer boundary"
+                .to_owned(),
+        )
+    })?;
+    let observation_kind = ObservationKind::try_from(observation.kind).map_err(|_| {
+        StorageError::CorruptRecord(
+            "Observation writer candidate has an unknown ObservationKind".to_owned(),
+        )
+    })?;
+    Ok(classify_observation_write_route(
+        operation_kind,
+        observation_kind,
+        candidate.to_state,
+        candidate.failure_code,
+    ))
+}
+
 #[derive(Debug)]
 struct QualifiedObservation {
     observation_event_id: EventId,
@@ -1621,10 +1646,12 @@ fn validate_observation_prefix(
                             validated.lsn
                         )));
                     }
-                    let is_deferred_spawn = record.operation.kind == OperationKind::Spawn as i32
-                        && durable_candidate.to_state == OperationState::Completed
-                        && durable_candidate.failure_code == FailureCode::Unspecified;
-                    let qualified = if is_deferred_spawn {
+                    let route = durable_observation_write_route(
+                        record.operation.kind,
+                        &durable,
+                        &durable_candidate,
+                    )?;
+                    let qualified = if route == ObservationWriteRoute::DeferredSpawnResult {
                         if !matches!(
                             record.state,
                             OperationState::Delivered | OperationState::Running
@@ -1763,6 +1790,24 @@ fn do_append_observation_transition_audited(
     let tx = db.transaction().map_err(map_write_err)?;
     let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
     let validated = validate_observation_prefix(&events, &domain, &observation)?;
+    let command_id = exact_observation_command_id(&observation)?;
+    let record = validated.commands.get_command(command_id).ok_or_else(|| {
+        StorageError::CorruptRecord(format!(
+            "Observation transition references missing command {}",
+            command_id.value
+        ))
+    })?;
+    let candidate = crate::acceptance::derive_transition(&observation).ok_or_else(|| {
+        StorageError::CorruptRecord(
+            "Observation transition writer requires a transition-producing status/Result"
+                .to_owned(),
+        )
+    })?;
+    if durable_observation_write_route(record.operation.kind, &observation, &candidate)?
+        != ObservationWriteRoute::AtomicTransition
+    {
+        return Err(StorageError::UnsupportedOperation);
+    }
     if let Some(existing) = validated.exact {
         let transition_event_id = existing.transition_event_id.ok_or_else(|| {
             StorageError::CorruptRecord(
@@ -1777,13 +1822,6 @@ fn do_append_observation_transition_audited(
         });
     }
 
-    let command_id = exact_observation_command_id(&observation)?;
-    let record = validated.commands.get_command(command_id).ok_or_else(|| {
-        StorageError::CorruptRecord(format!(
-            "Observation transition references missing command {}",
-            command_id.value
-        ))
-    })?;
     if record.operation.target_scope != observation.target_scope {
         return Err(StorageError::CorruptRecord(format!(
             "Observation transition target disagrees with durable command {}",
@@ -1890,6 +1928,22 @@ fn do_append_spawn_result_deferred_audited(
     let tx = db.transaction().map_err(map_write_err)?;
     let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
     let validated = validate_observation_prefix(&events, &domain, &observation)?;
+    let record = validated.commands.get_command(&command_id).ok_or_else(|| {
+        StorageError::CorruptRecord(format!(
+            "deferred spawn Result references missing command {}",
+            command_id.value
+        ))
+    })?;
+    let candidate = crate::acceptance::derive_transition(&observation).ok_or_else(|| {
+        StorageError::CorruptRecord(
+            "deferred spawn Result must produce the successful completion candidate".to_owned(),
+        )
+    })?;
+    if durable_observation_write_route(record.operation.kind, &observation, &candidate)?
+        != ObservationWriteRoute::DeferredSpawnResult
+    {
+        return Err(StorageError::UnsupportedOperation);
+    }
     if let Some(existing) = validated.exact {
         if existing.transition_event_id.is_some() {
             return Err(StorageError::CorruptRecord(
@@ -1908,14 +1962,7 @@ fn do_append_spawn_result_deferred_audited(
             existing_lsn,
         });
     }
-    let record = validated.commands.get_command(&command_id).ok_or_else(|| {
-        StorageError::CorruptRecord(format!(
-            "deferred spawn Result references missing command {}",
-            command_id.value
-        ))
-    })?;
-    if record.operation.kind != OperationKind::Spawn as i32
-        || record.operation.target_scope != observation.target_scope
+    if record.operation.target_scope != observation.target_scope
         || !matches!(
             record.state,
             OperationState::Delivered | OperationState::Running

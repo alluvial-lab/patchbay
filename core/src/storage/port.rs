@@ -23,8 +23,8 @@
 use patchbay_contracts::patchbay::{
     ActorId, AdapterDiagnosticDetail, AuditEventKind, AuditPage, AuthorityDomainId, CommandId,
     CommandTransition, EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn,
-    Observation, QuarantinedRuntimeEvidence, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged,
-    StoredEventPayload, TargetScope,
+    Observation, ObservationKind, OperationKind, OperationState, QuarantinedRuntimeEvidence,
+    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventPayload, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -306,6 +306,39 @@ pub struct ObservationTransitionAppend {
     pub observation_event_id: EventId,
     pub transition_event_id: EventId,
     pub audit_event_id: EventId,
+}
+
+/// Exclusive durable route for a transition-producing Observation.
+///
+/// Successful spawn Results are evidence for the promotion owner and must not
+/// terminalize through the ordinary Observation+transition writer. Every other
+/// validated status/Result transition remains on the ordinary atomic boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ObservationWriteRoute {
+    AtomicTransition,
+    DeferredSpawnResult,
+}
+
+/// Classify the one semantic overlap between the dedicated Observation writers.
+///
+/// Callers supply generated enum values only after rebuilding the referenced
+/// durable command in the writer transaction. Keeping this predicate shared by
+/// both writers makes their admitted Observation sets complementary.
+pub(crate) fn classify_observation_write_route(
+    operation_kind: OperationKind,
+    observation_kind: ObservationKind,
+    to_state: OperationState,
+    failure_code: FailureCode,
+) -> ObservationWriteRoute {
+    if operation_kind == OperationKind::Spawn
+        && observation_kind == ObservationKind::Result
+        && to_state == OperationState::Completed
+        && failure_code == FailureCode::Unspecified
+    {
+        ObservationWriteRoute::DeferredSpawnResult
+    } else {
+        ObservationWriteRoute::AtomicTransition
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -642,8 +675,10 @@ pub trait Storage: Send + Sync {
     /// derived command transition, and the transition's audit record. The
     /// implementation must rebuild the exact durable command prefix inside the
     /// writer transaction, validate and stage the candidate pair before insert,
-    /// and return the canonical source for an exact retry. Generic append paths
-    /// must reject every Observation shape admitted here.
+    /// and return the canonical source for an exact retry. Successful spawn
+    /// Result → completed is excluded and belongs only to
+    /// `append_spawn_result_deferred_audited`; generic append paths must reject
+    /// every Observation shape admitted here.
     fn append_observation_transition_audited(
         &self,
         _authority_domain_id: &AuthorityDomainId,
@@ -830,5 +865,101 @@ pub fn event_id(authority_domain_id: AuthorityDomainId, lsn: u64) -> EventId {
     EventId {
         authority_domain_id: Some(authority_domain_id),
         lsn: Some(Lsn { value: lsn }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use patchbay_contracts::patchbay::StoredEventKind;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum DedicatedSourceClass {
+        Observation(ObservationWriteRoute),
+        Envelope(StoredEventKind),
+    }
+
+    #[test]
+    fn leaf6_dedicated_writers_have_pairwise_disjoint_admitted_shapes() {
+        let observation_cases = [
+            (
+                "spawn status",
+                OperationKind::Spawn,
+                ObservationKind::Status,
+                OperationState::Running,
+                FailureCode::Unspecified,
+                ObservationWriteRoute::AtomicTransition,
+            ),
+            (
+                "failed spawn Result",
+                OperationKind::Spawn,
+                ObservationKind::Result,
+                OperationState::Failed,
+                FailureCode::ExecutionFailed,
+                ObservationWriteRoute::AtomicTransition,
+            ),
+            (
+                "rejected spawn Result",
+                OperationKind::Spawn,
+                ObservationKind::Result,
+                OperationState::Rejected,
+                FailureCode::UnsupportedCommand,
+                ObservationWriteRoute::AtomicTransition,
+            ),
+            (
+                "successful spawn Result",
+                OperationKind::Spawn,
+                ObservationKind::Result,
+                OperationState::Completed,
+                FailureCode::Unspecified,
+                ObservationWriteRoute::DeferredSpawnResult,
+            ),
+            (
+                "successful non-spawn Result",
+                OperationKind::Query,
+                ObservationKind::Result,
+                OperationState::Completed,
+                FailureCode::Unspecified,
+                ObservationWriteRoute::AtomicTransition,
+            ),
+        ];
+        for (name, operation, observation, state, failure, expected) in observation_cases {
+            assert_eq!(
+                classify_observation_write_route(operation, observation, state, failure),
+                expected,
+                "wrong dedicated Observation writer for {name}"
+            );
+        }
+
+        let writers = [
+            (
+                "append_observation_transition_audited",
+                DedicatedSourceClass::Observation(ObservationWriteRoute::AtomicTransition),
+            ),
+            (
+                "append_spawn_result_deferred_audited",
+                DedicatedSourceClass::Observation(ObservationWriteRoute::DeferredSpawnResult),
+            ),
+            (
+                "append_spawn_successor_staged_idempotent",
+                DedicatedSourceClass::Envelope(StoredEventKind::SpawnSuccessorEvidenceStaged),
+            ),
+            (
+                "append_quarantined_runtime_evidence_audited",
+                DedicatedSourceClass::Envelope(StoredEventKind::QuarantinedRuntimeEvidence),
+            ),
+            (
+                "append_spawn_promotion_audited",
+                DedicatedSourceClass::Envelope(StoredEventKind::SpawnPromotionCommitted),
+            ),
+        ];
+        for (index, (left_name, left_class)) in writers.iter().enumerate() {
+            for (right_name, right_class) in &writers[index + 1..] {
+                assert_ne!(
+                    left_class, right_class,
+                    "dedicated writers {left_name} and {right_name} admit the same source class"
+                );
+            }
+        }
     }
 }

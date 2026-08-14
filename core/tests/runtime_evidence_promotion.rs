@@ -952,6 +952,200 @@ async fn transition_observations_are_exclusive_from_every_generic_storage_route(
     }
 }
 
+#[tokio::test]
+async fn non_success_spawn_observations_stay_on_atomic_writer() {
+    struct Case {
+        name: &'static str,
+        prefix_len: usize,
+        from_state: OperationState,
+        to_state: OperationState,
+        failure: FailureCode,
+        observation_kind: ObservationKind,
+    }
+
+    for case in [
+        Case {
+            name: "status",
+            prefix_len: 6,
+            from_state: OperationState::Delivered,
+            to_state: OperationState::Running,
+            failure: FailureCode::Unspecified,
+            observation_kind: ObservationKind::Status,
+        },
+        Case {
+            name: "rejected Result",
+            prefix_len: 6,
+            from_state: OperationState::Delivered,
+            to_state: OperationState::Rejected,
+            failure: FailureCode::UnsupportedCommand,
+            observation_kind: ObservationKind::Result,
+        },
+        Case {
+            name: "failed Result",
+            prefix_len: 7,
+            from_state: OperationState::Running,
+            to_state: OperationState::Failed,
+            failure: FailureCode::ExecutionFailed,
+            observation_kind: ObservationKind::Result,
+        },
+    ] {
+        let mut observation = result(case.failure);
+        observation.kind = case.observation_kind as i32;
+        let transition = CommandTransition {
+            command_id: Some(command()),
+            from_state: case.from_state as i32,
+            to_state: case.to_state as i32,
+            failure_code: case.failure as i32,
+            ..CommandTransition::default()
+        };
+
+        let ordinary = RusqliteStorage::open_in_memory().unwrap();
+        let mut prefix = valid_prefix();
+        prefix.truncate(case.prefix_len);
+        append_prefix(&ordinary, prefix.clone()).await;
+        let committed = ordinary
+            .append_observation_transition_audited(
+                &domain(),
+                observation.clone(),
+                transition,
+                transition_audit(command(), case.to_state, case.failure),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("{} must stay on atomic writer: {error}", case.name));
+        assert_eq!(
+            committed.observation_event_id,
+            event_id(case.prefix_len as u64 + 1)
+        );
+        assert_eq!(
+            committed.transition_event_id,
+            event_id(case.prefix_len as u64 + 2)
+        );
+        assert_eq!(
+            committed.audit_event_id,
+            event_id(case.prefix_len as u64 + 3)
+        );
+
+        let deferred = RusqliteStorage::open_in_memory().unwrap();
+        append_prefix(&deferred, prefix).await;
+        let before = deferred
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap();
+        assert!(
+            deferred
+                .append_spawn_result_deferred_audited(
+                    &domain(),
+                    observation,
+                    deferred_result_audit(),
+                )
+                .await
+                .is_err(),
+            "{} must not enter the deferred-success writer",
+            case.name
+        );
+        assert_eq!(
+            deferred
+                .read_after(&domain(), Lsn { value: 0 })
+                .await
+                .unwrap(),
+            before,
+            "wrong dedicated route must zero-write reject {}",
+            case.name
+        );
+    }
+}
+
+#[tokio::test]
+async fn successful_spawn_result_is_exclusive_to_deferred_writer() {
+    for (prefix_len, from_state) in [(6, OperationState::Delivered), (7, OperationState::Running)] {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let mut prefix = valid_prefix();
+        prefix.truncate(prefix_len);
+        append_prefix(&storage, prefix).await;
+
+        let before_ordinary = storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap();
+        let observation = successful_result();
+        let transition = CommandTransition {
+            command_id: Some(command()),
+            from_state: from_state as i32,
+            to_state: OperationState::Completed as i32,
+            failure_code: FailureCode::Unspecified as i32,
+            ..CommandTransition::default()
+        };
+        assert!(matches!(
+            storage
+                .append_observation_transition_audited(
+                    &domain(),
+                    observation.clone(),
+                    transition,
+                    transition_audit(
+                        command(),
+                        OperationState::Completed,
+                        FailureCode::Unspecified,
+                    ),
+                )
+                .await,
+            Err(StorageError::UnsupportedOperation)
+        ));
+        assert_eq!(
+            storage
+                .read_after(&domain(), Lsn { value: 0 })
+                .await
+                .unwrap(),
+            before_ordinary,
+            "ordinary atomic writer must zero-write reject successful spawn Result from {from_state:?}"
+        );
+
+        let first = storage
+            .append_spawn_result_deferred_audited(
+                &domain(),
+                observation.clone(),
+                deferred_result_audit(),
+            )
+            .await
+            .expect("successful spawn Result commits only as deferred evidence");
+        assert_eq!(
+            first.source_event_id,
+            event_id(prefix_len as u64 + 1),
+            "deferred source follows the unchanged prefix"
+        );
+        assert_eq!(first.audit_event_id, event_id(prefix_len as u64 + 2));
+        let before_retry = storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap();
+        let retry = storage
+            .append_spawn_result_deferred_audited(&domain(), observation, deferred_result_audit())
+            .await
+            .expect("exact deferred retry reconciles to the original pair");
+        assert_eq!(retry, first);
+        assert_eq!(
+            storage
+                .read_after(&domain(), Lsn { value: 0 })
+                .await
+                .unwrap(),
+            before_retry,
+            "deferred retry must append nothing"
+        );
+
+        let replayed = patchbay_core::acceptance::rebuild_from_log(&storage, &domain())
+            .await
+            .expect("deferred evidence prefix remains replayable");
+        assert_eq!(
+            replayed.get_command(&command()).unwrap().state,
+            from_state,
+            "deferred success must not terminalize the spawn"
+        );
+        assert!(before_retry.iter().all(|event| {
+            event.payload.kind != StoredEventKind::SpawnPromotionCommitted as i32
+                && event.payload.kind != StoredEventKind::DescendantGrant as i32
+        }));
+    }
+}
+
 async fn assert_atomic_transition_rejected_without_writes(
     storage: &RusqliteStorage,
     observation: Observation,
