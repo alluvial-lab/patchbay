@@ -453,6 +453,17 @@ pub enum StorageError {
         existing_lsn: u64,
     },
 
+    /// One exact external runtime is already reserved by another logical
+    /// target. This is a protocol conflict, not corrupt storage: the first
+    /// owner remains authoritative and the attempted staging append is inert.
+    #[error(
+        "duplicate-native-reference: exact external runtime is owned by {owner}, not {attempted_owner}"
+    )]
+    DuplicateNativeReference {
+        owner: String,
+        attempted_owner: String,
+    },
+
     /// A transition-producing Observation retry disagrees with the canonical
     /// durable evidence already recorded for the same command and target.
     /// Dedicated Observation boundaries return this before another source,

@@ -1804,19 +1804,7 @@ fn classifier_admits_only_the_exact_active_claimed_successor() {
     }
     let mut adapters = AdapterRegistry::new();
     adapters.observe(&prefix[0]).unwrap();
-    let mut sessions = SessionRegistry::new(domain()).unwrap();
-    sessions
-        .logical_targets_mut()
-        .create(
-            LogicalTargetId {
-                value: "logical-a".to_owned(),
-            },
-            AdapterId {
-                value: "pi".to_owned(),
-            },
-            "machine-a".to_owned(),
-        )
-        .unwrap();
+    let sessions = SessionRegistry::new(domain()).unwrap();
 
     let exact = classify_session_report(
         &domain(),
@@ -1911,10 +1899,28 @@ fn classifier_kills_each_attachment_claim_prior_deployment_and_generation_mutati
         &source_attachment(),
         &base_sessions
     ));
+    let mut wrong_adapter = report("spawn-a");
+    wrong_adapter.adapter_id = Some(AdapterId {
+        value: "other".to_owned(),
+    });
+    assert!(!is_claimed(
+        &wrong_adapter,
+        &source_attachment(),
+        &base_sessions
+    ));
     let mut wrong_deployment = report("spawn-a");
     wrong_deployment.deployment_scope = "machine-b".to_owned();
     assert!(!is_claimed(
         &wrong_deployment,
+        &source_attachment(),
+        &base_sessions
+    ));
+    let mut malformed_runtime = report("spawn-a");
+    malformed_runtime.runtime_session_id = Some(RuntimeSessionId {
+        value: String::new(),
+    });
+    assert!(!is_claimed(
+        &malformed_runtime,
         &source_attachment(),
         &base_sessions
     ));
@@ -1967,6 +1973,57 @@ fn classifier_kills_each_attachment_claim_prior_deployment_and_generation_mutati
         unauthenticated_current.disposition,
         Some(runtime_generation_disposition::Disposition::Current(_))
     ));
+}
+
+#[test]
+fn duplicate_staged_runtime_rejection_is_atomic_for_a_fresh_hot_fold() {
+    let mut sessions = SessionRegistry::new(domain()).unwrap();
+    sessions
+        .observe(&recorded(1, encode_staged_successor(&staged())))
+        .expect("first fresh target reserves the external runtime");
+    let before = sessions.clone();
+
+    let mut duplicate = staged();
+    let duplicate_command = CommandId {
+        value: "spawn-b".to_owned(),
+    };
+    let duplicate_target = LogicalTargetId {
+        value: "logical-b".to_owned(),
+    };
+    let claim = duplicate.exact_claim.as_mut().unwrap();
+    claim.claim_operation_id = Some(duplicate_command.clone());
+    claim.logical_target_id = Some(duplicate_target.clone());
+    duplicate
+        .report
+        .as_mut()
+        .unwrap()
+        .spawn_origin
+        .as_mut()
+        .unwrap()
+        .r#ref = Some(typed_correlation::Ref::CommandId(duplicate_command.clone()));
+    duplicate
+        .classified_target
+        .as_mut()
+        .unwrap()
+        .logical_target_id = Some(duplicate_target.clone());
+    let Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(disposition)) =
+        duplicate
+            .disposition
+            .as_mut()
+            .and_then(|value| value.disposition.as_mut())
+    else {
+        panic!("staged fixture has claimed-successor disposition")
+    };
+    disposition.claim_operation_id = Some(duplicate_command);
+
+    assert!(matches!(
+        sessions.observe(&recorded(2, encode_staged_successor(&duplicate))),
+        Err(patchbay_core::session::SessionError::LogicalTarget(
+            patchbay_core::session::LogicalTargetError::DuplicateNativeReference { .. }
+        ))
+    ));
+    assert_eq!(sessions, before);
+    assert!(sessions.logical_targets().get(&duplicate_target).is_none());
 }
 
 #[test]

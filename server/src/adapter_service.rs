@@ -12,9 +12,8 @@ use patchbay_contracts::patchbay::{
     AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport, AttachRequest, AttachResult,
     AuthorityDomainId, Delivery, EventId, FailureCode, Generation, Observation, ObservationRequest,
     ObservationResult, OperationState, ReceiveRequest, RuntimeEvidenceQuarantineReason,
-    RuntimeEvidenceSourceAttachment, RuntimeGenerationClaimedSuccessor,
-    RuntimeGenerationDisposition, RuntimeGenerationRef, SpawnClaimAccepted, SpawnClaimDisposition,
-    SpawnClaimEvent, SpawnEvidenceAttachment, SpawnExecutionEvidenceProducer,
+    RuntimeEvidenceSourceAttachment, RuntimeGenerationDisposition, RuntimeGenerationRef,
+    SpawnClaimAccepted, SpawnClaimEvent, SpawnEvidenceAttachment, SpawnExecutionEvidenceProducer,
     SpawnSuccessorEvidenceStaged, StoredEventKind, TargetScopeKind,
 };
 use patchbay_core::{
@@ -417,17 +416,57 @@ async fn append_quarantined_session_report<S: Storage>(
         .map_err(map_storage_error_to_status)
 }
 
+async fn existing_staged_successor_retry<S: Storage>(
+    storage: &S,
+    domain: &AuthorityDomainId,
+    report: &patchbay_contracts::patchbay::SessionReport,
+    source_attachment: &RuntimeEvidenceSourceAttachment,
+    claim_record: &session::SpawnClaimRecord,
+) -> Result<Option<EventId>, Status> {
+    let events = storage
+        .read_after(domain, patchbay_contracts::patchbay::Lsn { value: 0 })
+        .await
+        .map_err(map_storage_error_to_status)?;
+    let mut exact = None;
+    for event in events {
+        if event.payload.kind != StoredEventKind::SpawnSuccessorEvidenceStaged as i32 {
+            continue;
+        }
+        let staged = SpawnSuccessorEvidenceStaged::decode(event.payload.payload.as_slice())
+            .map_err(|error| {
+                Status::internal(format!("cannot decode durable staged successor: {error}"))
+            })?;
+        session::validate_staged_successor(&staged)
+            .map_err(|error| Status::internal(error.to_string()))?;
+        if staged.exact_claim.as_ref() == Some(&claim_record.claim)
+            && staged.report.as_ref() == Some(report)
+            && staged.source_attachment.as_ref() == Some(source_attachment)
+            && exact.replace(event.event_id).is_some()
+        {
+            return Err(Status::internal(
+                "durable prefix contains duplicate exact staged-successor evidence",
+            ));
+        }
+    }
+    Ok(exact)
+}
+
 fn staged_successor_for_claim(
     domain: &AuthorityDomainId,
     report: patchbay_contracts::patchbay::SessionReport,
     source_attachment: RuntimeEvidenceSourceAttachment,
     claim_record: &session::SpawnClaimRecord,
+    disposition: RuntimeGenerationDisposition,
 ) -> Result<SpawnSuccessorEvidenceStaged, Status> {
+    if !matches!(
+        disposition.disposition.as_ref(),
+        Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_))
+    ) {
+        return Err(Status::failed_precondition(
+            "only the shared ClaimedSuccessor classification may stage a managed report",
+        ));
+    }
     let claim = claim_record.claim.clone();
-    let command_id = claim
-        .claim_operation_id
-        .clone()
-        .ok_or_else(|| Status::internal("spawn claim has no operation id"))?;
     let external = patchbay_contracts::patchbay::ExternalRuntimeRef {
         adapter_id: report.adapter_id.clone(),
         deployment_scope: report.deployment_scope.clone(),
@@ -442,17 +481,7 @@ fn staged_successor_for_claim(
             logical_target_id: claim.logical_target_id.clone(),
             external_runtime: Some(external.clone()),
         }),
-        disposition: Some(RuntimeGenerationDisposition {
-            disposition: Some(
-                runtime_generation_disposition::Disposition::ClaimedSuccessor(
-                    RuntimeGenerationClaimedSuccessor {
-                        claim_operation_id: Some(command_id),
-                        expected_prior: claim.expected_prior,
-                        claimed_generation: claim.claimed_generation,
-                    },
-                ),
-            ),
-        }),
+        disposition: Some(disposition),
         source_attachment: Some(source_attachment),
         external_runtime_reservation: Some(external),
     };
@@ -1185,14 +1214,28 @@ where
                     disposition.disposition.as_ref(),
                     Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_))
                 );
-                let retrying_existing_stage = correlated_claim.is_some_and(|record| {
-                    matches!(
-                        record.disposition,
-                        SpawnClaimDisposition::PoisonedPendingReconciliation
-                            | SpawnClaimDisposition::Promoted
-                    )
-                });
-                if claimed_successor || retrying_existing_stage {
+                if !claimed_successor {
+                    if let Some(claim_record) = correlated_claim {
+                        // This is reconciliation only, never admission: the
+                        // shared classifier has already refused a new stage.
+                        // An immutable exact staged envelope may still predate
+                        // claim poison/promotion and an RPC response loss.
+                        if let Some(event_id) = existing_staged_successor_retry(
+                            &self.storage,
+                            &domain,
+                            &report,
+                            &source_attachment,
+                            claim_record,
+                        )
+                        .await?
+                        {
+                            return Ok(Response::new(ObservationResult {
+                                event_id: Some(event_id),
+                            }));
+                        }
+                    }
+                }
+                if claimed_successor {
                     let claim_record = correlated_claim.ok_or_else(|| {
                         Status::internal("managed successor report lost its durable claim")
                     })?;
@@ -1201,6 +1244,7 @@ where
                         report,
                         source_attachment,
                         claim_record,
+                        disposition,
                     )?;
                     let event_id = self
                         .storage

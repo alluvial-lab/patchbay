@@ -2809,6 +2809,12 @@ fn do_append_spawn_successor_staged_idempotent(
         .as_ref()
         .expect("staged successor validated")
         .clone();
+    let attempted_owner = staged
+        .classified_target
+        .as_ref()
+        .and_then(|target| target.logical_target_id.as_ref())
+        .expect("staged successor validated")
+        .clone();
 
     let tx = db.transaction().map_err(map_write_err)?;
     let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
@@ -2834,6 +2840,17 @@ fn do_append_spawn_successor_staged_idempotent(
             .external_runtime_reservation
             .as_ref()
             .expect("durable staged successor validated");
+        let existing_owner = existing
+            .classified_target
+            .as_ref()
+            .and_then(|target| target.logical_target_id.as_ref())
+            .expect("durable staged successor validated");
+        if existing_external == &external && existing_owner != &attempted_owner {
+            return Err(StorageError::DuplicateNativeReference {
+                owner: existing_owner.value.clone(),
+                attempted_owner: attempted_owner.value.clone(),
+            });
+        }
         if existing_command == &command_id || existing_external == &external {
             let existing_lsn = event
                 .event_id
@@ -2918,9 +2935,18 @@ fn do_append_spawn_successor_staged_idempotent(
         event_id: event_id(domain.clone(), previous_lsn.saturating_add(1)),
         payload: source.clone(),
     };
-    sessions
-        .observe(&candidate)
-        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    sessions.observe(&candidate).map_err(|error| match error {
+        crate::session::SessionError::LogicalTarget(
+            crate::session::LogicalTargetError::DuplicateNativeReference {
+                owner,
+                attempted_owner,
+            },
+        ) => StorageError::DuplicateNativeReference {
+            owner: owner.value,
+            attempted_owner: attempted_owner.value,
+        },
+        other => StorageError::CorruptRecord(other.to_string()),
+    })?;
     let (source_lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
     if source_lsn as u64 != previous_lsn.saturating_add(1) {
         return Err(StorageError::CorruptRecord(format!(

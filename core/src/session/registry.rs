@@ -522,7 +522,12 @@ impl SessionRegistry {
             .logical_target_id
             .as_ref()
             .expect("staged successor validated");
-        if self.logical_targets.get(logical_target_id).is_none() {
+        // Fresh staging may create the stable target and then discover that
+        // another target already owns the candidate runtime. Fold through a
+        // private identity projection so that rejection cannot leak the empty
+        // target into a hot projection.
+        let mut logical_targets = self.logical_targets.clone();
+        if logical_targets.get(logical_target_id).is_none() {
             let claim = staged
                 .exact_claim
                 .as_ref()
@@ -533,7 +538,7 @@ impl SessionRegistry {
                 ));
             }
             let report = staged.report.as_ref().expect("staged successor validated");
-            self.logical_targets.create(
+            logical_targets.create(
                 logical_target_id.clone(),
                 report
                     .adapter_id
@@ -542,13 +547,14 @@ impl SessionRegistry {
                 report.deployment_scope.clone(),
             )?;
         }
-        self.logical_targets.reserve_candidate(
+        logical_targets.reserve_candidate(
             logical_target_id,
             staged
                 .external_runtime_reservation
                 .clone()
                 .expect("staged successor validated"),
         )?;
+        self.logical_targets = logical_targets;
         Ok(())
     }
 

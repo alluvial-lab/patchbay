@@ -4,19 +4,20 @@ use std::sync::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, resource_report, resource_report_mutation, spawn_claim_event,
-    spawn_request, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
-    AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport,
+    observation_request, resource_report, resource_report_mutation, session_state_event,
+    spawn_claim_event, spawn_request, typed_correlation, AcceptedOperation, ActorEndpointRef,
+    ActorId, AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport,
     AdapterDiagnosticSeverity, AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory,
     AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition,
     ContinuationAuthorityProvenance, EndpointId, ExternalRuntimeRef, FailureCode, FreshSpawn,
-    Generation, GrantId, IdempotencyKey, LogicalTargetCreated, LogicalTargetId, Lsn, Observation,
-    ObservationKind, Operation, OperationKind, PayloadContentType, PayloadEnvelope, ReceiveRequest,
-    ResourceCapability, ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind,
-    ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshotReport,
-    ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport, RuntimeGenerationRef,
-    RuntimeSessionId, SchemaDescriptor, SecurityLockdownEntered, SessionActivityState,
-    SessionConnectivityState, SessionReportSourceCursor, SpawnClaimAccepted, SpawnClaimEvent,
+    Generation, GrantId, IdempotencyKey, LogicalTargetCreated, LogicalTargetId,
+    LogicalTargetInitialCurrentAssigned, Lsn, Observation, ObservationKind, Operation,
+    OperationKind, PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability,
+    ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind, ResourceProjectionContract,
+    ResourceReport, ResourceReportMutation, ResourceSnapshotReport, ResourceStateUnknown,
+    ResourceStateUpsert, ResourceViewReport, RuntimeGenerationRef, RuntimeSessionId,
+    SchemaDescriptor, SecurityLockdownEntered, SessionActivityState, SessionConnectivityState,
+    SessionReportSourceCursor, SessionStateEvent, SpawnClaimAccepted, SpawnClaimEvent,
     SpawnContinuation, SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnRequest,
     SpawnTargetSpec, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
     TypedCorrelation,
@@ -25,7 +26,7 @@ use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
     resource::ResourceRegistry,
     security::events as security_events,
-    session::SessionRegistry,
+    session::{ExternalRuntimeOwnership, SessionRegistry},
     storage::{
         AuditRecordDraft, AuditedBatchAppend, CoreGenerationStore, DedupOutcome, RecordedEvent,
         RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
@@ -1777,85 +1778,19 @@ async fn managed_spawn_report_stages_exclusively_and_never_registers_current_ses
     let logical_target_id = LogicalTargetId {
         value: "logical-spawn".to_owned(),
     };
-    storage
-        .append(
-            &domain,
-            patchbay_core::session::events::encode(
-                &patchbay_core::session::events::logical_target_created(
-                    domain.clone(),
-                    LogicalTargetCreated {
-                        logical_target_id: Some(logical_target_id.clone()),
-                        adapter_id: Some(adapter_id()),
-                        deployment_scope: "machine-a".to_owned(),
-                    },
-                ),
-            ),
-        )
-        .await
-        .unwrap();
-    let mut operation = targeted_operation(domain.clone(), "managed-spawn");
-    operation.kind = OperationKind::Spawn as i32;
-    operation.target_scope = Some(TargetScope {
-        kind: TargetScopeKind::Adapter as i32,
-        adapter_id: Some(adapter_id()),
-        ..TargetScope::default()
-    });
-    operation.payload = Some(PayloadEnvelope {
-        payload: SpawnRequest {
-            intent: Some(spawn_request::Intent::Fresh(FreshSpawn {})),
-            target_spec: Some(SpawnTargetSpec {
-                shape: "session".to_owned(),
-                ..SpawnTargetSpec::default()
-            }),
-        }
-        .encode_to_vec(),
-        content_type: PayloadContentType::Protobuf as i32,
-        schema_ref: patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA.to_owned(),
-    });
-    let accepted = AcceptedOperation {
-        operation: Some(operation.clone()),
-        authorizing_grant_id: Some(patchbay_contracts::patchbay::GrantId {
-            value: "test-grant".to_owned(),
-        }),
-    };
-    let accepted_claim = SpawnClaimAccepted {
-        accepted_operation: Some(accepted),
-        claim: Some(SpawnGenerationClaim {
-            authority_domain_id: Some(domain.clone()),
-            claim_operation_id: operation.command_id.clone(),
-            logical_target_id: Some(logical_target_id),
-            expected_prior: None,
-            claimed_generation: Some(Generation { value: 1 }),
-        }),
-        ..SpawnClaimAccepted::default()
-    };
-    let mut audit = AuditRecordDraft::new(
-        Timestamp {
-            seconds: 10,
-            nanos: 0,
-        },
-        AuditEventKind::CommandSubmissionAccepted,
-    );
-    audit.command_id = operation.command_id.clone();
-    audit.grant_id = accepted_claim
+    let accepted_claim = append_fresh_claim(
+        &storage,
+        &domain,
+        "managed-spawn",
+        logical_target_id.clone(),
+    )
+    .await;
+    let operation = accepted_claim
         .accepted_operation
         .as_ref()
-        .and_then(|accepted| accepted.authorizing_grant_id.clone());
-    audit.target_scope = operation.target_scope.clone();
-    audit.reason_code = "operation_spawn".to_owned();
-    storage
-        .append_spawn_claim_accepted(
-            &domain,
-            &IdempotencyKey {
-                value: operation.idempotency_key.clone(),
-            },
-            &TargetKey::new("managed-spawn-target".to_owned()).unwrap(),
-            accepted_claim,
-            audit,
-            operation.encode_to_vec(),
-        )
-        .await
-        .unwrap();
+        .and_then(|accepted| accepted.operation.as_ref())
+        .expect("fresh claim has accepted Operation")
+        .clone();
     let omitted_origin = session_report(SessionConnectivityState::Live);
     let omitted = service
         .ingest_observation(authenticated_with_attachment_token(
@@ -1943,18 +1878,285 @@ async fn managed_spawn_report_stages_exclusively_and_never_registers_current_ses
             .iter()
             .filter(|event| event.payload.kind == StoredEventKind::SessionState as i32)
             .count(),
-        1,
-        "the only SessionState is logical-target creation; no registration/bump bypass exists"
+        0,
+        "fresh managed staging must not append registration, generation bump, or another SessionState"
     );
-    assert!(service
-        .conformance_session_registry()
-        .await
-        .sessions()
-        .next()
-        .is_none());
-    patchbay_core::session::rebuild_from_log(&storage, &domain)
+    let hot = service.conformance_session_registry().await;
+    assert!(hot.sessions().next().is_none());
+    let hot_target = hot
+        .logical_targets()
+        .get(&logical_target_id)
+        .expect("fresh staging creates the stable logical target");
+    assert!(hot_target.current.is_none());
+    assert_eq!(
+        hot_target.reserved_candidate.as_ref(),
+        Some(&ExternalRuntimeRef {
+            adapter_id: Some(adapter_id()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(runtime_session_id()),
+            generation: Some(Generation { value: 1 }),
+        })
+    );
+
+    let replayed = patchbay_core::session::rebuild_from_log(&storage, &domain)
         .await
         .expect("the authenticated retry prefix remains replayable after restart");
+    assert_eq!(replayed, hot);
+
+    let projection = crate::state::ProjectionState::rebuild(&storage, &domain)
+        .await
+        .expect("aggregate projection rebuilds for checkpoint materialization");
+    let checkpoint_lsn = projection.current_lsn().await;
+    let checkpoint = {
+        let guard = projection.submit_guard().await;
+        let checkpoint = projection
+            .materialize_session_checkpoint(
+                domain.clone(),
+                Timestamp {
+                    seconds: 20,
+                    nanos: 0,
+                },
+            )
+            .await;
+        drop(guard);
+        checkpoint
+    };
+    storage
+        .write_snapshot(
+            &domain,
+            Lsn {
+                value: checkpoint_lsn,
+            },
+            crate::snapshot::encode_stored_session_checkpoint(&checkpoint),
+        )
+        .await
+        .expect("staged-only checkpoint persists");
+    let restarted =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("core restart accepts the staged-only checkpoint");
+    let restarted_registry = restarted.conformance_session_registry().await;
+    assert!(restarted_registry.sessions().next().is_none());
+    assert_eq!(
+        restarted_registry
+            .logical_targets()
+            .get(&logical_target_id)
+            .and_then(|target| target.reserved_candidate.as_ref()),
+        hot_target.reserved_candidate.as_ref()
+    );
+}
+
+#[tokio::test]
+async fn exact_continuation_report_stages_n_plus_one_without_publishing_it() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    session_report(SessionConnectivityState::Live),
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("unmanaged prior generation registers normally");
+    let logical_target_id = LogicalTargetId {
+        value: "logical-a".to_owned(),
+    };
+    let prior_external = ExternalRuntimeRef {
+        adapter_id: Some(adapter_id()),
+        deployment_scope: "machine-a".to_owned(),
+        runtime_session_id: Some(runtime_session_id()),
+        generation: Some(Generation { value: 1 }),
+    };
+    for event in [
+        patchbay_core::session::events::logical_target_created(
+            domain.clone(),
+            LogicalTargetCreated {
+                logical_target_id: Some(logical_target_id.clone()),
+                adapter_id: Some(adapter_id()),
+                deployment_scope: "machine-a".to_owned(),
+            },
+        ),
+        patchbay_core::session::events::logical_target_initial_current_assigned(
+            domain.clone(),
+            LogicalTargetInitialCurrentAssigned {
+                logical_target_id: Some(logical_target_id.clone()),
+                external_runtime_ref: Some(prior_external.clone()),
+            },
+        ),
+    ] {
+        storage
+            .append(&domain, patchbay_core::session::events::encode(&event))
+            .await
+            .expect("logical-target prior appends");
+    }
+    let accepted = append_replacement_claim(&storage, &domain, "managed-continuation").await;
+    let command_id = accepted
+        .claim
+        .as_ref()
+        .and_then(|claim| claim.claim_operation_id.clone())
+        .expect("continuation claim has command id");
+
+    let successor_runtime_id = RuntimeSessionId {
+        value: "runtime-successor".to_owned(),
+    };
+    let mut report = session_report(SessionConnectivityState::Live);
+    report.runtime_session_id = Some(successor_runtime_id.clone());
+    report.session_generation = Some(Generation { value: 2 });
+    report.spawn_origin = Some(TypedCorrelation {
+        r#ref: Some(typed_correlation::Ref::CommandId(command_id)),
+    });
+    let result = service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(report)),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("exact N+1 continuation report stages")
+        .into_inner();
+
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .find(|event| Some(&event.event_id) == result.event_id.as_ref())
+            .expect("staged event exists")
+            .payload
+            .kind,
+        StoredEventKind::SpawnSuccessorEvidenceStaged as i32
+    );
+    assert_eq!(session_publication_counts(&events), (1, 0));
+
+    let hot = service.conformance_session_registry().await;
+    let target = hot
+        .logical_targets()
+        .get(&logical_target_id)
+        .expect("continuation target remains projected");
+    assert_eq!(
+        target.current.as_ref(),
+        Some(&RuntimeGenerationRef {
+            logical_target_id: Some(logical_target_id.clone()),
+            external_runtime: Some(prior_external),
+        })
+    );
+    assert_eq!(
+        target.reserved_candidate.as_ref(),
+        Some(&ExternalRuntimeRef {
+            adapter_id: Some(adapter_id()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(successor_runtime_id.clone()),
+            generation: Some(Generation { value: 2 }),
+        })
+    );
+    assert!(hot
+        .get_live_session(&adapter_id(), "machine-a", &runtime_session_id())
+        .is_some());
+    assert!(hot
+        .get_live_session(&adapter_id(), "machine-a", &successor_runtime_id)
+        .is_none());
+}
+
+#[tokio::test]
+async fn duplicate_external_runtime_is_reserved_by_one_logical_owner_only() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    let first_target = LogicalTargetId {
+        value: "logical-first".to_owned(),
+    };
+    let first = append_fresh_claim(&storage, &domain, "spawn-first", first_target.clone()).await;
+    let mut first_report = session_report(SessionConnectivityState::Live);
+    first_report.spawn_origin = Some(TypedCorrelation {
+        r#ref: Some(typed_correlation::Ref::CommandId(
+            first
+                .claim
+                .as_ref()
+                .and_then(|claim| claim.claim_operation_id.clone())
+                .unwrap(),
+        )),
+    });
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    first_report,
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("first logical owner stages");
+
+    let second_target = LogicalTargetId {
+        value: "logical-second".to_owned(),
+    };
+    let second = append_fresh_claim(&storage, &domain, "spawn-second", second_target.clone()).await;
+    let mut duplicate_report = session_report(SessionConnectivityState::Live);
+    duplicate_report.spawn_origin = Some(TypedCorrelation {
+        r#ref: Some(typed_correlation::Ref::CommandId(
+            second
+                .claim
+                .as_ref()
+                .and_then(|claim| claim.claim_operation_id.clone())
+                .unwrap(),
+        )),
+    });
+    let duplicate = service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    duplicate_report,
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect_err("a second logical owner must fail before staging");
+    assert_eq!(duplicate.code(), tonic::Code::FailedPrecondition);
+    assert!(duplicate.message().contains("duplicate-native-reference"));
+
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event.payload.kind == StoredEventKind::SpawnSuccessorEvidenceStaged as i32
+            })
+            .count(),
+        1
+    );
+    let exact = ExternalRuntimeRef {
+        adapter_id: Some(adapter_id()),
+        deployment_scope: "machine-a".to_owned(),
+        runtime_session_id: Some(runtime_session_id()),
+        generation: Some(Generation { value: 1 }),
+    };
+    let hot = service.conformance_session_registry().await;
+    assert_eq!(hot.logical_targets().owner_of(&exact), Some(&first_target));
+    assert!(hot.logical_targets().get(&second_target).is_none());
+
+    let replayed = patchbay_core::session::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("single-owner prefix replays after restart");
+    assert_eq!(
+        replayed.logical_targets().owner_of(&exact),
+        Some(&first_target)
+    );
+    assert!(replayed.logical_targets().get(&second_target).is_none());
 }
 
 #[tokio::test]
@@ -3367,6 +3569,18 @@ async fn report_session(
         .expect("session report succeeds");
 }
 
+fn session_publication_counts(events: &[RecordedEvent]) -> (usize, usize) {
+    events
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::SessionState as i32)
+        .filter_map(|event| SessionStateEvent::decode(event.payload.payload.as_slice()).ok())
+        .fold((0, 0), |(registered, bumped), event| match event.mutation {
+            Some(session_state_event::Mutation::Registered(_)) => (registered + 1, bumped),
+            Some(session_state_event::Mutation::GenerationBumped(_)) => (registered, bumped + 1),
+            _ => (registered, bumped),
+        })
+}
+
 fn session_report(
     connectivity: SessionConnectivityState,
 ) -> patchbay_contracts::patchbay::SessionReport {
@@ -3407,6 +3621,86 @@ fn targeted_operation(domain: AuthorityDomainId, command: &str) -> Operation {
         idempotency_key: format!("{command}-key"),
         ..Default::default()
     }
+}
+
+fn fresh_claim(
+    domain: AuthorityDomainId,
+    command_id: &str,
+    logical_target_id: LogicalTargetId,
+) -> SpawnClaimAccepted {
+    let mut operation = targeted_operation(domain.clone(), command_id);
+    operation.kind = OperationKind::Spawn as i32;
+    operation.target_scope = Some(TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(adapter_id()),
+        ..TargetScope::default()
+    });
+    operation.payload = Some(PayloadEnvelope {
+        payload: SpawnRequest {
+            intent: Some(spawn_request::Intent::Fresh(FreshSpawn {})),
+            target_spec: Some(SpawnTargetSpec {
+                shape: "session".to_owned(),
+                ..SpawnTargetSpec::default()
+            }),
+        }
+        .encode_to_vec(),
+        content_type: PayloadContentType::Protobuf as i32,
+        schema_ref: patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA.to_owned(),
+    });
+    SpawnClaimAccepted {
+        accepted_operation: Some(AcceptedOperation {
+            operation: Some(operation.clone()),
+            authorizing_grant_id: Some(GrantId {
+                value: "test-grant".to_owned(),
+            }),
+        }),
+        claim: Some(SpawnGenerationClaim {
+            authority_domain_id: Some(domain),
+            claim_operation_id: operation.command_id,
+            logical_target_id: Some(logical_target_id),
+            expected_prior: None,
+            claimed_generation: Some(Generation { value: 1 }),
+        }),
+        ..SpawnClaimAccepted::default()
+    }
+}
+
+async fn append_fresh_claim(
+    storage: &RusqliteStorage,
+    domain: &AuthorityDomainId,
+    command_id: &str,
+    logical_target_id: LogicalTargetId,
+) -> SpawnClaimAccepted {
+    let accepted = fresh_claim(domain.clone(), command_id, logical_target_id.clone());
+    let expected = accepted.clone();
+    let accepted_operation = accepted.accepted_operation.as_ref().unwrap();
+    let operation = accepted_operation.operation.as_ref().unwrap().clone();
+    let authorizing_grant_id = accepted_operation.authorizing_grant_id.clone();
+    let mut audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        AuditEventKind::CommandSubmissionAccepted,
+    );
+    audit.command_id = operation.command_id.clone();
+    audit.grant_id = authorizing_grant_id;
+    audit.target_scope = operation.target_scope.clone();
+    audit.reason_code = "operation_spawn".to_owned();
+    storage
+        .append_spawn_claim_accepted(
+            domain,
+            &IdempotencyKey {
+                value: operation.idempotency_key.clone(),
+            },
+            &TargetKey::new(format!("fresh-spawn:{}", logical_target_id.value)).unwrap(),
+            accepted,
+            audit,
+            operation.encode_to_vec(),
+        )
+        .await
+        .expect("fresh claim appends");
+    expected
 }
 
 fn replacement_claim(domain: AuthorityDomainId, command_id: &str) -> SpawnClaimAccepted {

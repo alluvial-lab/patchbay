@@ -2722,6 +2722,12 @@ pub fn map_storage_error_to_status(error: StorageError) -> Status {
         } => Status::failed_precondition(format!(
             "staged successor for claim {command_id} conflicts with source LSN {existing_lsn}"
         )),
+        StorageError::DuplicateNativeReference {
+            owner,
+            attempted_owner,
+        } => Status::failed_precondition(format!(
+            "duplicate-native-reference: exact external runtime is owned by {owner}, not {attempted_owner}"
+        )),
         StorageError::ObservationEvidenceConflict {
             command_id,
             existing_lsn,
