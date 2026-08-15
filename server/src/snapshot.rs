@@ -436,10 +436,12 @@ mod tests {
     use super::*;
     use patchbay_contracts::patchbay::{
         AdapterId, EventId, ExternalRuntimeRef, LogicalTargetId, Lsn, ResourceSnapshot,
-        RuntimeSessionId, SecurityLockdownState, Session, SessionReportSourceCursor, SessionState,
-        TargetScope, ViewRevision,
+        RuntimeGenerationRef, RuntimeSessionId, SecurityLockdownState, Session,
+        SessionReportSourceCursor, SessionState, TargetScope, ViewRevision,
     };
-    use patchbay_core::session::{ExternalRuntimeOwnership, LogicalTargetRegistry};
+    use patchbay_core::session::{
+        ExternalRuntimeOwnership, LogicalTargetError, LogicalTargetRegistry,
+    };
 
     fn domain(value: &str) -> AuthorityDomainId {
         AuthorityDomainId {
@@ -527,6 +529,130 @@ mod tests {
             decoded.registry.logical_targets().owner_of(&external),
             Some(&logical_target_id)
         );
+    }
+
+    #[test]
+    fn promotion_checkpoint_retains_changed_runtime_tombstone_and_reverse_reservation() {
+        let logical_target_id = LogicalTargetId {
+            value: "target-a".to_owned(),
+        };
+        let other_target_id = LogicalTargetId {
+            value: "target-b".to_owned(),
+        };
+        let adapter_id = AdapterId {
+            value: "pi".to_owned(),
+        };
+        let runtime = |id: &str, generation: u64| ExternalRuntimeRef {
+            adapter_id: Some(adapter_id.clone()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: id.to_owned(),
+            }),
+            generation: Some(Generation { value: generation }),
+        };
+        let prior = runtime("runtime-a", 1);
+        let successor = runtime("runtime-b", 2);
+        let prior_ref = RuntimeGenerationRef {
+            logical_target_id: Some(logical_target_id.clone()),
+            external_runtime: Some(prior.clone()),
+        };
+        let mut logical_targets = LogicalTargetRegistry::new(domain("main")).unwrap();
+        logical_targets
+            .create(
+                logical_target_id.clone(),
+                adapter_id.clone(),
+                "machine-a".to_owned(),
+            )
+            .unwrap();
+        logical_targets
+            .assign_initial_current(&logical_target_id, prior.clone())
+            .unwrap();
+        logical_targets
+            .reserve_candidate(&logical_target_id, successor.clone())
+            .unwrap();
+        logical_targets
+            .commit_reserved_candidate(&logical_target_id, Some(&prior_ref), &successor, 6)
+            .unwrap();
+
+        let successor_id = successor.runtime_session_id.clone().unwrap();
+        let successor_generation = successor.generation.unwrap();
+        let target_scope = TargetScope {
+            kind: TargetScopeKind::RuntimeSession as i32,
+            adapter_id: Some(adapter_id.clone()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(successor_id.clone()),
+            session_generation: Some(successor_generation),
+            ..TargetScope::default()
+        };
+        let snapshot = SessionSnapshot {
+            sessions: vec![Session {
+                authority_domain_id: Some(domain("main")),
+                adapter_id: Some(adapter_id.clone()),
+                deployment_scope: "machine-a".to_owned(),
+                runtime_session_id: Some(successor_id),
+                session_generation: Some(successor_generation),
+                state: Some(SessionState {
+                    connectivity: SessionConnectivityState::Live as i32,
+                    activity: SessionActivityState::Idle as i32,
+                }),
+                last_authoritative_lsn: Some(Lsn { value: 6 }),
+                last_source_cursor: Some(SessionReportSourceCursor {
+                    adapter_generation: Some(Generation { value: 3 }),
+                    revision: 1,
+                }),
+                ..Session::default()
+            }],
+            view_revisions: vec![ViewRevision {
+                target_scope: Some(target_scope),
+                revision_lsn: Some(Lsn { value: 6 }),
+            }],
+            ..valid_snapshot()
+        };
+        let stored = StoredSnapshot {
+            event_id: EventId {
+                authority_domain_id: Some(domain("main")),
+                lsn: Some(Lsn { value: 7 }),
+            },
+            payload: encode_stored_session_checkpoint(&StoredSessionCheckpoint {
+                snapshot: Some(snapshot),
+                tombstones: vec![SessionCheckpointTombstone {
+                    adapter_id: Some(adapter_id.clone()),
+                    deployment_scope: "machine-a".to_owned(),
+                    runtime_session_id: prior.runtime_session_id.clone(),
+                    generation: prior.generation,
+                    superseded_at_lsn: Some(Lsn { value: 6 }),
+                }],
+                logical_targets: logical_targets.checkpoint_records(),
+            }),
+        };
+
+        let mut decoded = decode_compatible_session_checkpoint(
+            &stored,
+            &domain("main"),
+            &Generation { value: 11 },
+        )
+        .expect("a managed continuation may change native runtime id across a checkpoint");
+        assert_eq!(decoded.registry.tombstones().count(), 1);
+        assert_eq!(
+            decoded.registry.logical_targets().owner_of(&prior),
+            Some(&logical_target_id)
+        );
+        assert_eq!(
+            decoded.registry.logical_targets().owner_of(&successor),
+            Some(&logical_target_id)
+        );
+        decoded
+            .registry
+            .logical_targets_mut()
+            .create(other_target_id.clone(), adapter_id, "machine-a".to_owned())
+            .unwrap();
+        assert!(matches!(
+            decoded
+                .registry
+                .logical_targets_mut()
+                .reserve_candidate(&other_target_id, prior),
+            Err(LogicalTargetError::DuplicateNativeReference { .. })
+        ));
     }
 
     #[test]

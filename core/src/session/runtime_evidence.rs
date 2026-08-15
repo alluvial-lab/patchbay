@@ -448,6 +448,13 @@ pub fn fold_spawn_promotion_ordered(
                 "cannot decode ordered promotion: {error}"
             )))
         })?;
+    validate_spawn_promotion_result_order(&promotion).map_err(|error| {
+        SpawnPromotionFoldError::Command(AcceptanceError::CorruptLog(error.to_string()))
+    })?;
+    validate_spawn_promotion_envelope(&promotion, &event.event_id).map_err(|error| {
+        SpawnPromotionFoldError::Command(AcceptanceError::CorruptLog(error.to_string()))
+    })?;
+    validate_spawn_promotion_generation_prestate(targets, claims, &promotion)?;
     let accepted_claim = promotion
         .accepted_claim
         .as_ref()
@@ -555,6 +562,100 @@ pub fn fold_spawn_promotion_ordered(
     *targets = next_targets;
     *claims = next_claims;
     *commands = next_commands;
+    Ok(())
+}
+
+fn validate_spawn_promotion_generation_prestate(
+    targets: &TargetRegistry,
+    claims: &SpawnClaimRegistry,
+    promotion: &SpawnPromotionCommitted,
+) -> Result<(), SpawnPromotionFoldError> {
+    let accepted = promotion
+        .accepted_claim
+        .as_ref()
+        .expect("promotion envelope validated");
+    let claim = accepted
+        .claim
+        .as_ref()
+        .expect("promotion envelope validated");
+    let command_id = claim
+        .claim_operation_id
+        .as_ref()
+        .expect("promotion envelope validated");
+    let projected_claim = claims.claim_for_operation(command_id).ok_or_else(|| {
+        SpawnPromotionFoldError::Claim(super::SpawnClaimError::CorruptLog(
+            "promotion has no exact projected claim pre-state".to_owned(),
+        ))
+    })?;
+    if projected_claim.claim != *claim
+        || projected_claim.compound_authority != accepted.compound_authority
+        || projected_claim.pending_replacement != claim.expected_prior
+        || !matches!(
+            projected_claim.disposition,
+            SpawnClaimDisposition::Active | SpawnClaimDisposition::PoisonedPendingReconciliation
+        )
+    {
+        return Err(SpawnPromotionFoldError::Claim(
+            super::SpawnClaimError::CorruptLog(
+                "promotion does not match the exact unconsumed claim/fence pre-state".to_owned(),
+            ),
+        ));
+    }
+
+    let logical_target_id = claim
+        .logical_target_id
+        .as_ref()
+        .expect("promotion envelope validated");
+    let promoted_external = promotion
+        .promoted_runtime
+        .as_ref()
+        .and_then(|runtime| runtime.external_runtime.as_ref())
+        .expect("promotion envelope validated");
+    let target = targets
+        .sessions()
+        .logical_targets()
+        .get(logical_target_id)
+        .ok_or_else(|| {
+            SpawnPromotionFoldError::Session(super::SessionError::CorruptLog(
+                "promotion references an unknown logical-target pre-state".to_owned(),
+            ))
+        })?;
+    if target.current.as_ref() != claim.expected_prior.as_ref()
+        || target.reserved_candidate.as_ref() != Some(promoted_external)
+    {
+        return Err(SpawnPromotionFoldError::Session(
+            super::SessionError::CorruptLog(
+                "promotion is not the immediate exact current-to-reserved transition".to_owned(),
+            ),
+        ));
+    }
+    validate_exact_generation_transition(
+        claim,
+        promotion
+            .promoted_runtime
+            .as_ref()
+            .expect("promotion envelope validated"),
+    )
+    .map_err(|error| {
+        SpawnPromotionFoldError::Session(super::SessionError::CorruptLog(error.to_string()))
+    })?;
+
+    let ownership = targets.sessions().logical_targets();
+    if ownership.owner_of(promoted_external) != Some(logical_target_id)
+        || claim.expected_prior.as_ref().is_some_and(|prior| {
+            prior
+                .external_runtime
+                .as_ref()
+                .is_none_or(|external| ownership.owner_of(external) != Some(logical_target_id))
+        })
+    {
+        return Err(SpawnPromotionFoldError::Session(
+            super::SessionError::CorruptLog(
+                "promotion current/reservation reverse ownership is not retained by the exact logical target"
+                    .to_owned(),
+            ),
+        ));
+    }
     Ok(())
 }
 

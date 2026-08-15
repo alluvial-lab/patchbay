@@ -5,20 +5,20 @@ use patchbay_contracts::patchbay::{
     AuditRecord, AuthorityDomainId, CommandId, CommandTransition, ContinuationAuthorityProvenance,
     DescendantGrant, DescendantGrantProvenance, Elicitation, ElicitationId, ElicitationState,
     EndpointId, EventId, ExternalRuntimeRef, FailureCode, FreshSpawn, Generation, Grant, GrantId,
-    GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LogicalTargetCreated, LogicalTargetId,
-    LogicalTargetInitialCurrentAssigned, Lsn, Observation, ObservationKind, Operation,
-    OperationKind, OperationState, PayloadContentType, PayloadEnvelope, QuarantinedRuntimeEvidence,
-    Revocation, RuntimeDeliveryAcknowledgementEvidence, RuntimeElicitationMutationEvidence,
-    RuntimeEvidenceClassificationContext, RuntimeEvidenceQuarantineReason,
-    RuntimeEvidenceSourceAttachment, RuntimeGenerationDisposition, RuntimeGenerationRef,
-    RuntimeGenerationUnknown, RuntimeSessionId, RuntimeTranscriptStatusEvidence,
-    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionReport,
-    SessionReportSourceCursor, SessionState, SpawnClaimAccepted, SpawnClaimDisposition,
-    SpawnClaimEvent, SpawnContinuation, SpawnGenerationClaim, SpawnPendingReplacementFence,
-    SpawnPromotionAuthorityEvidence, SpawnPromotionCommitted, SpawnPromotionLifecycleEvidence,
-    SpawnPromotionResultEvidence, SpawnPromotionStagedEvidence, SpawnRequest,
-    SpawnSuccessorEvidenceStaged, SpawnTargetSpec, StoredEventKind, StoredEventPayload,
-    TargetScope, TargetScopeKind, TypedCorrelation,
+    GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LogicalTargetCandidateReleased,
+    LogicalTargetCreated, LogicalTargetId, LogicalTargetInitialCurrentAssigned, Lsn, Observation,
+    ObservationKind, Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
+    QuarantinedRuntimeEvidence, Revocation, RuntimeDeliveryAcknowledgementEvidence,
+    RuntimeElicitationMutationEvidence, RuntimeEvidenceClassificationContext,
+    RuntimeEvidenceQuarantineReason, RuntimeEvidenceSourceAttachment, RuntimeGenerationDisposition,
+    RuntimeGenerationRef, RuntimeGenerationUnknown, RuntimeSessionId,
+    RuntimeTranscriptStatusEvidence, SessionActivityState, SessionConnectivityState,
+    SessionRegistered, SessionReport, SessionReportSourceCursor, SessionState, SpawnClaimAccepted,
+    SpawnClaimDisposition, SpawnClaimEvent, SpawnContinuation, SpawnGenerationClaim,
+    SpawnPendingReplacementFence, SpawnPromotionAuthorityEvidence, SpawnPromotionCommitted,
+    SpawnPromotionLifecycleEvidence, SpawnPromotionResultEvidence, SpawnPromotionStagedEvidence,
+    SpawnRequest, SpawnSuccessorEvidenceStaged, SpawnTargetSpec, StoredEventKind,
+    StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{CommandIndex, ElicitationSlotLayer},
@@ -29,7 +29,7 @@ use patchbay_core::{
     session::{
         classify_session_report, encode_quarantined_runtime_evidence, encode_spawn_claim_event,
         encode_staged_successor, fold_spawn_promotion_ordered, next_spawn_promotion,
-        SessionRegistry, SpawnClaimQuery, SpawnClaimRegistry,
+        ExternalRuntimeOwnership, SessionRegistry, SpawnClaimQuery, SpawnClaimRegistry,
     },
     storage::{
         AuditRecordDraft, AuditedStorage, RecordedEvent, RusqliteStorage, Storage, StorageError,
@@ -60,13 +60,17 @@ fn command() -> CommandId {
 }
 
 fn external(generation: u64) -> ExternalRuntimeRef {
+    external_with_runtime("runtime-a", generation)
+}
+
+fn external_with_runtime(runtime_session_id: &str, generation: u64) -> ExternalRuntimeRef {
     ExternalRuntimeRef {
         adapter_id: Some(AdapterId {
             value: "pi".to_owned(),
         }),
         deployment_scope: "machine-a".to_owned(),
         runtime_session_id: Some(RuntimeSessionId {
-            value: "runtime-a".to_owned(),
+            value: runtime_session_id.to_owned(),
         }),
         generation: Some(Generation { value: generation }),
     }
@@ -618,6 +622,25 @@ async fn append_prefix(storage: &RusqliteStorage, prefix: Vec<RecordedEvent>) {
                     panic!("prefix fixture unexpectedly deduplicated")
                 }
             }
+        } else if event.payload.kind == StoredEventKind::Observation as i32
+            && Observation::decode(event.payload.payload.as_slice())
+                .ok()
+                .is_some_and(|observation| {
+                    observation.kind == ObservationKind::Result as i32
+                        && observation.failure_code == FailureCode::Unspecified as i32
+                })
+        {
+            let observation = Observation::decode(event.payload.payload.as_slice())
+                .expect("successful Result fixture decodes");
+            storage
+                .append_spawn_result_deferred_audited(
+                    &domain(),
+                    observation,
+                    deferred_result_audit(),
+                )
+                .await
+                .expect("successful Result fixture appends through deferred writer")
+                .source_event_id
         } else if event.payload.kind == StoredEventKind::AuditRecord as i32 {
             let existing = storage
                 .read_after(
@@ -643,10 +666,11 @@ async fn append_prefix(storage: &RusqliteStorage, prefix: Vec<RecordedEvent>) {
                     .expect("audit fixture appends")
             }
         } else {
+            let kind = event.payload.kind;
             storage
                 .append(&domain(), event.payload)
                 .await
-                .expect("prefix fixture appends")
+                .unwrap_or_else(|error| panic!("prefix fixture kind {kind} appends: {error}"))
         };
         assert_eq!(appended, event.event_id);
     }
@@ -1668,13 +1692,15 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
         }),
         prior_work_effects: vec![],
     };
+    let successor_external = external_with_runtime("runtime-b", 2);
     let mut candidate_report = report("spawn-a");
-    candidate_report.session_generation = Some(Generation { value: 2 });
+    candidate_report.runtime_session_id = successor_external.runtime_session_id.clone();
+    candidate_report.session_generation = successor_external.generation;
     let candidate = RuntimeGenerationRef {
         logical_target_id: Some(LogicalTargetId {
             value: "logical-a".to_owned(),
         }),
-        external_runtime: Some(external(2)),
+        external_runtime: Some(successor_external.clone()),
     };
     let continuation_staged = SpawnSuccessorEvidenceStaged {
         authority_domain_id: Some(domain()),
@@ -1693,7 +1719,7 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
             ),
         }),
         source_attachment: Some(source_attachment()),
-        external_runtime_reservation: Some(external(2)),
+        external_runtime_reservation: Some(successor_external.clone()),
     };
     let replacement_grant = Grant {
         grant_id: Some(GrantId {
@@ -1850,11 +1876,15 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
         staged: Some(continuation_staged),
     });
     promotion.promoted_runtime = Some(candidate);
-    promotion.external_runtime_reservation = Some(external(2));
+    promotion.external_runtime_reservation = Some(successor_external.clone());
     let authority = promotion.authority.as_mut().unwrap();
     authority.continuation_authority = Some(continuation.clone());
     let descendant = authority.descendant_grant.as_mut().unwrap();
-    descendant.target_scope.as_mut().unwrap().session_generation = Some(Generation { value: 2 });
+    let descendant_target = descendant.target_scope.as_mut().unwrap();
+    descendant_target.adapter_id = successor_external.adapter_id;
+    descendant_target.deployment_scope = successor_external.deployment_scope;
+    descendant_target.runtime_session_id = successor_external.runtime_session_id;
+    descendant_target.session_generation = successor_external.generation;
     descendant
         .provenance
         .as_mut()
@@ -1864,6 +1894,79 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
     promotion.completion_audit_event_id = Some(event_id(14));
     descendant.audit_id = Some(event_id(14));
     (prefix, promotion)
+}
+
+fn production_continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
+    let (mut prefix, mut promotion) = continuation_fixture();
+    let staged = prefix
+        .pop()
+        .expect("continuation fixture ends with staging");
+    prefix.push(recorded(13, staged.payload));
+    promotion
+        .staged_successor
+        .as_mut()
+        .expect("continuation promotion has staged evidence")
+        .event_id = Some(event_id(13));
+    promotion.promotion_event_id = Some(event_id(14));
+    promotion.completion_audit_event_id = Some(event_id(15));
+    promotion
+        .authority
+        .as_mut()
+        .and_then(|authority| authority.descendant_grant.as_mut())
+        .expect("continuation promotion has descendant authority")
+        .audit_id = Some(event_id(15));
+    (prefix, promotion)
+}
+
+fn unstamped(mut promotion: SpawnPromotionCommitted) -> SpawnPromotionCommitted {
+    promotion.promotion_event_id = None;
+    promotion.completion_audit_event_id = None;
+    promotion
+        .authority
+        .as_mut()
+        .and_then(|authority| authority.descendant_grant.as_mut())
+        .expect("promotion fixture has descendant authority")
+        .audit_id = None;
+    promotion
+}
+
+fn promotion_completion_audit() -> AuditRecordDraft {
+    let mut audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        AuditEventKind::CommandCompleted,
+    );
+    audit.command_id = Some(command());
+    audit.reason_code = "spawn_completion".to_owned();
+    audit
+}
+
+async fn assert_promotion_append_rejected_without_writes(
+    storage: &RusqliteStorage,
+    promotion: SpawnPromotionCommitted,
+) {
+    let before = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap();
+    assert!(storage
+        .append_spawn_promotion_audited(
+            &domain(),
+            unstamped(promotion),
+            promotion_completion_audit(),
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap(),
+        before,
+        "failed in-transaction promotion validation must append neither source nor audit"
+    );
 }
 
 fn aggregate_from_prefix(
@@ -2679,16 +2782,27 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
             &Generation { value: 1 },
         )
         .is_some());
+    let successor = sessions.sessions().next().unwrap();
+    assert_eq!(successor.identity.session_generation.value, 2);
+    assert_eq!(successor.identity.runtime_session_id.value, "runtime-b");
+    let logical_target_id = LogicalTargetId {
+        value: "logical-a".to_owned(),
+    };
+    assert_eq!(
+        sessions.logical_targets().owner_of(&external(1)),
+        Some(&logical_target_id),
+        "the tombstoned runtime remains reverse-indexed for late correlation"
+    );
     assert_eq!(
         sessions
-            .sessions()
-            .next()
-            .unwrap()
-            .identity
-            .session_generation
-            .value,
-        2
+            .logical_targets()
+            .owner_of(&external_with_runtime("runtime-b", 2)),
+        Some(&logical_target_id)
     );
+    let logical = sessions.logical_targets().get(&logical_target_id).unwrap();
+    assert!(logical.tombstones.values().any(|tombstone| {
+        tombstone.external_runtime_ref == external(1) && tombstone.superseded_at_lsn == 13
+    }));
 
     let (mut expired_prefix, expired_promotion) = continuation_fixture();
     let mut expired_replacement =
@@ -2768,6 +2882,273 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
         ),
     )
     .is_err());
+}
+
+#[tokio::test]
+async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_out_of_order() {
+    let (prefix, promotion) = production_continuation_fixture();
+    let (_, projected_targets, projected_claims, _) =
+        aggregate_from_prefix(&prefix[..prefix.len() - 1]);
+    let staged =
+        SpawnSuccessorEvidenceStaged::decode(prefix.last().unwrap().payload.payload.as_slice())
+            .unwrap();
+    let actual_disposition = classify_session_report(
+        &domain(),
+        staged.report.as_ref().unwrap(),
+        staged.source_attachment.as_ref().unwrap(),
+        projected_targets.adapters(),
+        &projected_claims,
+        projected_targets.sessions(),
+    );
+    assert_eq!(staged.disposition.as_ref(), Some(&actual_disposition));
+    let valid = RusqliteStorage::open_in_memory().unwrap();
+    append_prefix(&valid, prefix).await;
+    let committed = valid
+        .append_spawn_promotion_audited(
+            &domain(),
+            unstamped(promotion.clone()),
+            promotion_completion_audit(),
+        )
+        .await
+        .expect("exact current N and reserved claimed N+1 promote atomically");
+    assert_eq!(committed.source_event_id, event_id(14));
+    assert_eq!(committed.audit_event_id, event_id(15));
+
+    let sessions = patchbay_core::session::rebuild_from_log(&valid, &domain())
+        .await
+        .expect("session replay reconstructs the promotion");
+    let claims = patchbay_core::session::rebuild_spawn_claims_from_log(&valid, &domain())
+        .await
+        .expect("claim replay reconstructs promotion consumption");
+    let commands = patchbay_core::acceptance::rebuild_from_log(&valid, &domain())
+        .await
+        .expect("command replay reconstructs promotion completion");
+    let authority = patchbay_core::authority::rebuild_from_log(&valid, &domain())
+        .await
+        .expect("authority replay reconstructs descendant authority");
+    let logical_target_id = LogicalTargetId {
+        value: "logical-a".to_owned(),
+    };
+    let old_runtime = external(1);
+    let new_runtime = external_with_runtime("runtime-b", 2);
+    assert_eq!(
+        sessions.logical_targets().owner_of(&old_runtime),
+        Some(&logical_target_id),
+        "tombstoning retains reverse ownership for late correlation"
+    );
+    assert_eq!(
+        sessions.logical_targets().owner_of(&new_runtime),
+        Some(&logical_target_id)
+    );
+    assert!(sessions
+        .get_tombstone(
+            old_runtime.adapter_id.as_ref().unwrap(),
+            &old_runtime.deployment_scope,
+            old_runtime.runtime_session_id.as_ref().unwrap(),
+            &Generation { value: 1 },
+        )
+        .is_some());
+    assert_eq!(
+        claims.claim_for_operation(&command()).unwrap().disposition,
+        SpawnClaimDisposition::Promoted
+    );
+    assert_eq!(
+        commands.get_command(&command()).unwrap().state,
+        OperationState::Completed
+    );
+    assert!(authority
+        .get_grant(&GrantId {
+            value: "desc:authority-main:spawn-a".to_owned(),
+        })
+        .is_some());
+
+    let mut late_correlation_probe = sessions.clone();
+    let other_target = LogicalTargetId {
+        value: "logical-b".to_owned(),
+    };
+    late_correlation_probe
+        .logical_targets_mut()
+        .create(
+            other_target.clone(),
+            AdapterId {
+                value: "pi".to_owned(),
+            },
+            "machine-a".to_owned(),
+        )
+        .unwrap();
+    assert!(matches!(
+        late_correlation_probe
+            .logical_targets_mut()
+            .reserve_candidate(&other_target, old_runtime),
+        Err(patchbay_core::session::LogicalTargetError::DuplicateNativeReference { .. })
+    ));
+
+    assert_promotion_append_rejected_without_writes(&valid, promotion.clone()).await;
+
+    let (mut wrong_current_prefix, wrong_current_promotion) = continuation_fixture();
+    let wrong_current = external_with_runtime("runtime-other", 1);
+    wrong_current_prefix[4] = recorded(
+        5,
+        patchbay_core::session::events::encode(
+            &patchbay_core::session::events::logical_target_initial_current_assigned(
+                domain(),
+                LogicalTargetInitialCurrentAssigned {
+                    logical_target_id: Some(logical_target_id.clone()),
+                    external_runtime_ref: Some(wrong_current.clone()),
+                },
+            ),
+        ),
+    );
+    wrong_current_prefix[5] = recorded(
+        6,
+        patchbay_core::session::events::encode(&patchbay_core::session::events::registered(
+            domain(),
+            SessionRegistered {
+                adapter_id: wrong_current.adapter_id,
+                deployment_scope: wrong_current.deployment_scope,
+                runtime_session_id: wrong_current.runtime_session_id,
+                session_generation: wrong_current.generation,
+                initial_state: Some(SessionState {
+                    connectivity: SessionConnectivityState::Offline as i32,
+                    activity: SessionActivityState::Unknown as i32,
+                }),
+                source_cursor: Some(SessionReportSourceCursor {
+                    adapter_generation: Some(Generation { value: 3 }),
+                    revision: 1,
+                }),
+                ..SessionRegistered::default()
+            },
+        )),
+    );
+    let (mut authority, mut targets, mut claims, mut commands) =
+        aggregate_from_prefix(&wrong_current_prefix);
+    let before = (
+        authority.clone(),
+        targets.clone(),
+        claims.clone(),
+        commands.clone(),
+    );
+    assert!(fold_spawn_promotion_ordered(
+        &mut authority,
+        &mut targets,
+        &mut claims,
+        &mut commands,
+        &recorded(
+            13,
+            StoredEventPayload {
+                kind: StoredEventKind::SpawnPromotionCommitted as i32,
+                payload: wrong_current_promotion.encode_to_vec(),
+            },
+        ),
+    )
+    .is_err());
+    assert_eq!((authority, targets, claims, commands), before);
+
+    let (mut wrong_claim_prefix, wrong_claim_promotion) = continuation_fixture();
+    let prior_two = RuntimeGenerationRef {
+        logical_target_id: Some(logical_target_id.clone()),
+        external_runtime: Some(external_with_runtime("runtime-b", 2)),
+    };
+    let mut accepted_event =
+        SpawnClaimEvent::decode(wrong_claim_prefix[6].payload.payload.as_slice()).unwrap();
+    let spawn_claim_event::Mutation::Accepted(mut accepted) = accepted_event.mutation.unwrap()
+    else {
+        panic!("continuation fixture must contain accepted claim")
+    };
+    let projected_claim = accepted.claim.as_mut().unwrap();
+    projected_claim.expected_prior = Some(prior_two.clone());
+    projected_claim.claimed_generation = Some(Generation { value: 3 });
+    accepted.compound_authority.as_mut().unwrap().exact_prior = Some(prior_two.clone());
+    accepted.pending_replacement.as_mut().unwrap().exact_prior = Some(prior_two.clone());
+    accepted
+        .accepted_operation
+        .as_mut()
+        .unwrap()
+        .operation
+        .as_mut()
+        .unwrap()
+        .payload = Some(PayloadEnvelope {
+        payload: SpawnRequest {
+            intent: Some(spawn_request::Intent::Continuation(SpawnContinuation {
+                prior: Some(prior_two.clone()),
+            })),
+            target_spec: Some(SpawnTargetSpec {
+                shape: "session".to_owned(),
+                ..SpawnTargetSpec::default()
+            }),
+        }
+        .encode_to_vec(),
+        content_type: PayloadContentType::Protobuf as i32,
+        schema_ref: patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA.to_owned(),
+    });
+    let projected_claim = accepted.claim.clone().unwrap();
+    accepted_event.mutation = Some(spawn_claim_event::Mutation::Accepted(accepted));
+    wrong_claim_prefix[6].payload = encode_spawn_claim_event(&accepted_event);
+    let mut projected_stage =
+        SpawnSuccessorEvidenceStaged::decode(wrong_claim_prefix[11].payload.payload.as_slice())
+            .unwrap();
+    let candidate_three = external_with_runtime("runtime-c", 3);
+    projected_stage.exact_claim = Some(projected_claim);
+    projected_stage.report.as_mut().unwrap().runtime_session_id =
+        candidate_three.runtime_session_id.clone();
+    projected_stage.report.as_mut().unwrap().session_generation = candidate_three.generation;
+    projected_stage
+        .classified_target
+        .as_mut()
+        .unwrap()
+        .external_runtime = Some(candidate_three.clone());
+    let Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(disposition)) =
+        projected_stage
+            .disposition
+            .as_mut()
+            .and_then(|value| value.disposition.as_mut())
+    else {
+        panic!("continuation fixture has claimed-successor disposition")
+    };
+    disposition.expected_prior = Some(prior_two);
+    disposition.claimed_generation = Some(Generation { value: 3 });
+    projected_stage.external_runtime_reservation = Some(candidate_three);
+    wrong_claim_prefix[11].payload = encode_staged_successor(&projected_stage);
+    let (mut authority, mut targets, mut claims, mut commands) =
+        aggregate_from_prefix(&wrong_claim_prefix);
+    let before = (
+        authority.clone(),
+        targets.clone(),
+        claims.clone(),
+        commands.clone(),
+    );
+    assert!(fold_spawn_promotion_ordered(
+        &mut authority,
+        &mut targets,
+        &mut claims,
+        &mut commands,
+        &recorded(
+            13,
+            StoredEventPayload {
+                kind: StoredEventKind::SpawnPromotionCommitted as i32,
+                payload: wrong_claim_promotion.encode_to_vec(),
+            },
+        ),
+    )
+    .is_err());
+    assert_eq!((authority, targets, claims, commands), before);
+
+    let (mut released_prefix, released_promotion) = production_continuation_fixture();
+    released_prefix.push(recorded(
+        14,
+        patchbay_core::session::events::encode(
+            &patchbay_core::session::events::logical_target_candidate_released(
+                domain(),
+                LogicalTargetCandidateReleased {
+                    logical_target_id: Some(logical_target_id),
+                    external_runtime_ref: Some(new_runtime),
+                },
+            ),
+        ),
+    ));
+    let released_storage = RusqliteStorage::open_in_memory().unwrap();
+    append_prefix(&released_storage, released_prefix).await;
+    assert_promotion_append_rejected_without_writes(&released_storage, released_promotion).await;
 }
 
 #[tokio::test]

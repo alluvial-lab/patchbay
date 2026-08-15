@@ -7,14 +7,14 @@
 use std::collections::{BTreeMap, HashMap};
 
 use patchbay_contracts::patchbay::{
-    security_lockdown_event, session_state_event, AdapterId, AuthorityDomainId, Generation,
-    LogicalTargetCandidateReleased, LogicalTargetCandidateReserved, LogicalTargetCreated,
-    LogicalTargetId, LogicalTargetInitialCurrentAssigned, LogicalTargetProjectionRecord,
-    RuntimeSessionId, SecurityLockdownEvent, SessionActivityChanged, SessionActivityState,
-    SessionConnectivityChanged, SessionConnectivityState, SessionGenerationBumped,
-    SessionModelChanged, SessionRegistered, SessionRelabeled, SessionReportApplied,
-    SessionReportSourceCursor, SessionState, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged,
-    StoredEventKind, StoredEventPayload,
+    security_lockdown_event, session_state_event, AdapterId, AuthorityDomainId, ExternalRuntimeRef,
+    Generation, LogicalTargetCandidateReleased, LogicalTargetCandidateReserved,
+    LogicalTargetCreated, LogicalTargetId, LogicalTargetInitialCurrentAssigned,
+    LogicalTargetProjectionRecord, RuntimeSessionId, SecurityLockdownEvent, SessionActivityChanged,
+    SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
+    SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled,
+    SessionReportApplied, SessionReportSourceCursor, SessionState, SpawnPromotionCommitted,
+    SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
@@ -23,7 +23,8 @@ use crate::storage::RecordedEvent;
 use super::{
     allowed_activity_transition, allowed_connectivity_transition,
     ingest::{source_cursor_strictly_after, validate_report, validate_source_cursor},
-    LogicalTargetRegistry, SessionError, SessionIdentity, SessionStateEvent,
+    ExternalRuntimeOwnership, LogicalTargetRegistry, SessionError, SessionIdentity,
+    SessionStateEvent,
 };
 
 /// The current in-memory state of one live session generation.
@@ -154,6 +155,12 @@ impl SessionRegistry {
             }
         }
 
+        let logical_targets = LogicalTargetRegistry::from_checkpoint(
+            authority_domain_id.clone(),
+            checkpoint_lsn,
+            logical_targets,
+        )?;
+
         let mut retained = HashMap::new();
         for tombstone in tombstones {
             validate_checkpoint_tombstone(checkpoint_lsn, &tombstone)?;
@@ -163,25 +170,10 @@ impl SessionRegistry {
                 runtime_session_id: tombstone.runtime_session_id.clone(),
                 generation: tombstone.superseded_generation,
             };
-            let live_key = SessionLiveKey {
-                adapter_id: key.adapter_id.clone(),
-                deployment_scope: key.deployment_scope.clone(),
-                runtime_session_id: key.runtime_session_id.clone(),
-            };
-            let live = sessions.get(&live_key).ok_or_else(|| {
-                SessionError::CorruptRecord(
-                    "session checkpoint contains a tombstone without a current live slot"
-                        .to_owned(),
-                )
-            })?;
-            if tombstone.superseded_generation.value >= live.identity.session_generation.value
-                || tombstone.superseded_at_lsn
-                    > live
-                        .last_authoritative_lsn
-                        .expect("checkpoint live record validated above")
+            if !checkpoint_tombstone_has_current_successor(&sessions, &logical_targets, &tombstone)
             {
                 return Err(SessionError::CorruptRecord(
-                    "session checkpoint tombstone is not earlier than its current live generation"
+                    "session checkpoint tombstone has no later current generation in its legacy runtime slot or managed logical-target lineage"
                         .to_owned(),
                 ));
             }
@@ -223,12 +215,6 @@ impl SessionRegistry {
                 "active-lockdown checkpoint contains a live session".to_owned(),
             ));
         }
-
-        let logical_targets = LogicalTargetRegistry::from_checkpoint(
-            authority_domain_id.clone(),
-            checkpoint_lsn,
-            logical_targets,
-        )?;
 
         Ok(Self {
             authority_domain_id,
@@ -1268,6 +1254,69 @@ fn validate_checkpoint_tombstone(
         ));
     }
     Ok(())
+}
+
+fn checkpoint_tombstone_has_current_successor(
+    sessions: &HashMap<SessionLiveKey, SessionRecord>,
+    logical_targets: &LogicalTargetRegistry,
+    tombstone: &SessionTombstone,
+) -> bool {
+    let legacy_key = SessionLiveKey {
+        adapter_id: tombstone.adapter_id.clone(),
+        deployment_scope: tombstone.deployment_scope.clone(),
+        runtime_session_id: tombstone.runtime_session_id.clone(),
+    };
+    let valid_successor = |live: &SessionRecord| {
+        tombstone.superseded_generation.value < live.identity.session_generation.value
+            && tombstone.superseded_at_lsn
+                <= live
+                    .last_authoritative_lsn
+                    .expect("checkpoint live records are validated before tombstones")
+    };
+    if sessions.get(&legacy_key).is_some_and(valid_successor) {
+        return true;
+    }
+
+    let superseded = ExternalRuntimeRef {
+        adapter_id: Some(tombstone.adapter_id.clone()),
+        deployment_scope: tombstone.deployment_scope.clone(),
+        runtime_session_id: Some(tombstone.runtime_session_id.clone()),
+        generation: Some(tombstone.superseded_generation),
+    };
+    let Some(logical_target_id) = logical_targets.owner_of(&superseded) else {
+        return false;
+    };
+    let Some(target) = logical_targets.get(logical_target_id) else {
+        return false;
+    };
+    if !target.tombstones.values().any(|retained| {
+        retained.external_runtime_ref == superseded
+            && retained.superseded_at_lsn == tombstone.superseded_at_lsn
+    }) {
+        return false;
+    }
+    let Some(current) = target
+        .current
+        .as_ref()
+        .and_then(|runtime| runtime.external_runtime.as_ref())
+    else {
+        return false;
+    };
+    let (Some(adapter_id), Some(runtime_session_id), Some(generation)) = (
+        current.adapter_id.as_ref(),
+        current.runtime_session_id.as_ref(),
+        current.generation,
+    ) else {
+        return false;
+    };
+    let current_key = SessionLiveKey {
+        adapter_id: adapter_id.clone(),
+        deployment_scope: current.deployment_scope.clone(),
+        runtime_session_id: runtime_session_id.clone(),
+    };
+    sessions
+        .get(&current_key)
+        .is_some_and(|live| live.identity.session_generation == generation && valid_successor(live))
 }
 
 fn mutation_identity(

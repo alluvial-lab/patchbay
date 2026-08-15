@@ -450,6 +450,44 @@ impl LogicalTargetRegistry {
                 return Err(corrupt("duplicate tombstone external runtime"));
             }
         }
+        let mut lineage: Vec<_> = record
+            .tombstones
+            .values()
+            .map(|tombstone| {
+                (
+                    tombstone
+                        .external_runtime_ref
+                        .generation
+                        .expect("checkpoint tombstone generation validated")
+                        .value,
+                    tombstone.superseded_at_lsn,
+                )
+            })
+            .collect();
+        lineage.sort_unstable();
+        if lineage
+            .windows(2)
+            .any(|pair| pair[0].0 == pair[1].0 || pair[0].1 >= pair[1].1)
+        {
+            return Err(corrupt(
+                "tombstone lineage has duplicate generations or non-increasing promotion LSNs",
+            ));
+        }
+        if let Some(current_generation) = record
+            .current
+            .as_ref()
+            .and_then(|current| current.external_runtime.as_ref())
+            .and_then(|external| external.generation)
+        {
+            if lineage
+                .last()
+                .is_some_and(|(generation, _)| *generation >= current_generation.value)
+            {
+                return Err(corrupt(
+                    "current runtime generation does not advance retained tombstones",
+                ));
+            }
+        }
         if record.current.is_none()
             && record.reserved_candidate.is_some()
             && !record.tombstones.is_empty()
