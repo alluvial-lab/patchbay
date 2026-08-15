@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-logical-target-registration
 kind: story
-stage: review
+stage: implementing
 tags: [adapter, protocol, security]
 parent: research-handoff-spawn
 depends_on: [spawn-delivery-atomic-claim-idempotency-generation]
