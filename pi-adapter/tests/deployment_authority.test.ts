@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { create, toBinary } from "@bufbuild/protobuf";
 import {
   AcceptedOperationSchema,
+  AdapterDiagnosticReportResultSchema,
   AdapterIdSchema,
   AuthorityDomainIdSchema,
   CommandIdSchema,
@@ -25,19 +29,33 @@ import {
   SpawnTargetSpecSchema,
   TargetScopeKind,
   TargetScopeSchema,
+  type AdapterDiagnosticReport,
   type RuntimeGenerationRef,
   type SpawnClaimAccepted,
   type SpawnRequest,
 } from "@patchbay/contracts";
-import type { AdapterDiagnosticInput } from "../src/adapter_diagnostics.js";
+import {
+  openAdapterDiagnostics,
+  type AdapterDiagnosticInput,
+  type AdapterDiagnostics,
+} from "../src/adapter_diagnostics.js";
 import {
   authorizeDeploymentIfRequired,
   ConfiguredDeploymentAuthorityResolver,
+  DEPLOYMENT_AUTHORITY_ERROR_CODES,
   DeploymentAuthorityError,
   type DeploymentAuthorityBinding,
+  type ConfiguredDeploymentTarget,
+  type CredentialFreeDeploymentTarget,
+  type CredentialRequiredDeploymentTarget,
   type DeploymentAuthorityRequest,
+  type DeploymentAuthorityResolver,
   type DeploymentTargetIdentity,
 } from "../src/deployment_authority.js";
+import {
+  composeAdapterDiagnostics,
+  CoreDiagnosticsForwarder,
+} from "../src/core_diagnostics_forwarder.js";
 import { AdapterProcess } from "../src/main.js";
 
 const encoder = new TextEncoder();
@@ -48,6 +66,16 @@ const target: DeploymentTargetIdentity = Object.freeze({
   projectId: "project-a",
   logicalTargetId: "logical-a",
 });
+const credentialRequiredTarget: CredentialRequiredDeploymentTarget = Object.freeze({
+  ...target,
+  credentialPolicy: "credential-required",
+});
+const credentialFreeTarget: CredentialFreeDeploymentTarget = Object.freeze({
+  credentialPolicy: "credential-free",
+  adapterId: target.adapterId,
+  deploymentScope: target.deploymentScope,
+  logicalTargetId: target.logicalTargetId,
+});
 const binding: DeploymentAuthorityBinding = Object.freeze({
   ...target,
   reference: "authority-ref-a",
@@ -57,19 +85,105 @@ const binding: DeploymentAuthorityBinding = Object.freeze({
 });
 const now = new Date("2029-01-01T00:00:00.000Z");
 
-test("exact configured scope returns only a credential handle and credential-free specs need no workspace", async () => {
-  const resolver = new ConfiguredDeploymentAuthorityResolver([binding]);
-  const authorized = await resolver.authorize(request(freshAccepted()), now);
+test("configured policy distinguishes credential-required and credential-free launch paths", async () => {
+  let lookups = 0;
+  const resolver: DeploymentAuthorityResolver = {
+    async authorize() {
+      lookups += 1;
+      return { credentialHandle: binding.credentialHandle };
+    },
+  };
+
+  await assert.rejects(
+    authorizeDeploymentIfRequired(
+      resolver,
+      request(freshAccepted({ reference: "" }), credentialRequiredTarget),
+      now,
+    ),
+    authorityError("MISSING_REFERENCE"),
+  );
+  assert.equal(lookups, 0, "a required target must reject omission before resolver lookup");
+
+  assert.equal(
+    await authorizeDeploymentIfRequired(
+      resolver,
+      request(freshAccepted({ reference: "" }), credentialFreeTarget),
+      now,
+    ),
+    undefined,
+  );
+  assert.equal(lookups, 0, "credential-free policy skips only the handle lookup");
+  assert.equal("workspaceId" in credentialFreeTarget, false);
+  assert.equal("projectId" in credentialFreeTarget, false);
+
+  await assert.rejects(
+    authorizeDeploymentIfRequired(
+      resolver,
+      request(freshAccepted(), credentialFreeTarget),
+      now,
+    ),
+    authorityError("INVALID_TARGET_SPEC"),
+    "credential-free policy must reject an unexpected authority reference",
+  );
+  assert.equal(lookups, 0);
+
+  const builtIn = new ConfiguredDeploymentAuthorityResolver([binding]);
+  const authorized = await authorizeDeploymentIfRequired(
+    builtIn,
+    request(freshAccepted(), credentialRequiredTarget),
+    now,
+  );
   assert.deepEqual(authorized, { credentialHandle: binding.credentialHandle });
   assert.equal(Object.isFrozen(authorized), true);
+});
 
-  const credentialFree: DeploymentAuthorityRequest = {
-    acceptedSpawn: freshAccepted({ reference: "" }),
-  };
-  assert.equal(await authorizeDeploymentIfRequired(undefined, credentialFree, now), undefined);
+test("credential-free launch still validates fresh and continuation Grant/claim provenance", async () => {
+  const credentialFreeFresh = request(
+    freshAccepted({ reference: "" }),
+    credentialFreeTarget,
+  );
+  assert.equal(
+    await authorizeDeploymentIfRequired(undefined, credentialFreeFresh, now),
+    undefined,
+  );
   await assert.rejects(
-    resolver.authorize(request(credentialFree.acceptedSpawn), now),
-    authorityError("MISSING_REFERENCE"),
+    authorizeDeploymentIfRequired(
+      undefined,
+      request(freshAccepted({ reference: "", omitSpawnGrant: true }), credentialFreeTarget),
+      now,
+    ),
+    authorityError("INVALID_CORE_EVIDENCE"),
+  );
+
+  assert.equal(
+    await authorizeDeploymentIfRequired(
+      undefined,
+      request(continuationAccepted({ reference: "" }), credentialFreeTarget),
+      now,
+    ),
+    undefined,
+  );
+  await assert.rejects(
+    authorizeDeploymentIfRequired(
+      undefined,
+      request(
+        continuationAccepted({ reference: "", omitCompoundAuthority: true }),
+        credentialFreeTarget,
+      ),
+      now,
+    ),
+    authorityError("INVALID_CORE_EVIDENCE"),
+  );
+  await assert.rejects(
+    authorizeDeploymentIfRequired(
+      undefined,
+      request(
+        continuationAccepted({ reference: "", omitSpawnGrant: true }),
+        credentialFreeTarget,
+      ),
+      now,
+    ),
+    authorityError("INVALID_CORE_EVIDENCE"),
   );
 });
 
@@ -91,11 +205,11 @@ test("unknown, expired, revoked, and every configured target identity mismatch f
     authorityError("REVOKED_REFERENCE"),
   );
 
-  const scopeMutations: readonly DeploymentTargetIdentity[] = [
-    { ...target, adapterId: "other-adapter" },
-    { ...target, deploymentScope: "deployment-b" },
-    { ...target, workspaceId: "workspace-b" },
-    { ...target, projectId: "project-b" },
+  const scopeMutations: readonly CredentialRequiredDeploymentTarget[] = [
+    { ...credentialRequiredTarget, adapterId: "other-adapter" },
+    { ...credentialRequiredTarget, deploymentScope: "deployment-b" },
+    { ...credentialRequiredTarget, workspaceId: "workspace-b" },
+    { ...credentialRequiredTarget, projectId: "project-b" },
   ];
   for (const mutated of scopeMutations) {
     await assert.rejects(
@@ -114,7 +228,7 @@ test("unknown, expired, revoked, and every configured target identity mismatch f
   );
   await assert.rejects(
     resolverFor(binding).authorize(
-      request(freshAccepted(), { ...target, logicalTargetId: "logical-b" }),
+      request(freshAccepted(), { ...credentialRequiredTarget, logicalTargetId: "logical-b" }),
       now,
     ),
     authorityError("INVALID_CORE_EVIDENCE"),
@@ -130,7 +244,7 @@ test("paths and labels in opaque adapter payload cannot widen project or workspa
   }));
   const accepted = freshAccepted({ adapterPayload: hostilePayload });
   const mismatched = request(accepted, {
-    ...target,
+    ...credentialRequiredTarget,
     workspaceId: "workspace-b",
     projectId: "project-b",
   });
@@ -167,6 +281,34 @@ test("continuations require both core Grant provenance records and exact claim e
     resolver.authorize(request(continuationAccepted({ replacementKind: OperationKind.SPAWN })), now),
     authorityError("INVALID_CORE_EVIDENCE"),
   );
+});
+
+test("continuation rejects reused Grants and missing runtime identity before resolver lookup", async () => {
+  let lookups = 0;
+  const resolver: DeploymentAuthorityResolver = {
+    async authorize() {
+      lookups += 1;
+      return { credentialHandle: binding.credentialHandle };
+    },
+  };
+
+  for (const accepted of [
+    continuationAccepted({ replacementGrantId: "spawn-grant-a" }),
+    continuationAccepted({ runtimeSessionId: null }),
+    continuationAccepted({ runtimeSessionId: "" }),
+  ]) {
+    await assert.rejects(
+      authorizeDeploymentIfRequired(resolver, request(accepted), now),
+      authorityError("INVALID_CORE_EVIDENCE"),
+    );
+    assert.equal(lookups, 0, "invalid provenance must fail before credential lookup");
+  }
+
+  assert.deepEqual(
+    await authorizeDeploymentIfRequired(resolver, request(continuationAccepted()), now),
+    { credentialHandle: binding.credentialHandle },
+  );
+  assert.equal(lookups, 1);
 });
 
 test("each continuation attempt rechecks current revocation state instead of caching success", async () => {
@@ -215,7 +357,7 @@ test("supervisor integration records only bounded denial metadata on every redac
 
   await assert.rejects(
     adapter.authorizeDeployment(
-      request(accepted, { ...target, projectId: rawLabel }),
+      request(accepted, { ...credentialRequiredTarget, projectId: rawLabel }),
       now,
     ),
     authorityError("SCOPE_MISMATCH"),
@@ -232,13 +374,114 @@ test("supervisor integration records only bounded denial metadata on every redac
   }]);
 });
 
+test("hostile resolver exception metadata is closed before every diagnostics surface", async () => {
+  assert.equal(Object.isFrozen(DEPLOYMENT_AUTHORITY_ERROR_CODES), true);
+  const directory = mkdtempSync(join(tmpdir(), "patchbay-deployment-authority-"));
+  const path = join(directory, "adapter.log");
+  const records: AdapterDiagnosticInput[] = [];
+  const forwarded: AdapterDiagnosticReport[] = [];
+  const forbidden = [
+    "resolver-secret-name",
+    "resolver-secret-message",
+    "/resolver/private/code",
+    "resolver-secret-cause",
+    binding.credentialHandle,
+    "/resolver/private/path",
+    "resolver-private-label",
+    binding.reference,
+    "resolver-raw-key-material",
+  ] as const;
+  const hostileError = Object.assign(new Error(forbidden[1]), {
+    name: forbidden[0],
+    code: forbidden[2],
+    cause: forbidden[3],
+    credentialHandle: forbidden[4],
+    path: forbidden[5],
+    label: forbidden[6],
+    reference: forbidden[7],
+    keyMaterial: forbidden[8],
+  });
+  const resolver: DeploymentAuthorityResolver = {
+    async authorize() {
+      throw hostileError;
+    },
+  };
+  const fileDiagnostics = await openAdapterDiagnostics({
+    path,
+    adapterId: "pi",
+    adapterGeneration: 1,
+    now: () => new Date("2026-08-14T12:00:00.000Z"),
+  });
+  const forwarder = new CoreDiagnosticsForwarder(
+    async (report) => {
+      forwarded.push(report);
+      return create(AdapterDiagnosticReportResultSchema, { accepted: true });
+    },
+    { authorityDomainId: "authority-test", adapterId: "pi", adapterGeneration: 1 },
+    { reportsPerSecond: 1_000 },
+  );
+  const capture: AdapterDiagnostics = {
+    record(input) {
+      records.push(input);
+    },
+    flush: async () => undefined,
+    close: async () => undefined,
+  };
+  const diagnostics = composeAdapterDiagnostics([fileDiagnostics, forwarder, capture]);
+  const adapter = new AdapterProcess({
+    coreAddress: "http://127.0.0.1:1",
+    adapterId: "pi",
+    authorityDomainId: "authority-test",
+    attachmentEvidence: "attachment-secret",
+    adapterGeneration: 1,
+    sessions: [],
+    deploymentAuthorityResolver: resolver,
+    diagnostics,
+  });
+
+  try {
+    await assert.rejects(
+      adapter.authorizeDeployment(request(freshAccepted()), now),
+      (error: unknown) => error === hostileError,
+    );
+    await diagnostics.flush();
+
+    const fileRecord = readFileSync(path, "utf8");
+    const capturedSurface = JSON.stringify(records);
+    const forwardedSurface = JSON.stringify(forwarded, (_key, value) =>
+      typeof value === "bigint" ? value.toString() : value
+    );
+    for (const value of forbidden) {
+      assert.equal(fileRecord.includes(value), false, `file diagnostics leaked ${value}`);
+      assert.equal(capturedSurface.includes(value), false, `diagnostic input leaked ${value}`);
+      assert.equal(forwardedSurface.includes(value), false, `core forwarding leaked ${value}`);
+    }
+    assert.deepEqual(records, [{
+      event: "deployment.authority.denied",
+      level: "warn",
+      error: {
+        name: "DeploymentAuthorityResolverError",
+        code: "RESOLVER_FAILURE",
+      },
+    }]);
+    const parsedFileRecord = JSON.parse(fileRecord) as Record<string, unknown>;
+    assert.deepEqual(parsedFileRecord["error"], {
+      name: "DeploymentAuthorityResolverError",
+      code: "RESOLVER_FAILURE",
+    });
+  } finally {
+    await diagnostics.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 function resolverFor(candidate: DeploymentAuthorityBinding) {
   return new ConfiguredDeploymentAuthorityResolver([candidate]);
 }
 
 function request(
   acceptedSpawn: SpawnClaimAccepted,
-  requestTarget: DeploymentTargetIdentity = target,
+  requestTarget: ConfiguredDeploymentTarget = credentialRequiredTarget,
 ): DeploymentAuthorityRequest {
   return { acceptedSpawn, target: requestTarget };
 }
@@ -247,6 +490,7 @@ interface FreshAcceptedOptions {
   reference?: string;
   shape?: string;
   adapterPayload?: Uint8Array;
+  omitSpawnGrant?: boolean;
 }
 
 function freshAccepted(options: FreshAcceptedOptions = {}): SpawnClaimAccepted {
@@ -266,7 +510,12 @@ function freshAccepted(options: FreshAcceptedOptions = {}): SpawnClaimAccepted {
         : {}),
     }),
   });
-  return acceptedEnvelope(spawnRequest, 1n);
+  return acceptedEnvelope(
+    spawnRequest,
+    1n,
+    undefined,
+    options.omitSpawnGrant ? { omitSpawnGrant: true } : {},
+  );
 }
 
 interface ContinuationAcceptedOptions {
@@ -274,12 +523,21 @@ interface ContinuationAcceptedOptions {
   omitSpawnGrant?: boolean;
   claimedGeneration?: bigint;
   replacementKind?: OperationKind;
+  replacementGrantId?: string;
   requestedPriorGeneration?: bigint;
+  runtimeSessionId?: string | null;
+  reference?: string;
 }
 
 function continuationAccepted(options: ContinuationAcceptedOptions = {}): SpawnClaimAccepted {
-  const prior = runtimeGenerationRef(4n);
-  const requestedPrior = runtimeGenerationRef(options.requestedPriorGeneration ?? 4n);
+  const runtimeSessionId = options.runtimeSessionId === undefined
+    ? "runtime-a"
+    : options.runtimeSessionId;
+  const prior = runtimeGenerationRef(4n, runtimeSessionId);
+  const requestedPrior = runtimeGenerationRef(
+    options.requestedPriorGeneration ?? 4n,
+    runtimeSessionId,
+  );
   const spawnRequest = create(SpawnRequestSchema, {
     intent: {
       case: "continuation",
@@ -287,7 +545,7 @@ function continuationAccepted(options: ContinuationAcceptedOptions = {}): SpawnC
     },
     targetSpec: create(SpawnTargetSpecSchema, {
       shape: binding.shape,
-      deploymentAuthorityRef: binding.reference,
+      deploymentAuthorityRef: options.reference ?? binding.reference,
     }),
   });
   return acceptedEnvelope(
@@ -336,7 +594,9 @@ function acceptedEnvelope(
       ? {
           compoundAuthority: create(ContinuationAuthorityProvenanceSchema, {
             exactPrior: expectedPrior,
-            replacementGrantId: create(GrantIdSchema, { value: "replacement-grant-a" }),
+            replacementGrantId: create(GrantIdSchema, {
+              value: options.replacementGrantId ?? "replacement-grant-a",
+            }),
             replacementAuthorityKind:
               options.replacementKind ?? OperationKind.SESSION_MANAGEMENT,
           }),
@@ -345,13 +605,15 @@ function acceptedEnvelope(
   });
 }
 
-function runtimeGenerationRef(generation: bigint) {
+function runtimeGenerationRef(generation: bigint, runtimeSessionId: string | null) {
   return create(RuntimeGenerationRefSchema, {
     logicalTargetId: create(LogicalTargetIdSchema, { value: target.logicalTargetId }),
     externalRuntime: create(ExternalRuntimeRefSchema, {
       adapterId: create(AdapterIdSchema, { value: target.adapterId }),
       deploymentScope: target.deploymentScope,
-      runtimeSessionId: create(RuntimeSessionIdSchema, { value: "runtime-a" }),
+      ...(runtimeSessionId === null
+        ? {}
+        : { runtimeSessionId: create(RuntimeSessionIdSchema, { value: runtimeSessionId }) }),
       generation: create(GenerationSchema, { value: generation }),
     }),
   });

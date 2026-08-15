@@ -27,9 +27,25 @@ export interface DeploymentTargetIdentity {
   readonly logicalTargetId: string;
 }
 
+export interface CredentialRequiredDeploymentTarget extends DeploymentTargetIdentity {
+  readonly credentialPolicy: "credential-required";
+}
+
+/** Credential-free policy still binds the core target, but needs no Workspace/project object. */
+export interface CredentialFreeDeploymentTarget {
+  readonly credentialPolicy: "credential-free";
+  readonly adapterId: string;
+  readonly deploymentScope: string;
+  readonly logicalTargetId: string;
+}
+
+export type ConfiguredDeploymentTarget =
+  | CredentialRequiredDeploymentTarget
+  | CredentialFreeDeploymentTarget;
+
 export interface DeploymentAuthorityRequest {
   readonly acceptedSpawn: SpawnClaimAccepted;
-  readonly target?: DeploymentTargetIdentity;
+  readonly target: ConfiguredDeploymentTarget;
 }
 
 export interface DeploymentAuthorityBinding extends DeploymentTargetIdentity {
@@ -40,7 +56,7 @@ export interface DeploymentAuthorityBinding extends DeploymentTargetIdentity {
   readonly revokedAt?: Date;
 }
 
-export const DEPLOYMENT_AUTHORITY_ERROR_CODES = [
+export const DEPLOYMENT_AUTHORITY_ERROR_CODES = Object.freeze([
   "MISSING_REFERENCE",
   "UNKNOWN_REFERENCE",
   "EXPIRED_REFERENCE",
@@ -48,7 +64,7 @@ export const DEPLOYMENT_AUTHORITY_ERROR_CODES = [
   "SCOPE_MISMATCH",
   "INVALID_CORE_EVIDENCE",
   "INVALID_TARGET_SPEC",
-] as const;
+] as const);
 
 export type DeploymentAuthorityErrorCode =
   (typeof DEPLOYMENT_AUTHORITY_ERROR_CODES)[number];
@@ -85,14 +101,11 @@ export class ConfiguredDeploymentAuthorityResolver implements DeploymentAuthorit
     request: DeploymentAuthorityRequest,
     now: Date,
   ): Promise<{ readonly credentialHandle: string }> {
-    if (!Number.isFinite(now.getTime())) {
-      throw new DeploymentAuthorityError("INVALID_CORE_EVIDENCE");
+    const { target, evidence } = validatedDeploymentRequest(request, now);
+    if (target.credentialPolicy !== "credential-required") {
+      throw new DeploymentAuthorityError("INVALID_TARGET_SPEC");
     }
-
-    if (!request.target) throw new DeploymentAuthorityError("SCOPE_MISMATCH");
-    const evidence = validatedSpawnEvidence(request.acceptedSpawn, request.target);
     const reference = evidence.targetSpec.deploymentAuthorityRef;
-    if (!reference) throw new DeploymentAuthorityError("MISSING_REFERENCE");
 
     // This lookup is intentionally inside every call. Revocation and expiry are
     // launch-time adapter preconditions, never inherited continuation authority.
@@ -104,7 +117,7 @@ export class ConfiguredDeploymentAuthorityResolver implements DeploymentAuthorit
     if (binding.expiresAt && binding.expiresAt.getTime() <= now.getTime()) {
       throw new DeploymentAuthorityError("EXPIRED_REFERENCE");
     }
-    if (!bindingMatches(binding, request.target, evidence.targetSpec)) {
+    if (!bindingMatches(binding, target, evidence.targetSpec)) {
       throw new DeploymentAuthorityError("SCOPE_MISMATCH");
     }
 
@@ -130,10 +143,34 @@ export async function authorizeDeploymentIfRequired(
   request: DeploymentAuthorityRequest,
   now: Date,
 ): Promise<{ readonly credentialHandle: string } | undefined> {
-  const targetSpec = spawnTargetSpec(request.acceptedSpawn);
-  if (!targetSpec.deploymentAuthorityRef) return undefined;
+  const { target } = validatedDeploymentRequest(request, now);
+  if (target.credentialPolicy === "credential-free") return undefined;
   if (!resolver) throw new DeploymentAuthorityError("UNKNOWN_REFERENCE");
   return resolver.authorize(request, now);
+}
+
+interface ValidatedDeploymentRequest {
+  readonly target: ConfiguredDeploymentTarget;
+  readonly evidence: ValidatedSpawnEvidence;
+}
+
+function validatedDeploymentRequest(
+  request: DeploymentAuthorityRequest,
+  now: Date,
+): ValidatedDeploymentRequest {
+  if (!Number.isFinite(now.getTime())) {
+    throw new DeploymentAuthorityError("INVALID_CORE_EVIDENCE");
+  }
+  const target = validatedConfiguredTarget(request.target);
+  const evidence = validatedSpawnEvidence(request.acceptedSpawn, target);
+  const reference = evidence.targetSpec.deploymentAuthorityRef;
+  if (target.credentialPolicy === "credential-required" && !reference) {
+    throw new DeploymentAuthorityError("MISSING_REFERENCE");
+  }
+  if (target.credentialPolicy === "credential-free" && reference) {
+    throw new DeploymentAuthorityError("INVALID_TARGET_SPEC");
+  }
+  return { target, evidence };
 }
 
 interface ValidatedSpawnEvidence {
@@ -142,13 +179,14 @@ interface ValidatedSpawnEvidence {
 
 function validatedSpawnEvidence(
   acceptedSpawn: SpawnClaimAccepted,
-  target: DeploymentTargetIdentity,
+  target: ConfiguredDeploymentTarget,
 ): ValidatedSpawnEvidence {
   const accepted = acceptedSpawn.acceptedOperation;
   const operation = accepted?.operation;
   const claim = acceptedSpawn.claim;
+  const spawnGrantId = accepted?.authorizingGrantId?.value;
   if (
-    !accepted?.authorizingGrantId?.value ||
+    !spawnGrantId ||
     !operation?.commandId?.value ||
     operation.kind !== OperationKind.SPAWN ||
     !claim?.claimOperationId?.value ||
@@ -176,6 +214,7 @@ function validatedSpawnEvidence(
     validateContinuationEvidence(
       claim,
       acceptedSpawn.compoundAuthority,
+      spawnGrantId,
       target,
       spawnRequest.intent.value.prior,
     );
@@ -189,30 +228,31 @@ function validatedSpawnEvidence(
 function validateContinuationEvidence(
   claim: SpawnGenerationClaim,
   authority: ContinuationAuthorityProvenance | undefined,
-  target: DeploymentTargetIdentity,
+  spawnGrantId: string,
+  target: ConfiguredDeploymentTarget,
   requestedPrior: RuntimeGenerationRef | undefined,
 ): void {
   const prior = claim.expectedPrior;
+  const runtime = prior?.externalRuntime;
   if (
-    !prior ||
+    !prior?.logicalTargetId?.value ||
+    !runtime?.adapterId?.value ||
+    !runtime.deploymentScope ||
+    !runtime.runtimeSessionId?.value ||
+    !runtime.generation?.value ||
+    runtime.generation.value <= 0n ||
     !authority?.replacementGrantId?.value ||
+    authority.replacementGrantId.value === spawnGrantId ||
     authority.replacementAuthorityKind !== OperationKind.SESSION_MANAGEMENT ||
     !sameRuntimeGenerationRef(prior, requestedPrior) ||
     !sameRuntimeGenerationRef(prior, authority.exactPrior) ||
-    prior.logicalTargetId?.value !== claim.logicalTargetId?.value ||
-    prior.externalRuntime?.adapterId?.value !== target.adapterId ||
-    prior.externalRuntime?.deploymentScope !== target.deploymentScope ||
-    !prior.externalRuntime.generation?.value ||
-    claim.claimedGeneration?.value !== prior.externalRuntime.generation.value + 1n
+    prior.logicalTargetId.value !== claim.logicalTargetId?.value ||
+    runtime.adapterId.value !== target.adapterId ||
+    runtime.deploymentScope !== target.deploymentScope ||
+    claim.claimedGeneration?.value !== runtime.generation.value + 1n
   ) {
     throw new DeploymentAuthorityError("INVALID_CORE_EVIDENCE");
   }
-}
-
-function spawnTargetSpec(acceptedSpawn: SpawnClaimAccepted): SpawnTargetSpec {
-  const targetSpec = decodeSpawnRequest(acceptedSpawn).targetSpec;
-  if (!targetSpec?.shape) throw new DeploymentAuthorityError("INVALID_TARGET_SPEC");
-  return targetSpec;
 }
 
 function decodeSpawnRequest(acceptedSpawn: SpawnClaimAccepted) {
@@ -247,7 +287,7 @@ function sameRuntimeGenerationRef(
 
 function bindingMatches(
   binding: DeploymentAuthorityBinding,
-  target: DeploymentTargetIdentity,
+  target: CredentialRequiredDeploymentTarget,
   targetSpec: SpawnTargetSpec,
 ): boolean {
   return (
@@ -258,6 +298,29 @@ function bindingMatches(
     binding.logicalTargetId === target.logicalTargetId &&
     binding.shape === targetSpec.shape
   );
+}
+
+function validatedConfiguredTarget(
+  target: ConfiguredDeploymentTarget | undefined,
+): ConfiguredDeploymentTarget {
+  if (!target) throw new DeploymentAuthorityError("SCOPE_MISMATCH");
+  for (const value of [target.adapterId, target.deploymentScope, target.logicalTargetId]) {
+    if (!isBoundedIdentityValue(value)) {
+      throw new DeploymentAuthorityError("SCOPE_MISMATCH");
+    }
+  }
+  if (target.credentialPolicy === "credential-required") {
+    if (!isBoundedIdentityValue(target.workspaceId) || !isBoundedIdentityValue(target.projectId)) {
+      throw new DeploymentAuthorityError("SCOPE_MISMATCH");
+    }
+    return target;
+  }
+  if (target.credentialPolicy === "credential-free") return target;
+  throw new DeploymentAuthorityError("INVALID_TARGET_SPEC");
+}
+
+function isBoundedIdentityValue(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 1_024;
 }
 
 function validatedBinding(binding: DeploymentAuthorityBinding): DeploymentAuthorityBinding {

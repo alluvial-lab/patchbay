@@ -1,7 +1,7 @@
 ---
 id: deployment-authority-workspace-scoped-revocable-keys
 kind: story
-stage: implementing
+stage: review
 tags: [security, adapter, architecture]
 parent: research-handoff-spawn
 depends_on: [fleet-spawn-target-resolution]
@@ -70,3 +70,18 @@ Consumes the complete generated target/continuation contract and operation-aware
 - Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; 54 vectors, 17 promoted vectors, 22 implementation checks, and 38 killed mutation witnesses.
 - Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 23/23 tests.
 - Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 35/35 tests including the real core/adapter restart E2E and six new deployment-authority tests.
+
+### Fix round — configured credential policy, canonical continuation provenance, and resolver redaction
+
+- Review disposition: all three MATERIAL findings in `.work/active/reviews/deployment-authority-review-2026-08-14.md` were accepted. Direct reading was sufficient because the review named the complete write set and exact probes; no sub-agent or design change was required.
+- Credential-policy fix: `DeploymentAuthorityRequest.target` now carries an adapter-configured `credential-required | credential-free` discriminator. Both branches validate the configured target, accepted spawn envelope, adapter-scoped spawn Grant, claim, and continuation provenance before policy dispatch. A required target with an omitted reference fails `MISSING_REFERENCE`; a credential-free target has no workspace/project fields, rejects an unexpected reference, and skips only credential-handle lookup.
+- Continuation fix: the adapter launch boundary now requires two distinct non-empty Grant ids and a complete exact prior runtime reference, including a non-empty runtime-session id, positive generation, and exact request/claim/provenance equality. Reused Grant ids and missing/empty runtime-session identity fail `INVALID_CORE_EVIDENCE` before any resolver lookup or handle return.
+- Redaction fix: `AdapterProcess.authorizeDeployment` no longer sends resolver failures through generic `diagnosticError`. It preserves only a member of the runtime-frozen error-code registry from a real `DeploymentAuthorityError`; every other thrown value becomes the closed `{ name: "DeploymentAuthorityResolverError", code: "RESOLVER_FAILURE" }` diagnostic with no exception metadata.
+- Tests added/strengthened: launch-path policy cases cover required-reference omission, credential-free fresh/continuation success with valid core evidence, unexpected credential-free references, and missing either Grant/provenance record; continuation cases cover same-Grant and missing/empty runtime-session identity before resolver lookup; the hostile-resolver integration drives name/message/code/cause/handle/path/label/reference/key sentinels through the captured diagnostic input, real JSONL file sink, and core-forwarder surface and finds none.
+- Mutation kills, all reverted with `git restore` and restored focused tests green: moving the credential-free return before validation failed `credential-free launch still validates fresh and continuation Grant/claim provenance` with “Missing expected rejection”; removing the distinct-Grant comparison failed `continuation rejects reused Grants and missing runtime identity before resolver lookup`; removing the non-empty runtime-session check failed that same focused oracle; replacing the deployment-authority normalizer with generic `diagnosticError` failed `hostile resolver exception metadata is closed before every diagnostics surface` on a leaked hostile error name in the file diagnostic.
+- Files changed: `pi-adapter/src/deployment_authority.ts`, `pi-adapter/src/main.ts`, `pi-adapter/tests/deployment_authority.test.ts`, and this story. No proto, generated contract, core, server, or consumer-supervisor wiring changed.
+- Simplification/discrepancies: the former payload-reference-driven early-return helper was removed; one shared deployment-request validator now owns configured policy plus core-evidence validation for both the wrapper and built-in resolver. The downstream Pi supervisor remains the owner of generated `Delivery.accepted_spawn` consumption, as scoped. Adjacent issues parked: none.
+- Verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS**.
+- Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; 54 vectors, 17 promoted vectors, 22 implementation checks, and 38 killed mutation witnesses.
+- Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 23/23 tests.
+- Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 38/38 tests including the real core/adapter restart E2E and nine deployment-authority tests.

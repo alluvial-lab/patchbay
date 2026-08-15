@@ -13,6 +13,7 @@ import {
   NOOP_ADAPTER_DIAGNOSTICS,
   openAdapterDiagnostics,
   resolveAdapterLogPath,
+  type AdapterDiagnosticError,
   type AdapterDiagnosticInput,
   type AdapterDiagnostics,
   type AdapterDiagnosticSessionRef,
@@ -20,6 +21,8 @@ import {
 import { DeliveryTranslator, UnsupportedCommandError } from "./delivery.js";
 import {
   authorizeDeploymentIfRequired,
+  DEPLOYMENT_AUTHORITY_ERROR_CODES,
+  DeploymentAuthorityError,
   type DeploymentAuthorityRequest,
   type DeploymentAuthorityResolver,
 } from "./deployment_authority.js";
@@ -239,7 +242,7 @@ export class AdapterProcess {
       this.#record({
         event: "deployment.authority.denied",
         level: "warn",
-        error: diagnosticError(error),
+        error: deploymentAuthorityDiagnosticError(error),
       });
       throw error;
     }
@@ -639,6 +642,28 @@ export class AdapterProcess {
       .finally(() => this.#pendingObservations.delete(tracked));
     this.#pendingObservations.add(tracked);
   }
+}
+
+const UNKNOWN_DEPLOYMENT_AUTHORITY_DIAGNOSTIC: AdapterDiagnosticError = Object.freeze({
+  name: "DeploymentAuthorityResolverError",
+  code: "RESOLVER_FAILURE",
+});
+
+function deploymentAuthorityDiagnosticError(error: unknown): AdapterDiagnosticError {
+  try {
+    if (error instanceof DeploymentAuthorityError) {
+      const code: unknown = error.code;
+      if (
+        typeof code === "string" &&
+        (DEPLOYMENT_AUTHORITY_ERROR_CODES as readonly string[]).includes(code)
+      ) {
+        return { name: "DeploymentAuthorityError", code };
+      }
+    }
+  } catch {
+    // Resolver failures are untrusted; no exception metadata crosses this boundary.
+  }
+  return UNKNOWN_DEPLOYMENT_AUTHORITY_DIAGNOSTIC;
 }
 
 function normalizedModel(model: ReturnType<PiSession["getState"]>["model"]): string {
