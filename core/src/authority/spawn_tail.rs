@@ -1,10 +1,10 @@
-//! Durable descendant-grant completion derived from committed spawn facts.
+//! The single spawn-completion owner over durable spawn facts.
 //!
-//! The fold never treats an in-memory latch as durable progress. It observes
-//! accepted spawn decisions, successful result evidence, correlated session
-//! registration/replacement, completion audit records, descendant grants, and
-//! terminal transitions. [`SpawnDescendantTail::next_action`] then returns the
-//! next missing durable step in audit → grant → completion order.
+//! Managed `SpawnClaim` histories can produce only one atomic promotion action
+//! after the current authority projection confirms promotion-time liveness.
+//! Pre-managed histories remain in a one-way compatibility fold that repairs
+//! only the next missing audit → grant → completion step. Neither path treats
+//! an in-memory latch as durable progress.
 
 use std::collections::{HashMap, HashSet};
 
@@ -13,14 +13,15 @@ use patchbay_contracts::patchbay::{
     AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
     DeviceId, EndpointId, EventId, FailureCode, GrantId, GrantRevocationPolicy, Observation,
     ObservationKind, OperationKind, OperationState, Revocation, SessionGenerationBumped,
-    SessionRegistered, SessionStateEvent, SpawnClaimEvent, StoredEventKind, StoredEventPayload,
-    TargetScope, TargetScopeKind, TypedCorrelation,
+    SessionRegistered, SessionStateEvent, SpawnClaimEvent, SpawnPromotionCommitted,
+    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use prost::Message;
 use prost_types::Timestamp;
 
 use crate::{
     acceptance::{exact_command_correlation, CommandIndex},
+    contract_validation::validate_continuation_authority_provenance,
     storage::RecordedEvent,
 };
 
@@ -87,10 +88,17 @@ struct SpawnProgress {
 }
 
 /// The next durable action required to finish one spawn.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SpawnCompletionAction {
+    /// The only live completion action for a managed spawn. Storage commits
+    /// the complete authority/session/claim/command decision and its audit in
+    /// one transaction.
+    CommitPromotion(Box<SpawnPromotionCommitted>),
+    /// One-way compatibility repair for pre-managed durable histories only.
     RecordAudit(SpawnCompletionAudit),
+    /// One-way compatibility repair for pre-managed durable histories only.
     IssueDescendantGrant(DescendantGrantIssuance),
+    /// One-way compatibility repair for pre-managed durable histories only.
     CommitCompleted(SpawnCompletionCommit),
 }
 
@@ -135,6 +143,13 @@ pub struct SpawnCompletionCommit {
 pub struct SpawnDescendantTail {
     authority_domain_id: Option<AuthorityDomainId>,
     spawns: HashMap<SpawnKey, SpawnProgress>,
+    /// Commands accepted through the managed claim envelope. These commands
+    /// can never re-enter the legacy audit → grant → terminal reactor, even
+    /// when their durable facts resemble a historical crash prefix.
+    managed_spawns: HashSet<SpawnKey>,
+    /// Managed commands whose atomic promotion source has already folded. The
+    /// immediately following completion audit is valid only for this set.
+    managed_promotions: HashSet<SpawnKey>,
     /// Canonical projections folded beside the completion facts. They make
     /// accepted-spawn authority and lifecycle eligibility depend on the prior
     /// durable LSN prefix rather than on self-consistent later records.
@@ -193,12 +208,14 @@ impl SpawnDescendantTail {
             StoredEventKind::CommandTransition => {
                 self.observe_command_transition(event, &event_domain, event_lsn)
             }
+            StoredEventKind::SpawnPromotionCommitted => {
+                self.observe_spawn_promotion(event, &event_domain, event_lsn)
+            }
             StoredEventKind::Revocation => self.observe_revocation(event, &event_domain, event_lsn),
             StoredEventKind::ResourceState
             | StoredEventKind::SpawnExecutionEvidence
             | StoredEventKind::SpawnSuccessorEvidenceStaged
             | StoredEventKind::QuarantinedRuntimeEvidence
-            | StoredEventKind::SpawnPromotionCommitted
             | StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::OperatorRecord
@@ -209,6 +226,52 @@ impl SpawnDescendantTail {
             StoredEventKind::Unspecified => Err(AuthorityError::CorruptLog(format!(
                 "spawn-tail event at LSN {event_lsn} has unspecified kind"
             ))),
+        }
+    }
+
+    /// Turn a fully derived managed promotion candidate into the driver's one
+    /// live completion action after consulting the current durable authority
+    /// projection at the candidate's single sampled decision time.
+    ///
+    /// Revocation or expiry suppresses promotion without rewriting accepted
+    /// provenance. Missing or mismatched authority is corrupt history and
+    /// fails closed. The dedicated storage append re-runs this same validator
+    /// while folding the candidate transactionally.
+    pub fn managed_promotion_action(
+        &self,
+        promotion: SpawnPromotionCommitted,
+    ) -> Result<Option<SpawnCompletionAction>, AuthorityError> {
+        let accepted = promotion.accepted_claim.as_ref().ok_or_else(|| {
+            AuthorityError::CorruptRecord("managed promotion has no accepted claim".to_owned())
+        })?;
+        let claim = accepted.claim.as_ref().ok_or_else(|| {
+            AuthorityError::CorruptRecord("managed promotion has no generation claim".to_owned())
+        })?;
+        let command_id = claim
+            .claim_operation_id
+            .clone()
+            .filter(|id| !id.value.is_empty())
+            .ok_or_else(|| {
+                AuthorityError::CorruptRecord(
+                    "managed promotion claim has no non-empty operation id".to_owned(),
+                )
+            })?;
+        let domain = promotion.authority_domain_id.as_ref().ok_or_else(|| {
+            AuthorityError::CorruptRecord("managed promotion has no authority domain".to_owned())
+        })?;
+        if !self
+            .managed_spawns
+            .contains(&(domain.clone(), command_id.clone()))
+        {
+            return Err(AuthorityError::CorruptLog(format!(
+                "promotion candidate for {command_id:?} is not owned by a managed spawn claim"
+            )));
+        }
+        match spawn_promotion_authority_readiness(&self.authority, &promotion)? {
+            SpawnPromotionAuthorityReadiness::Ready => Ok(Some(
+                SpawnCompletionAction::CommitPromotion(Box::new(promotion)),
+            )),
+            SpawnPromotionAuthorityReadiness::Suppressed => Ok(None),
         }
     }
 
@@ -500,18 +563,42 @@ impl SpawnDescendantTail {
                 "accepted spawn claim at LSN {event_lsn} has no generation claim"
             ))
         })?;
-        // Managed continuations are completed only by Unit 7's atomic
-        // promotion owner. Translating them into this legacy one-Grant tail
-        // would discard exact-prior and replacement-Grant provenance.
-        if generation_claim.expected_prior.is_some() {
-            return Ok(());
-        }
-        let accepted_operation = accepted.accepted_operation.ok_or_else(|| {
+        validate_message_domain(
+            generation_claim.authority_domain_id.as_ref(),
+            event_domain,
+            "accepted spawn claim",
+            event_lsn,
+        )?;
+        let command_id = required_command_id(
+            generation_claim.claim_operation_id.clone(),
+            "accepted spawn claim",
+            event_lsn,
+        )?;
+        let accepted_operation = accepted.accepted_operation.as_ref().ok_or_else(|| {
             AuthorityError::CorruptRecord(format!(
                 "accepted spawn claim at LSN {event_lsn} has no operation"
             ))
         })?;
-        self.observe_accepted_operation(accepted_operation, event_domain, event_lsn)
+        let operation = accepted_operation.operation.as_ref().ok_or_else(|| {
+            AuthorityError::CorruptRecord(format!(
+                "accepted spawn claim at LSN {event_lsn} has no spawning operation"
+            ))
+        })?;
+        if operation.command_id.as_ref() != Some(&command_id)
+            || OperationKind::try_from(operation.kind).ok() != Some(OperationKind::Spawn)
+        {
+            return Err(AuthorityError::CorruptLog(format!(
+                "accepted spawn claim at LSN {event_lsn} does not own its exact spawn operation"
+            )));
+        }
+
+        // Every accepted SpawnClaim is managed, fresh or continuation. Remove
+        // any earlier Operation-shaped compatibility progress so a replayed
+        // managed prefix can never acquire a second grant/terminal reactor.
+        let key = (event_domain.clone(), command_id);
+        self.managed_spawns.insert(key.clone());
+        self.spawns.remove(&key);
+        Ok(())
     }
 
     fn observe_accepted_operation(
@@ -777,6 +864,15 @@ impl SpawnDescendantTail {
             event_lsn,
         )?;
         let key = (event_domain.clone(), command_id.clone());
+        if self.managed_spawns.contains(&key) {
+            return if self.managed_promotions.contains(&key) {
+                Ok(())
+            } else {
+                Err(AuthorityError::CorruptLog(format!(
+                    "managed spawn-completion audit at LSN {event_lsn} precedes its atomic promotion"
+                )))
+            };
+        }
         let progress = self.spawns.get_mut(&key).ok_or_else(|| {
             AuthorityError::CorruptLog(format!(
                 "spawn-completion audit at LSN {event_lsn} has no accepted spawn context"
@@ -856,6 +952,11 @@ impl SpawnDescendantTail {
             event_lsn,
         )?;
         let key = (event_domain.clone(), command_id.clone());
+        if self.managed_spawns.contains(&key) {
+            return Err(AuthorityError::CorruptLog(format!(
+                "managed spawn at LSN {event_lsn} emitted a separate descendant grant outside atomic promotion"
+            )));
+        }
         let progress = self.spawns.get_mut(&key).ok_or_else(|| {
             AuthorityError::CorruptLog(format!(
                 "descendant grant at LSN {event_lsn} has no accepted spawn context"
@@ -931,6 +1032,11 @@ impl SpawnDescendantTail {
             )));
         }
         let key = (event_domain.clone(), command_id.clone());
+        if to_state == OperationState::Completed && self.managed_spawns.contains(&key) {
+            return Err(AuthorityError::CorruptLog(format!(
+                "managed spawn at LSN {event_lsn} was completed by a generic transition"
+            )));
+        }
         let Some(progress) = self.spawns.get_mut(&key) else {
             return Ok(());
         };
@@ -950,6 +1056,43 @@ impl SpawnDescendantTail {
                     },
                 )?;
             }
+        }
+        Ok(())
+    }
+
+    fn observe_spawn_promotion(
+        &mut self,
+        event: &RecordedEvent,
+        event_domain: &AuthorityDomainId,
+        event_lsn: u64,
+    ) -> Result<(), AuthorityError> {
+        let promotion =
+            SpawnPromotionCommitted::decode(event.payload.payload.as_slice()).map_err(|error| {
+                AuthorityError::CorruptRecord(format!(
+                    "cannot decode spawn promotion at LSN {event_lsn}: {error}"
+                ))
+            })?;
+        let command_id = promotion
+            .accepted_claim
+            .as_ref()
+            .and_then(|accepted| accepted.claim.as_ref())
+            .and_then(|claim| claim.claim_operation_id.clone())
+            .filter(|id| !id.value.is_empty())
+            .ok_or_else(|| {
+                AuthorityError::CorruptRecord(format!(
+                    "spawn promotion at LSN {event_lsn} has no operation id"
+                ))
+            })?;
+        let key = (event_domain.clone(), command_id);
+        if !self.managed_spawns.contains(&key) {
+            return Err(AuthorityError::CorruptLog(format!(
+                "spawn promotion at LSN {event_lsn} has no managed claim owner"
+            )));
+        }
+        if !self.managed_promotions.insert(key) {
+            return Err(AuthorityError::CorruptLog(format!(
+                "managed spawn has duplicate promotion at LSN {event_lsn}"
+            )));
         }
         Ok(())
     }
@@ -1010,6 +1153,171 @@ impl SpawnDescendantTail {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpawnPromotionAuthorityReadiness {
+    Ready,
+    Suppressed,
+}
+
+/// Validate the authority portion of a managed promotion against one durable
+/// authority projection and the promotion's already-sampled decision time.
+///
+/// The live driver consults this before asking storage to append. The atomic
+/// writer reaches the same validator through `AuthorityRegistry`'s promotion
+/// fold, so readiness cannot drift between the driver and transactional replay.
+pub(crate) fn spawn_promotion_authority_readiness(
+    authority: &AuthorityRegistry,
+    promotion: &SpawnPromotionCommitted,
+) -> Result<SpawnPromotionAuthorityReadiness, AuthorityError> {
+    let domain = promotion.authority_domain_id.as_ref().ok_or_else(|| {
+        AuthorityError::CorruptRecord("spawn promotion has no authority domain".to_owned())
+    })?;
+    let committed_at = promotion.committed_at.as_ref().ok_or_else(|| {
+        AuthorityError::CorruptRecord("spawn promotion has no committed_at".to_owned())
+    })?;
+    let accepted = promotion.accepted_claim.as_ref().ok_or_else(|| {
+        AuthorityError::CorruptRecord("spawn promotion has no accepted claim".to_owned())
+    })?;
+    let claim = accepted.claim.as_ref().ok_or_else(|| {
+        AuthorityError::CorruptRecord("spawn promotion has no exact generation claim".to_owned())
+    })?;
+    if claim.authority_domain_id.as_ref() != Some(domain) {
+        return Err(AuthorityError::CorruptLog(
+            "spawn promotion claim belongs to another authority domain".to_owned(),
+        ));
+    }
+    let accepted_operation = accepted.accepted_operation.as_ref().ok_or_else(|| {
+        AuthorityError::CorruptRecord("spawn promotion has no accepted operation".to_owned())
+    })?;
+    let operation = accepted_operation.operation.as_ref().ok_or_else(|| {
+        AuthorityError::CorruptRecord("spawn promotion has no spawning operation".to_owned())
+    })?;
+    let command_id = claim.claim_operation_id.as_ref().ok_or_else(|| {
+        AuthorityError::CorruptRecord("spawn promotion claim has no operation id".to_owned())
+    })?;
+    if command_id.value.is_empty()
+        || operation.authority_domain_id.as_ref() != Some(domain)
+        || operation.command_id.as_ref() != Some(command_id)
+        || OperationKind::try_from(operation.kind).ok() != Some(OperationKind::Spawn)
+    {
+        return Err(AuthorityError::CorruptLog(
+            "spawn promotion is not bound to its exact accepted spawn operation".to_owned(),
+        ));
+    }
+    let sender = operation.sender.as_ref().ok_or_else(|| {
+        AuthorityError::CorruptRecord("spawn promotion operation has no sender".to_owned())
+    })?;
+    let actor = sender
+        .actor_id
+        .as_ref()
+        .filter(|id| !id.value.is_empty())
+        .ok_or_else(|| {
+            AuthorityError::CorruptRecord("spawn promotion sender has no actor".to_owned())
+        })?;
+    validate_optional_endpoint(sender.endpoint_id.as_ref(), "spawn promotion sender", 0)?;
+    let target = operation.target_scope.as_ref().ok_or_else(|| {
+        AuthorityError::CorruptRecord("spawn promotion operation has no target".to_owned())
+    })?;
+    let evidence = promotion.authority.as_ref().ok_or_else(|| {
+        AuthorityError::CorruptRecord("spawn promotion has no authority evidence".to_owned())
+    })?;
+    let spawning_grant_id = accepted_operation
+        .authorizing_grant_id
+        .as_ref()
+        .filter(|id| !id.value.is_empty())
+        .ok_or_else(|| {
+            AuthorityError::CorruptRecord(
+                "spawn promotion accepted operation has no spawning grant".to_owned(),
+            )
+        })?;
+    if evidence.spawning_grant_id.as_ref() != Some(spawning_grant_id)
+        || evidence.continuation_authority != accepted.compound_authority
+    {
+        return Err(AuthorityError::CorruptLog(
+            "spawn promotion authority differs from accepted provenance".to_owned(),
+        ));
+    }
+    let issuer = IssuerRef {
+        actor,
+        endpoint: sender.endpoint_id.as_ref(),
+        authority_domain_id: domain,
+    };
+    let spawning_grant = authority.get_grant(spawning_grant_id).ok_or_else(|| {
+        AuthorityError::InvalidGrant(format!(
+            "spawn promotion references unknown spawning grant {spawning_grant_id:?}"
+        ))
+    })?;
+    if !grant_matches_request(spawning_grant, &issuer, OperationKind::Spawn, target) {
+        return Err(AuthorityError::InvalidGrant(
+            "spawn promotion spawning grant does not authorize the exact accepted spawn".to_owned(),
+        ));
+    }
+    let mut live = spawning_grant.is_live_at(committed_at);
+
+    match (
+        claim.expected_prior.as_ref(),
+        accepted.compound_authority.as_ref(),
+    ) {
+        (None, None) => {}
+        (Some(prior), Some(continuation)) => {
+            validate_continuation_authority_provenance(spawning_grant_id, continuation)
+                .map_err(|error| AuthorityError::InvalidGrant(error.to_string()))?;
+            if continuation.exact_prior.as_ref() != Some(prior) {
+                return Err(AuthorityError::InvalidGrant(
+                    "spawn promotion continuation provenance does not name the exact prior claim"
+                        .to_owned(),
+                ));
+            }
+            let replacement_id = continuation
+                .replacement_grant_id
+                .as_ref()
+                .expect("continuation provenance validated");
+            let replacement = authority.get_grant(replacement_id).ok_or_else(|| {
+                AuthorityError::InvalidGrant(format!(
+                    "spawn promotion references unknown replacement grant {replacement_id:?}"
+                ))
+            })?;
+            let external = prior
+                .external_runtime
+                .as_ref()
+                .expect("continuation provenance validated");
+            let prior_scope = TargetScope {
+                kind: TargetScopeKind::RuntimeSession as i32,
+                adapter_id: external.adapter_id.clone(),
+                deployment_scope: external.deployment_scope.clone(),
+                runtime_session_id: external.runtime_session_id.clone(),
+                session_generation: external.generation,
+                ..TargetScope::default()
+            };
+            if replacement.target_scope != prior_scope
+                || !grant_matches_request(
+                    replacement,
+                    &issuer,
+                    OperationKind::SessionManagement,
+                    &prior_scope,
+                )
+            {
+                return Err(AuthorityError::InvalidGrant(
+                    "spawn promotion replacement grant is not exact-prior session-management authority"
+                        .to_owned(),
+                ));
+            }
+            live &= replacement.is_live_at(committed_at);
+        }
+        _ => {
+            return Err(AuthorityError::InvalidGrant(
+                "fresh/continuation claim and compound authority provenance disagree".to_owned(),
+            ))
+        }
+    }
+
+    Ok(if live {
+        SpawnPromotionAuthorityReadiness::Ready
+    } else {
+        SpawnPromotionAuthorityReadiness::Suppressed
+    })
 }
 
 fn session_from_registration(

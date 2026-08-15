@@ -1,7 +1,7 @@
 extern crate patchbay_test_support;
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc,
     },
     time::Duration,
@@ -35,7 +35,7 @@ use patchbay_core::{
     storage::{
         AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedStorage, CoreGenerationStore,
         DedupOutcome, GrantAppendOutcome, GrantIdentityKey, RecordedEvent, RusqliteStorage,
-        Storage, StorageError, StoredSnapshot, TargetKey,
+        SpawnPromotionAppend, Storage, StorageError, StoredSnapshot, TargetKey,
     },
     time::TestClock,
 };
@@ -930,6 +930,235 @@ impl Storage for LoseFirstDescendantAppendAcknowledgement {
     }
 }
 
+#[derive(Clone)]
+struct PromotionAppendFault {
+    inner: AuditedStorage<RusqliteStorage>,
+    /// 1 fails before the atomic append; 2 loses acknowledgement after commit.
+    mode: Arc<AtomicU8>,
+}
+
+impl PromotionAppendFault {
+    fn new(inner: AuditedStorage<RusqliteStorage>, mode: u8) -> Self {
+        Self {
+            inner,
+            mode: Arc::new(AtomicU8::new(mode)),
+        }
+    }
+}
+
+impl Storage for PromotionAppendFault {
+    async fn append(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        payload: StoredEventPayload,
+    ) -> Result<EventId, StorageError> {
+        self.inner.append(authority_domain_id, payload).await
+    }
+
+    async fn append_dedup(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        payload: StoredEventPayload,
+    ) -> Result<DedupOutcome, StorageError> {
+        self.inner
+            .append_dedup(authority_domain_id, key, target, payload)
+            .await
+    }
+
+    async fn append_spawn_promotion_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        promotion: SpawnPromotionCommitted,
+        audit: AuditRecordDraft,
+    ) -> Result<SpawnPromotionAppend, StorageError> {
+        match self.mode.swap(0, Ordering::SeqCst) {
+            1 => Err(StorageError::WriteFailed {
+                message: "synthetic crash before promotion transaction".to_owned(),
+                retryable: true,
+            }),
+            2 => {
+                self.inner
+                    .append_spawn_promotion_audited(authority_domain_id, promotion, audit)
+                    .await?;
+                Err(StorageError::WriteFailed {
+                    message: "synthetic lost promotion commit acknowledgement".to_owned(),
+                    retryable: true,
+                })
+            }
+            _ => {
+                self.inner
+                    .append_spawn_promotion_audited(authority_domain_id, promotion, audit)
+                    .await
+            }
+        }
+    }
+
+    async fn read_after(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: Lsn,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
+        self.inner.read_after(authority_domain_id, cursor).await
+    }
+
+    async fn write_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        snapshot_lsn: Lsn,
+        snapshot_payload: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        self.inner
+            .write_snapshot(authority_domain_id, snapshot_lsn, snapshot_payload)
+            .await
+    }
+
+    async fn load_latest_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        at_or_before: Option<Lsn>,
+    ) -> Result<Option<StoredSnapshot>, StorageError> {
+        self.inner
+            .load_latest_snapshot(authority_domain_id, at_or_before)
+            .await
+    }
+
+    async fn append_audit(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        audit: AuditRecordDraft,
+    ) -> Result<EventId, StorageError> {
+        self.inner.append_audit(authority_domain_id, audit).await
+    }
+}
+
+async fn seed_ready_managed_promotion(storage: &AuditedStorage<RusqliteStorage>) {
+    seed_parent_grant(storage).await;
+    let gate = CoreDecisionGate::default();
+    let service = AdapterControlServiceImpl::new_with_decision_gate(
+        storage.clone(),
+        domain(),
+        AdapterEvidenceVerifier::new([("pi", "adapter-test-secret")]).unwrap(),
+        gate.clone(),
+    )
+    .await
+    .unwrap();
+    let token = attach_adapter(&service).await;
+    {
+        let _guard = gate.acquire().await;
+        seed_adapter_scoped_spawn(storage).await;
+    }
+    report_successful_spawn(&service, &token).await;
+    report_session(&service, &token, 1, Some(correlation())).await;
+}
+
+#[tokio::test]
+async fn managed_promotion_crash_prefix_is_neither_or_complete_and_replays_once() {
+    for mode in [1, 2] {
+        let inner = AuditedStorage::new(RusqliteStorage::open_in_memory().unwrap());
+        seed_ready_managed_promotion(&inner).await;
+        let storage = PromotionAppendFault::new(inner.clone(), mode);
+        let error = match SpawnCompletionDriver::bootstrap(
+            storage.clone(),
+            domain(),
+            CoreDecisionGate::default(),
+            production_audit(storage),
+            clock(),
+        )
+        .await
+        {
+            Ok(_) => panic!("synthetic promotion crash must interrupt the first driver"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            SpawnCompletionError::Storage(StorageError::WriteFailed {
+                retryable: true,
+                ..
+            })
+        ));
+        let crashed = all_events(&inner).await;
+        let expected = if mode == 1 { (0, 0, 0) } else { (1, 1, 1) };
+        assert_eq!(completion_counts(&crashed), expected);
+        assert_eq!(
+            crashed
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        StoredEventKind::try_from(event.payload.kind).ok(),
+                        Some(StoredEventKind::SpawnPromotionCommitted)
+                    )
+                })
+                .count(),
+            usize::from(mode == 2),
+            "the crash prefix contains neither the promotion nor a partial source"
+        );
+
+        let restarted = SpawnCompletionDriver::bootstrap(
+            inner.clone(),
+            domain(),
+            CoreDecisionGate::default(),
+            production_audit(inner.clone()),
+            clock(),
+        )
+        .await
+        .expect("restart commits or replays the one complete promotion");
+        drop(restarted);
+        assert_eq!(completion_counts(&all_events(&inner).await), (1, 1, 1));
+        ProjectionState::rebuild(&inner, &domain())
+            .await
+            .expect("the complete authority-bearing promotion replays in every projection");
+    }
+}
+
+#[tokio::test]
+async fn managed_driver_suppresses_promotion_after_accepted_authority_revocation() {
+    let storage = AuditedStorage::new(RusqliteStorage::open_in_memory().unwrap());
+    seed_ready_managed_promotion(&storage).await;
+    let mut authority = rebuild_from_log(&storage, &domain()).await.unwrap();
+    ingest_revocation(
+        &storage,
+        &mut authority,
+        &domain(),
+        Revocation {
+            authority_domain_id: Some(domain()),
+            grant_id: Some(parent_grant_id()),
+            revoked_by: Some(ActorEndpointRef {
+                actor_id: Some(actor()),
+                endpoint_id: Some(endpoint()),
+                device_id: Some(device()),
+                ..ActorEndpointRef::default()
+            }),
+            revoked_at: Some(Timestamp {
+                seconds: 999,
+                nanos: 0,
+            }),
+            revocation_generation: Some(Generation { value: 1 }),
+            accepted_operation_policy: GrantRevocationPolicy::Continue as i32,
+            reason: "promotion_authority_revoked".to_owned(),
+            ..Revocation::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    let driver = SpawnCompletionDriver::bootstrap(
+        storage.clone(),
+        domain(),
+        CoreDecisionGate::default(),
+        production_audit(storage.clone()),
+        clock(),
+    )
+    .await
+    .expect("revoked accepted authority suppresses promotion without crashing the owner");
+    drop(driver);
+    assert_eq!(completion_counts(&all_events(&storage).await), (0, 0, 0));
+    ProjectionState::rebuild(&storage, &domain())
+        .await
+        .expect("the staged, unpromoted prefix remains replayable for reconciliation");
+}
+
 #[tokio::test]
 async fn committed_descendant_with_lost_ack_repairs_without_duplicate_grant_or_creation_audit() {
     let inner = AuditedStorage::new(RusqliteStorage::open_in_memory().unwrap());
@@ -1311,7 +1540,7 @@ impl Storage for BlockingTransitionStorage {
 }
 
 async fn run_live_adapter_case(
-    generation_bump: bool,
+    report_first: bool,
 ) -> (AuditedStorage<RusqliteStorage>, AuthorityRegistry) {
     let storage = AuditedStorage::new(RusqliteStorage::open_in_memory().unwrap());
     seed_parent_grant(&storage).await;
@@ -1336,15 +1565,19 @@ async fn run_live_adapter_case(
     let token = attach_adapter(&service).await;
     let driver_task = tokio::spawn(driver.run());
 
-    if generation_bump {
-        report_session(&service, &token, 6, None).await;
-    }
     {
         let _guard = gate.acquire().await;
         seed_adapter_scoped_spawn(&storage).await;
     }
-    report_successful_spawn(&service, &token).await;
-    report_session(&service, &token, 1, Some(correlation())).await;
+    if report_first {
+        report_session(&service, &token, 1, Some(correlation())).await;
+        assert_eq!(completion_counts(&all_events(&storage).await), (0, 0, 0));
+        report_successful_spawn(&service, &token).await;
+    } else {
+        report_successful_spawn(&service, &token).await;
+        assert_eq!(completion_counts(&all_events(&storage).await), (0, 0, 0));
+        report_session(&service, &token, 1, Some(correlation())).await;
+    }
 
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         loop {
@@ -1398,6 +1631,21 @@ async fn managed_evidence_retries_complete_once_and_restart_as_a_replayable_pref
         result_retry_before_staging, earliest_result,
         "exact Result retries reuse the canonical durable source"
     );
+    let mut driver = SpawnCompletionDriver::bootstrap(
+        storage.clone(),
+        domain(),
+        gate.clone(),
+        production_audit(storage.clone()),
+        clock(),
+    )
+    .await
+    .expect("result evidence without a staged successor remains deferred");
+    assert_eq!(
+        completion_counts(&all_events(&storage).await),
+        (0, 0, 0),
+        "the driver cannot promote before exact staged successor evidence"
+    );
+
     let staged = report_session(&service, &token, 1, Some(correlation())).await;
     let staged_retry = report_session(&service, &token, 1, Some(correlation())).await;
     assert_eq!(
@@ -1433,15 +1681,10 @@ async fn managed_evidence_retries_complete_once_and_restart_as_a_replayable_pref
         1
     );
 
-    let driver = SpawnCompletionDriver::bootstrap(
-        storage.clone(),
-        domain(),
-        gate,
-        production_audit(storage.clone()),
-        clock(),
-    )
-    .await
-    .expect("completion driver accepts exact durable retries");
+    driver
+        .catch_up_to_quiescence()
+        .await
+        .expect("completion driver accepts exact durable retries");
     drop(driver);
     assert_eq!(completion_counts(&all_events(&storage).await), (1, 1, 1));
     assert_eq!(
@@ -1681,8 +1924,8 @@ async fn transition_fault_cannot_strand_authenticated_result_and_legacy_strand_f
 
 #[tokio::test]
 async fn live_staged_promotion_preserves_verified_authority_and_two_lever_revocation() {
-    for generation_bump in [false] {
-        let (storage, mut authority) = run_live_adapter_case(generation_bump).await;
+    for report_first in [false, true] {
+        let (storage, mut authority) = run_live_adapter_case(report_first).await;
         let descendant_id = GrantId {
             value: "desc:authority-main:spawn-1".to_owned(),
         };

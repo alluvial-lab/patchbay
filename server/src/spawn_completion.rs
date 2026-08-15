@@ -1,8 +1,9 @@
-use std::{fmt, sync::Arc, time::Duration};
+use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, CommandTransition, DescendantGrant, DescendantGrantProvenance, EventId,
-    FailureCode, GrantRevocationPolicy, Lsn, OperationState, StoredEventKind, StoredEventPayload,
+    AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, DescendantGrantProvenance,
+    EventId, FailureCode, GrantRevocationPolicy, Lsn, OperationState, StoredEventKind,
+    StoredEventPayload,
 };
 use patchbay_core::{
     acceptance::Clock,
@@ -11,7 +12,7 @@ use patchbay_core::{
         ingest_descendant_grant, AuthorityError, AuthorityRegistry, SpawnCompletionAction,
         SpawnDescendantTail,
     },
-    session::next_spawn_promotion,
+    session::next_spawn_promotion_excluding,
     storage::{validate_next_replay_event, AuditRecordDraft, RecordedEvent, Storage, StorageError},
 };
 use prost::Message;
@@ -75,6 +76,7 @@ pub struct SpawnCompletionDriver<S> {
     tail: SpawnDescendantTail,
     authority: AuthorityRegistry,
     history: Vec<RecordedEvent>,
+    suppressed_promotions: HashSet<CommandId>,
     cursor: u64,
     scan_interval: Duration,
 }
@@ -106,6 +108,7 @@ where
             tail: SpawnDescendantTail::new(),
             authority: AuthorityRegistry::new(),
             history: Vec::new(),
+            suppressed_promotions: HashSet::new(),
             cursor: 0,
             scan_interval: DEFAULT_SCAN_INTERVAL,
         };
@@ -145,13 +148,41 @@ where
                 self.fold_event(&event)?;
             }
 
-            if let Some(promotion) =
-                next_spawn_promotion(&self.authority_domain_id, &self.history, self.clock.now())
-                    .map_err(|error| SpawnCompletionError::CorruptLog(error.to_string()))?
+            if let Some(promotion) = next_spawn_promotion_excluding(
+                &self.authority_domain_id,
+                &self.history,
+                self.clock.now(),
+                &self.suppressed_promotions,
+            )
+            .map_err(|error| SpawnCompletionError::CorruptLog(error.to_string()))?
             {
-                self.execute_promotion(promotion).await?;
-                // Never mutate a projection optimistically. Read the atomic
-                // promotion+audit pair through the same durable fold next.
+                let command_id = promotion
+                    .accepted_claim
+                    .as_ref()
+                    .and_then(|accepted| accepted.claim.as_ref())
+                    .and_then(|claim| claim.claim_operation_id.clone())
+                    .ok_or_else(|| {
+                        SpawnCompletionError::CorruptLog(
+                            "promotion producer returned no claim operation id".to_owned(),
+                        )
+                    })?;
+                if let Some(action) = self.tail.managed_promotion_action(promotion)? {
+                    self.execute(action).await?;
+                    // Never mutate a projection optimistically. Read the atomic
+                    // promotion+audit pair through the same durable fold next.
+                    continue;
+                }
+                // Exact accepted authority that was revoked or expired before
+                // promotion suppresses the decision. Preserve the staged
+                // candidate for explicit reconciliation; do not substitute a
+                // new Grant id or ask storage to fail the transaction for us.
+                // Exclude this permanently dead provenance from later scans so
+                // it cannot head-of-line block an unrelated ready spawn.
+                if !self.suppressed_promotions.insert(command_id) {
+                    return Err(SpawnCompletionError::CorruptLog(
+                        "promotion producer returned an excluded command".to_owned(),
+                    ));
+                }
                 continue;
             }
             // Compatibility repair for durable pre-promotion histories only.
@@ -171,14 +202,10 @@ where
         let validated = validate_next_replay_event(&self.authority_domain_id, self.cursor, event)
             .map_err(|error| SpawnCompletionError::CorruptLog(error.to_string()))?;
 
-        let modern_spawn_history = self
-            .history
-            .iter()
-            .any(|record| record.payload.kind == StoredEventKind::SpawnClaim as i32)
-            || event.payload.kind == StoredEventKind::SpawnClaim as i32;
-        if !modern_spawn_history {
-            self.tail.observe(event)?;
-        }
+        // The tail classifies ownership per command: managed SpawnClaim
+        // histories are promotion-only, while unrelated pre-managed prefixes
+        // remain eligible for one-way compatibility repair.
+        self.tail.observe(event)?;
         self.authority.observe(event)?;
         self.history.push(event.clone());
         self.cursor = validated.lsn;
@@ -254,6 +281,9 @@ where
 
     async fn execute(&mut self, action: SpawnCompletionAction) -> Result<(), SpawnCompletionError> {
         match action {
+            SpawnCompletionAction::CommitPromotion(promotion) => {
+                self.execute_promotion(*promotion).await?;
+            }
             SpawnCompletionAction::RecordAudit(completion) => {
                 let mut draft = AuditRecordDraft::new(
                     self.clock.now(),

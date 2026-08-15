@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use patchbay_contracts::patchbay::{
     quarantined_runtime_evidence, runtime_generation_disposition, spawn_claim_event, spawn_request,
@@ -30,14 +30,17 @@ use patchbay_core::{
         RuntimeGenerationFence,
     },
     adapter::AdapterRegistry,
-    authority::{AuthorityRegistry, DESCENDANT_GRANT_ALLOWED_KINDS},
+    authority::{
+        AuthorityRegistry, SpawnCompletionAction, SpawnDescendantTail,
+        DESCENDANT_GRANT_ALLOWED_KINDS,
+    },
     diagnostics::DiagnosticsProjection,
     resource::ResourceRegistry,
     session::{
         classify_session_report, encode_quarantined_runtime_evidence, encode_spawn_claim_event,
         encode_staged_successor, fold_spawn_promotion_ordered, next_spawn_promotion,
-        rebuild_spawn_claims_from_log, ExternalRuntimeOwnership, SessionRegistry, SpawnClaimQuery,
-        SpawnClaimRegistry,
+        next_spawn_promotion_excluding, rebuild_spawn_claims_from_log, ExternalRuntimeOwnership,
+        SessionRegistry, SpawnClaimQuery, SpawnClaimRegistry,
     },
     storage::{
         AuditRecordDraft, AuditedStorage, RecordedEvent, RusqliteStorage, Storage, StorageError,
@@ -3275,6 +3278,108 @@ async fn identified_evidence_respects_tombstone_ownership_hot_and_after_restart(
             .expect("competitor remains active")
             .disposition,
         SpawnClaimDisposition::Active
+    );
+}
+
+#[test]
+fn promotion_producer_can_skip_a_permanently_suppressed_claim() {
+    let prefix = valid_prefix();
+    let decision_time = Timestamp {
+        seconds: 10,
+        nanos: 0,
+    };
+    assert!(next_spawn_promotion(&domain(), &prefix, decision_time)
+        .unwrap()
+        .is_some());
+    assert!(next_spawn_promotion_excluding(
+        &domain(),
+        &prefix,
+        decision_time,
+        &HashSet::from([command()]),
+    )
+    .unwrap()
+    .is_none());
+}
+
+#[test]
+fn managed_completion_decision_suppresses_expired_or_revoked_exact_prior_authority() {
+    let decision_time = Timestamp {
+        seconds: 10,
+        nanos: 0,
+    };
+
+    let (ready_prefix, _) = continuation_fixture();
+    let ready_candidate = next_spawn_promotion(&domain(), &ready_prefix, decision_time)
+        .unwrap()
+        .unwrap();
+    let mut ready_tail = SpawnDescendantTail::new();
+    for event in &ready_prefix {
+        ready_tail.observe(event).unwrap();
+    }
+    assert!(matches!(
+        ready_tail
+            .managed_promotion_action(ready_candidate)
+            .unwrap(),
+        Some(SpawnCompletionAction::CommitPromotion(_))
+    ));
+
+    let (mut expired_prefix, _) = continuation_fixture();
+    let mut replacement = Grant::decode(expired_prefix[2].payload.payload.as_slice()).unwrap();
+    replacement.expires_at = Some(Timestamp {
+        seconds: 5,
+        nanos: 0,
+    });
+    expired_prefix[2].payload.payload = replacement.encode_to_vec();
+    let expired_candidate = next_spawn_promotion(&domain(), &expired_prefix, decision_time)
+        .unwrap()
+        .unwrap();
+    let mut expired_tail = SpawnDescendantTail::new();
+    for event in &expired_prefix {
+        expired_tail.observe(event).unwrap();
+    }
+    assert_eq!(
+        expired_tail
+            .managed_promotion_action(expired_candidate)
+            .unwrap(),
+        None,
+        "promotion-time replacement-Grant expiry suppresses descendant authority"
+    );
+
+    let (mut revoked_prefix, _) = continuation_fixture();
+    revoked_prefix.push(recorded(
+        13,
+        StoredEventPayload {
+            kind: StoredEventKind::Revocation as i32,
+            payload: Revocation {
+                authority_domain_id: Some(domain()),
+                grant_id: Some(GrantId {
+                    value: "replacement-grant".to_owned(),
+                }),
+                revoked_at: Some(Timestamp {
+                    seconds: 9,
+                    nanos: 0,
+                }),
+                revocation_generation: Some(Generation { value: 1 }),
+                accepted_operation_policy: GrantRevocationPolicy::Continue as i32,
+                reason: "promotion-time revocation".to_owned(),
+                ..Revocation::default()
+            }
+            .encode_to_vec(),
+        },
+    ));
+    let revoked_candidate = next_spawn_promotion(&domain(), &revoked_prefix, decision_time)
+        .unwrap()
+        .unwrap();
+    let mut revoked_tail = SpawnDescendantTail::new();
+    for event in &revoked_prefix {
+        revoked_tail.observe(event).unwrap();
+    }
+    assert_eq!(
+        revoked_tail
+            .managed_promotion_action(revoked_candidate)
+            .unwrap(),
+        None,
+        "promotion-time replacement-Grant revocation suppresses descendant authority"
     );
 }
 

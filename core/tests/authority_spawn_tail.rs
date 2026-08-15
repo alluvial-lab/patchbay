@@ -404,7 +404,7 @@ fn registration_and_generation_bump_produce_the_same_ordered_actions() {
 }
 
 #[test]
-fn fresh_managed_claim_keeps_the_legacy_completion_bridge() {
+fn fresh_managed_claim_never_enters_the_legacy_completion_tail() {
     let mut tail = SpawnDescendantTail::new();
     observe_all(
         &mut tail,
@@ -416,9 +416,57 @@ fn fresh_managed_claim_keeps_the_legacy_completion_bridge() {
             registration_event(5),
         ],
     );
+    assert_eq!(
+        tail.next_action().unwrap(),
+        None,
+        "a managed fresh spawn must wait for staged evidence and the atomic promotion owner"
+    );
+
+    // A legacy-looking completion audit later in the same managed prefix must
+    // fail replay rather than reactivate grant or terminal repair. This is the
+    // migration fence against a second completion reactor.
+    assert!(matches!(
+        tail.observe(&audit_event(6, event_id(4))),
+        Err(AuthorityError::CorruptLog(message))
+            if message.contains("precedes its atomic promotion")
+    ));
+}
+
+#[test]
+fn managed_claim_does_not_hide_an_unrelated_legacy_repair_prefix() {
+    let mut managed = managed_spawn_claim_event(6, None);
+    let mut envelope = SpawnClaimEvent::decode(managed.payload.payload.as_slice()).unwrap();
+    let Some(spawn_claim_event::Mutation::Accepted(accepted)) = envelope.mutation.as_mut() else {
+        unreachable!()
+    };
+    accepted.claim.as_mut().unwrap().claim_operation_id = Some(command("managed-spawn-2"));
+    let managed_operation = accepted
+        .accepted_operation
+        .as_mut()
+        .unwrap()
+        .operation
+        .as_mut()
+        .unwrap();
+    managed_operation.command_id = Some(command("managed-spawn-2"));
+    managed_operation.idempotency_key = "managed-spawn-2-key".to_owned();
+    managed.payload.payload = envelope.encode_to_vec();
+
+    let mut tail = SpawnDescendantTail::new();
+    observe_all(
+        &mut tail,
+        &[
+            parent_grant_event(1),
+            spawn_event(2),
+            transition_event(3, OperationState::Accepted, OperationState::Delivered),
+            result_event(4),
+            registration_event(5),
+            managed,
+        ],
+    );
     assert!(matches!(
         tail.next_action().unwrap(),
-        Some(SpawnCompletionAction::RecordAudit(_))
+        Some(SpawnCompletionAction::RecordAudit(audit))
+            if audit.spawn_operation_id == command("spawn-1")
     ));
 }
 

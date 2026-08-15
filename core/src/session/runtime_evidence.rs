@@ -83,6 +83,20 @@ pub fn next_spawn_promotion(
     events: &[RecordedEvent],
     committed_at: Timestamp,
 ) -> Result<Option<SpawnPromotionCommitted>, RuntimeEvidenceError> {
+    next_spawn_promotion_excluding(authority_domain_id, events, committed_at, &HashSet::new())
+}
+
+/// Derive the next unstamped promotion while skipping claims whose exact
+/// accepted promotion authority was already found permanently dead by the
+/// completion driver. This prevents one suppressed claim from head-of-line
+/// blocking unrelated ready promotions without making the producer responsible
+/// for authority policy.
+pub fn next_spawn_promotion_excluding(
+    authority_domain_id: &AuthorityDomainId,
+    events: &[RecordedEvent],
+    committed_at: Timestamp,
+    excluded_commands: &HashSet<CommandId>,
+) -> Result<Option<SpawnPromotionCommitted>, RuntimeEvidenceError> {
     let mut commands = CommandIndex::new();
     let mut facts: HashMap<CommandId, PromotionFacts> = HashMap::new();
 
@@ -258,7 +272,7 @@ pub fn next_spawn_promotion(
 
     let mut ready = Vec::new();
     for (command_id, progress) in facts {
-        if progress.promoted {
+        if progress.promoted || excluded_commands.contains(&command_id) {
             continue;
         }
         let Some(record) = commands.get_command(&command_id) else {
