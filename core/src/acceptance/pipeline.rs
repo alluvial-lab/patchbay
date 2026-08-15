@@ -1,10 +1,10 @@
 //! Operation submission and durable acceptance.
 
 use patchbay_contracts::patchbay::{
-    spawn_request, AcceptedOperation, ActorEndpointRef, AuthorityDomainId, CommandId, EventId,
+    AcceptedOperation, ActorEndpointRef, AuditEventKind, AuthorityDomainId, CommandId, EventId,
     FailureCode, GrantId, IdempotencyKey, Lsn, Operation, OperationKind, OperationState,
-    StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmissionResult, TargetScope,
-    TargetScopeKind, TimeWindow,
+    SpawnClaimAccepted, SpawnPendingReplacementFence, StoredEventKind, StoredEventPayload,
+    SubmissionOutcome, SubmissionResult, TargetScope, TargetScopeKind, TimeWindow,
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -12,7 +12,9 @@ use prost_types::Timestamp;
 use crate::{
     authority::IssuerContext,
     resource::ResourceIdentity,
-    storage::{DedupOutcome, Storage, StorageError, TargetKey},
+    storage::{
+        AuditRecordDraft, DedupOutcome, SpawnClaimDedupOutcome, Storage, StorageError, TargetKey,
+    },
 };
 
 use super::{
@@ -272,25 +274,6 @@ where
         None
     };
 
-    // Continuation stays guarded until acceptance can atomically persist the
-    // exact generation claim and both selected Grant ids. In particular, it
-    // must never fall through to the ordinary AcceptedOperation writer below.
-    if matches!(
-        spawn_request
-            .as_ref()
-            .and_then(|request| request.intent.as_ref()),
-        Some(spawn_request::Intent::Continuation(_))
-    ) {
-        return Ok(rejected_result(
-            Some(validated.command_id.clone()),
-            FailureCode::UnsupportedCommand,
-            "unsupported_command".to_owned(),
-            None,
-            "spawn continuation requires atomic claim acceptance, which is not yet supported"
-                .to_owned(),
-        ));
-    }
-
     if matches!(
         validated.operation_kind,
         OperationKind::ElicitationResponse | OperationKind::ApprovalResponse
@@ -351,7 +334,13 @@ where
         .await
     {
         Ok(binding) => binding,
-        Err(_) => {
+        Err(super::TargetNotFound::ReplacementPending { .. }) => {
+            return Ok(replacement_pending_result(
+                validated.command_id.clone(),
+                initial_authorization.grant_id.clone(),
+            ));
+        }
+        Err(super::TargetNotFound::NotFound { .. }) => {
             return Ok(rejected_result(
                 Some(validated.command_id.clone()),
                 FailureCode::TargetNotFound,
@@ -422,17 +411,106 @@ where
     // caller-supplied identity claim. Persist only the identity established by
     // the authenticated ingress boundary.
     let mut durable_operation = operation.clone();
-    durable_operation.sender = Some(verified_sender);
+    durable_operation.sender = Some(verified_sender.clone());
     let accepted_operation = AcceptedOperation {
         operation: Some(durable_operation),
         authorizing_grant_id: Some(grant_id.clone()),
     };
+    let logical_operation_bytes = operation.encode_to_vec();
+
+    if let TargetBinding::SpawnAdapter {
+        claim,
+        continuation_authority,
+        ..
+    } = &target_binding
+    {
+        let pending_replacement =
+            claim
+                .expected_prior
+                .clone()
+                .map(|exact_prior| SpawnPendingReplacementFence {
+                    exact_prior: Some(exact_prior),
+                    failure_code: FailureCode::Superseded as i32,
+                    reason_code: crate::session::REPLACEMENT_PENDING_REASON.to_owned(),
+                });
+        let accepted_claim = SpawnClaimAccepted {
+            accepted_operation: Some(accepted_operation),
+            claim: Some((**claim).clone()),
+            compound_authority: continuation_authority.as_deref().cloned(),
+            pending_replacement,
+            // The dedicated writer derives this complete list from its durable
+            // in-transaction CommandIndex immediately before append.
+            prior_work_effects: Vec::new(),
+        };
+        let mut audit =
+            AuditRecordDraft::new(evaluated_at, AuditEventKind::CommandSubmissionAccepted);
+        audit.actor_id = verified_sender.actor_id.clone();
+        audit.endpoint_id = verified_sender.endpoint_id.clone();
+        audit.device_id = verified_sender.device_id.clone();
+        audit.command_id = Some(validated.command_id.clone());
+        audit.grant_id = Some(grant_id.clone());
+        audit.target_scope = Some(validated.target_scope.clone());
+        audit.reason_code = "operation_spawn".to_owned();
+
+        let append_result = storage
+            .append_spawn_claim_accepted(
+                validated.authority_domain_id,
+                &validated.idempotency_key,
+                &validated.target_key,
+                accepted_claim,
+                audit,
+                logical_operation_bytes,
+            )
+            .await;
+        return match append_result {
+            Ok(SpawnClaimDedupOutcome::Appended(committed)) => accepted_result(
+                validated.command_id.clone(),
+                validated.authority_domain_id,
+                committed.source_event_id,
+                OperationState::Accepted,
+                required_persisted_spawn_grant(&committed.accepted)?,
+                false,
+            ),
+            Ok(SpawnClaimDedupOutcome::Duplicate(committed)) => {
+                let snapshot = state_lookup
+                    .current_state(validated.command_id)
+                    .await
+                    .ok_or_else(|| {
+                        AcceptanceError::CorruptRecord(format!(
+                            "duplicate spawn submission for command {:?} not found in the command index",
+                            validated.command_id
+                        ))
+                    })?;
+                accepted_result(
+                    validated.command_id.clone(),
+                    validated.authority_domain_id,
+                    committed.source_event_id,
+                    snapshot.state,
+                    required_persisted_spawn_grant(&committed.accepted)?,
+                    true,
+                )
+            }
+            Err(StorageError::IdempotencyConflict) => Ok(rejected_result(
+                Some(validated.command_id.clone()),
+                FailureCode::ValidationFailed,
+                "validation_failed".to_owned(),
+                None,
+                "idempotency key was already used with a different operation payload".to_owned(),
+            )),
+            Err(
+                StorageError::ReplacementPending { .. } | StorageError::SpawnClaimConflict { .. },
+            ) => Ok(replacement_pending_result(
+                validated.command_id.clone(),
+                Some(grant_id),
+            )),
+            Err(error) => Err(AcceptanceError::Storage(error)),
+        };
+    }
+
     let payload = StoredEventPayload {
         kind: StoredEventKind::Operation as i32,
         payload: accepted_operation.encode_to_vec(),
     };
-    let logical_operation_bytes = operation.encode_to_vec();
-
     let append_result = storage
         .append_dedup_with_payload(
             validated.authority_domain_id,
@@ -486,8 +564,40 @@ where
             None,
             "idempotency key was already used with a different operation payload".to_owned(),
         )),
+        Err(StorageError::ReplacementPending { .. }) => Ok(replacement_pending_result(
+            validated.command_id.clone(),
+            Some(grant_id),
+        )),
         Err(error) => Err(AcceptanceError::Storage(error)),
     }
+}
+
+fn required_persisted_spawn_grant(
+    accepted: &SpawnClaimAccepted,
+) -> Result<GrantId, AcceptanceError> {
+    accepted
+        .accepted_operation
+        .as_ref()
+        .and_then(|accepted| accepted.authorizing_grant_id.clone())
+        .filter(|grant_id| !grant_id.value.is_empty())
+        .ok_or_else(|| {
+            AcceptanceError::CorruptRecord(
+                "storage returned spawn acceptance without spawning Grant provenance".to_owned(),
+            )
+        })
+}
+
+fn replacement_pending_result(
+    command_id: CommandId,
+    decision_grant_id: Option<GrantId>,
+) -> SubmissionResult {
+    rejected_result(
+        Some(command_id),
+        FailureCode::Superseded,
+        crate::session::REPLACEMENT_PENDING_REASON.to_owned(),
+        decision_grant_id,
+        "runtime generation has an accepted replacement pending".to_owned(),
+    )
 }
 
 /// Produce the canonical per-target idempotency scope for an operation.

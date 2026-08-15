@@ -2704,6 +2704,12 @@ pub fn map_storage_error_to_status(error: StorageError) -> Status {
         StorageError::IdempotencyConflict => {
             Status::failed_precondition("idempotency key conflicts with the existing operation")
         }
+        StorageError::ReplacementPending { command_id } => Status::failed_precondition(format!(
+            "runtime generation has pending replacement by command {command_id}"
+        )),
+        StorageError::SpawnClaimConflict { command_id } => Status::failed_precondition(format!(
+            "spawn generation is already claimed by command {command_id}"
+        )),
         StorageError::GrantIdentityConflict {
             grant_id,
             existing_lsn,

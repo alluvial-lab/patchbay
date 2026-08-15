@@ -3,12 +3,13 @@
 use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
-    diagnostics_query, AcceptedOperation, AdapterCapabilitySummary, AdapterDiagnosticState,
-    AdapterId, AdapterRegistration, AdapterStatus, AdapterStatusPage, AdapterStatusQuery,
-    AuditEventKind, AuditQuery, AuditRecord, AuthorityDomainId, CommandHistoryEntry, CommandId,
-    CommandInspection, CommandInspectionQuery, CommandInspectionResult, CommandSummary,
-    DiagnosticsQuery, EventId, FailureCode, Observation, Operation, OperationKind, OperationState,
-    Revocation, SpawnRequest, StoredEventKind, TargetScope, TargetScopeKind,
+    diagnostics_query, spawn_claim_event, AcceptedOperation, AdapterCapabilitySummary,
+    AdapterDiagnosticState, AdapterId, AdapterRegistration, AdapterStatus, AdapterStatusPage,
+    AdapterStatusQuery, AuditEventKind, AuditQuery, AuditRecord, AuthorityDomainId,
+    CommandHistoryEntry, CommandId, CommandInspection, CommandInspectionQuery,
+    CommandInspectionResult, CommandSummary, DiagnosticsQuery, EventId, FailureCode, Observation,
+    Operation, OperationKind, OperationState, Revocation, SpawnClaimEvent,
+    SpawnPriorWorkDisposition, SpawnRequest, StoredEventKind, TargetScope, TargetScopeKind,
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -169,39 +170,7 @@ impl DiagnosticsProjection {
             StoredEventKind::Operation => {
                 let accepted = AcceptedOperation::decode(event.payload.payload.as_slice())
                     .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
-                let operation = accepted.operation.ok_or_else(|| {
-                    DiagnosticsError::CorruptEvent("accepted operation has no operation".to_owned())
-                })?;
-                if operation.command_id.is_some() {
-                    let command_id = operation.command_id.clone().expect("checked above");
-                    let summary = CommandSummary {
-                        command_id: Some(command_id.clone()),
-                        sender: operation.sender,
-                        recipient: operation.recipient,
-                        kind: operation.kind,
-                        target_scope: operation.target_scope,
-                        correlations: operation.correlations,
-                        validity_window: operation.validity_window,
-                        submitted_at: operation.submitted_at,
-                    };
-                    self.commands
-                        .entry(command_id)
-                        .or_insert_with(|| CommandTimeline {
-                            summary: summary.clone(),
-                            accepted_event_id: event.event_id.clone(),
-                            grant_id: accepted.authorizing_grant_id,
-                            current_state: OperationState::Accepted,
-                            failure_code: FailureCode::Unspecified,
-                            terminal_event_id: None,
-                            history: vec![CommandHistoryEntry {
-                                event_id: Some(event.event_id.clone()),
-                                state: OperationState::Accepted as i32,
-                                failure_code: FailureCode::Unspecified as i32,
-                                occurred_at: summary.submitted_at,
-                                correlations: summary.correlations.clone(),
-                            }],
-                        });
-                }
+                self.observe_accepted_operation(event, accepted)?;
             }
             StoredEventKind::CommandTransition => {
                 let transition = patchbay_contracts::patchbay::CommandTransition::decode(
@@ -245,13 +214,13 @@ impl DiagnosticsProjection {
                     timeline.terminal_event_id = Some(event.event_id.clone());
                 }
             }
+            StoredEventKind::SpawnClaim => self.observe_spawn_claim(event)?,
             StoredEventKind::Observation => self.observe_observation(event)?,
             StoredEventKind::AuditRecord => self.observe_audit(event)?,
             StoredEventKind::Revocation => self.observe_revocation(event)?,
             StoredEventKind::SessionState
             | StoredEventKind::Elicitation
             | StoredEventKind::ResourceState
-            | StoredEventKind::SpawnClaim
             | StoredEventKind::SpawnExecutionEvidence
             | StoredEventKind::SpawnSuccessorEvidenceStaged
             | StoredEventKind::QuarantinedRuntimeEvidence
@@ -442,6 +411,103 @@ impl DiagnosticsProjection {
         }
         let _ = operation_kind;
         Ok(())
+    }
+
+    fn observe_accepted_operation(
+        &mut self,
+        event: &RecordedEvent,
+        accepted: AcceptedOperation,
+    ) -> Result<(), DiagnosticsError> {
+        let operation = accepted.operation.ok_or_else(|| {
+            DiagnosticsError::CorruptEvent("accepted operation has no operation".to_owned())
+        })?;
+        let Some(command_id) = operation.command_id.clone() else {
+            return Ok(());
+        };
+        let summary = CommandSummary {
+            command_id: Some(command_id.clone()),
+            sender: operation.sender,
+            recipient: operation.recipient,
+            kind: operation.kind,
+            target_scope: operation.target_scope,
+            correlations: operation.correlations,
+            validity_window: operation.validity_window,
+            submitted_at: operation.submitted_at,
+        };
+        if self.commands.contains_key(&command_id) {
+            return Err(DiagnosticsError::CorruptEvent(
+                "duplicate accepted command identity".to_owned(),
+            ));
+        }
+        self.commands.insert(
+            command_id,
+            CommandTimeline {
+                summary: summary.clone(),
+                accepted_event_id: event.event_id.clone(),
+                grant_id: accepted.authorizing_grant_id,
+                current_state: OperationState::Accepted,
+                failure_code: FailureCode::Unspecified,
+                terminal_event_id: None,
+                history: vec![CommandHistoryEntry {
+                    event_id: Some(event.event_id.clone()),
+                    state: OperationState::Accepted as i32,
+                    failure_code: FailureCode::Unspecified as i32,
+                    occurred_at: summary.submitted_at,
+                    correlations: summary.correlations.clone(),
+                }],
+            },
+        );
+        Ok(())
+    }
+
+    fn observe_spawn_claim(&mut self, event: &RecordedEvent) -> Result<(), DiagnosticsError> {
+        let claim = SpawnClaimEvent::decode(event.payload.payload.as_slice())
+            .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+        let Some(spawn_claim_event::Mutation::Accepted(accepted)) = claim.mutation else {
+            return Ok(());
+        };
+        for effect in &accepted.prior_work_effects {
+            let command_id = effect.command_id.as_ref().ok_or_else(|| {
+                DiagnosticsError::CorruptEvent("prior-work effect has no command id".to_owned())
+            })?;
+            let timeline = self.commands.get_mut(command_id).ok_or_else(|| {
+                DiagnosticsError::CorruptEvent(
+                    "prior-work effect precedes command operation".to_owned(),
+                )
+            })?;
+            let prior = OperationState::try_from(effect.prior_state).map_err(|_| {
+                DiagnosticsError::CorruptEvent("prior-work effect has unknown state".to_owned())
+            })?;
+            if timeline.current_state != prior {
+                return Err(DiagnosticsError::CorruptEvent(
+                    "prior-work effect state does not match projection".to_owned(),
+                ));
+            }
+            match SpawnPriorWorkDisposition::try_from(effect.disposition).ok() {
+                Some(SpawnPriorWorkDisposition::SupersededBeforeOffer) => {
+                    timeline.current_state = OperationState::Superseded;
+                    timeline.failure_code = FailureCode::Superseded;
+                    timeline.terminal_event_id = Some(event.event_id.clone());
+                    timeline.history.push(CommandHistoryEntry {
+                        event_id: Some(event.event_id.clone()),
+                        state: OperationState::Superseded as i32,
+                        failure_code: FailureCode::Superseded as i32,
+                        occurred_at: None,
+                        correlations: Vec::new(),
+                    });
+                }
+                Some(SpawnPriorWorkDisposition::QuiesceOutcomeReconciliation) => {}
+                Some(SpawnPriorWorkDisposition::Unspecified) | None => {
+                    return Err(DiagnosticsError::CorruptEvent(
+                        "prior-work effect has unknown disposition".to_owned(),
+                    ));
+                }
+            }
+        }
+        let accepted_operation = accepted.accepted_operation.ok_or_else(|| {
+            DiagnosticsError::CorruptEvent("accepted spawn claim has no operation".to_owned())
+        })?;
+        self.observe_accepted_operation(event, accepted_operation)
     }
 
     fn observe_observation(&mut self, event: &RecordedEvent) -> Result<(), DiagnosticsError> {

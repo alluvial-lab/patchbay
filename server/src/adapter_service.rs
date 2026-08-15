@@ -8,12 +8,12 @@ use std::{
 
 use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, runtime_generation_disposition,
-    AcceptedOperation, ActorEndpointRef, ActorId, AdapterDiagnosticReport,
+    spawn_claim_event, AcceptedOperation, ActorEndpointRef, ActorId, AdapterDiagnosticReport,
     AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport, AttachRequest, AttachResult,
     AuthorityDomainId, Delivery, EventId, FailureCode, Generation, Observation, ObservationRequest,
     ObservationResult, OperationState, ReceiveRequest, RuntimeEvidenceQuarantineReason,
     RuntimeEvidenceSourceAttachment, RuntimeGenerationClaimedSuccessor,
-    RuntimeGenerationDisposition, RuntimeGenerationRef, SpawnClaimDisposition,
+    RuntimeGenerationDisposition, RuntimeGenerationRef, SpawnClaimDisposition, SpawnClaimEvent,
     SpawnEvidenceAttachment, SpawnExecutionEvidenceProducer, SpawnSuccessorEvidenceStaged,
     StoredEventKind, TargetScopeKind,
 };
@@ -572,6 +572,34 @@ async fn catch_up_command_projection<S: Storage>(
     Ok(events)
 }
 
+fn accepted_operation_for_delivery(
+    event: &RecordedEvent,
+) -> Result<Option<AcceptedOperation>, Status> {
+    match StoredEventKind::try_from(event.payload.kind).ok() {
+        Some(StoredEventKind::Operation) => {
+            AcceptedOperation::decode(event.payload.payload.as_slice())
+                .map(Some)
+                .map_err(|error| {
+                    Status::internal(format!("cannot decode accepted operation: {error}"))
+                })
+        }
+        Some(StoredEventKind::SpawnClaim) => {
+            let claim =
+                SpawnClaimEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
+                    Status::internal(format!("cannot decode accepted spawn claim: {error}"))
+                })?;
+            match claim.mutation {
+                Some(spawn_claim_event::Mutation::Accepted(accepted)) => {
+                    Ok(accepted.accepted_operation)
+                }
+                Some(spawn_claim_event::Mutation::DispositionChanged(_)) => Ok(None),
+                None => Err(Status::internal("spawn claim event has no mutation")),
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
 fn deliveries_for_events(
     events: &[RecordedEvent],
     commands: &CommandIndex,
@@ -587,38 +615,33 @@ fn deliveries_for_events(
                 .as_ref()
                 .is_some_and(|lsn| lsn.value > after_cursor)
         })
-        .filter_map(|event| {
-            if event.payload.kind != StoredEventKind::Operation as i32 {
-                return None;
+        .filter_map(|event| match accepted_operation_for_delivery(event) {
+            Ok(Some(accepted)) => {
+                let operation = match accepted.operation {
+                    Some(operation) => operation,
+                    None => {
+                        return Some(Err(Status::internal("accepted operation has no operation")))
+                    }
+                };
+                let targets_adapter =
+                    operation.target_scope.as_ref().and_then(target_adapter_id) == Some(adapter_id);
+                let remains_deliverable = operation
+                    .command_id
+                    .as_ref()
+                    .and_then(|command_id| commands.get_command(command_id))
+                    .is_some_and(|record| {
+                        matches!(
+                            record.state,
+                            OperationState::Accepted | OperationState::Delivered
+                        ) && !commands.delivery_is_suppressed(&record.command_id)
+                    });
+                (targets_adapter && remains_deliverable).then_some(Ok(Delivery {
+                    operation: Some(operation),
+                    delivery_event_id: Some(event.event_id.clone()),
+                }))
             }
-            let accepted = match AcceptedOperation::decode(event.payload.payload.as_slice()) {
-                Ok(accepted) => accepted,
-                Err(error) => {
-                    return Some(Err(Status::internal(format!(
-                        "cannot decode accepted operation: {error}"
-                    ))))
-                }
-            };
-            let operation = match accepted.operation {
-                Some(operation) => operation,
-                None => return Some(Err(Status::internal("accepted operation has no operation"))),
-            };
-            let targets_adapter =
-                operation.target_scope.as_ref().and_then(target_adapter_id) == Some(adapter_id);
-            let remains_deliverable = operation
-                .command_id
-                .as_ref()
-                .and_then(|command_id| commands.get_command(command_id))
-                .is_some_and(|record| {
-                    matches!(
-                        record.state,
-                        OperationState::Accepted | OperationState::Delivered
-                    ) && !commands.has_deferred_spawn_success(&record.command_id)
-                });
-            (targets_adapter && remains_deliverable).then_some(Ok(Delivery {
-                operation: Some(operation),
-                delivery_event_id: Some(event.event_id.clone()),
-            }))
+            Ok(None) => None,
+            Err(error) => Some(Err(error)),
         })
         .collect()
 }
@@ -630,6 +653,7 @@ struct DeliverySubscriptionContext<S> {
     commands: Arc<Mutex<CommandProjection>>,
     delivery_stream_epochs: Arc<Mutex<HashMap<AdapterId, u64>>>,
     stream_epoch: u64,
+    decision_gate: CoreDecisionGate,
 }
 
 fn delivery_subscription<S>(
@@ -648,28 +672,24 @@ where
         commands,
         delivery_stream_epochs,
         stream_epoch,
+        decision_gate,
     } = context;
     let (sender, receiver) = mpsc::channel(16);
     tokio::spawn(async move {
-        let mut delivery_cursor = initial_cursor.max(initial_projection.cursor);
+        let mut delivery_cursor = initial_cursor;
         let mut scan_cursor = initial_projection.cursor;
         let mut subscription_commands = initial_projection.index;
-        let initial = deliveries_for_events(
-            &initial_events,
-            &subscription_commands,
-            &adapter_id,
-            initial_cursor,
-        );
-        for delivery in initial {
-            if sender.send(delivery).await.is_err() {
-                return;
-            }
-        }
+        let mut pending_initial = Some(initial_events);
 
         loop {
             if sender.is_closed() {
                 return;
             }
+            // Claim acceptance and an offer share one linearization gate. A
+            // delivery that wins enqueues before the fence; a claim that wins
+            // is folded before eligibility is evaluated. Catching up again
+            // under this guard closes the stream-establishment race too.
+            let _decision_guard = decision_gate.acquire().await;
             let epochs = delivery_stream_epochs.lock().await;
             if epochs.get(&adapter_id) != Some(&stream_epoch) {
                 return;
@@ -711,14 +731,17 @@ where
                             };
                             match global_catch_up {
                                 Ok(_) => {
+                                    let mut delivery_events =
+                                        pending_initial.take().unwrap_or_default();
+                                    delivery_events.extend(events);
                                     let deliveries = deliveries_for_events(
-                                        &events,
+                                        &delivery_events,
                                         &subscription_commands,
                                         &adapter_id,
                                         delivery_cursor,
                                     );
                                     delivery_cursor = delivery_cursor.max(scan_cursor);
-                                    Ok((events.is_empty(), deliveries))
+                                    Ok((delivery_events.is_empty(), deliveries))
                                 }
                                 Err(error) => Err(map_acceptance_error_to_status(error)),
                             }
@@ -728,8 +751,6 @@ where
                 }
                 Err(error) => Err(map_storage_error_to_status(error)),
             };
-            drop(epochs);
-
             let (empty, deliveries) = match batch {
                 Ok(batch) => batch,
                 Err(status) => {
@@ -742,6 +763,8 @@ where
                     return;
                 }
             }
+            drop(epochs);
+            drop(_decision_guard);
             if empty {
                 sleep(DELIVERY_SCAN_INTERVAL).await;
             }
@@ -1776,6 +1799,7 @@ where
                 commands: Arc::clone(&self.commands),
                 delivery_stream_epochs: Arc::clone(&self.delivery_stream_epochs),
                 stream_epoch,
+                decision_gate: self.decision_gate.clone(),
             },
             initial_cursor,
             initial_events,

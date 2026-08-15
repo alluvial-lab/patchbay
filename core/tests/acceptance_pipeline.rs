@@ -19,7 +19,7 @@ use patchbay_core::acceptance::{
 };
 use patchbay_core::{
     authority::IssuerContext,
-    session::{ingest_session_report, SessionRegistry, SessionReport},
+    session::{ingest_session_report, SessionRegistry, SessionReport, SpawnClaimQuery},
     storage::{RusqliteStorage, Storage},
 };
 use prost::Message;
@@ -1251,12 +1251,12 @@ async fn unknown_target_rejects_without_durable_state() {
 }
 
 #[tokio::test]
-async fn guarded_continuation_writes_no_event_while_fresh_spawn_uses_resolved_grant_path() {
+async fn continuation_acceptance_round_trips_compound_claim_while_fresh_uses_single_grant() {
     let continuation_storage = RusqliteStorage::open_in_memory().unwrap();
     let continuation_grant = CompoundGrantCheck::new();
     let continuation_resolver = TestTargetResolver::new(true);
 
-    let rejected = submit(
+    let accepted_continuation = submit(
         &continuation_storage,
         &continuation_grant,
         &continuation_resolver,
@@ -1268,21 +1268,64 @@ async fn guarded_continuation_writes_no_event_while_fresh_spawn_uses_resolved_gr
     .await
     .unwrap();
 
-    assert_eq!(outcome(&rejected), SubmissionOutcome::Rejected);
-    assert_eq!(failure(&rejected), FailureCode::UnsupportedCommand);
-    assert_eq!(rejected.reason_code, "unsupported_command");
-    assert!(rejected
-        .diagnostic_message
-        .contains("atomic claim acceptance"));
-    assert_eq!(continuation_grant.spawn_calls.load(Ordering::Relaxed), 0);
+    assert_eq!(outcome(&accepted_continuation), SubmissionOutcome::Accepted);
+    assert_eq!(failure(&accepted_continuation), FailureCode::Unspecified);
+    assert_eq!(continuation_grant.spawn_calls.load(Ordering::Relaxed), 1);
     assert_eq!(
         continuation_grant.replacement_calls.load(Ordering::Relaxed),
-        0
+        1
     );
-    assert_eq!(continuation_resolver.calls.load(Ordering::Relaxed), 0);
-    assert!(
-        durable_events(&continuation_storage).await.is_empty(),
-        "a guarded continuation must leave no Operation event for legacy spawn completion"
+    assert_eq!(continuation_resolver.calls.load(Ordering::Relaxed), 1);
+    let continuation_events = durable_events(&continuation_storage).await;
+    assert_eq!(continuation_events.len(), 2, "source plus acceptance audit");
+    assert_eq!(
+        continuation_events[0].payload.kind,
+        StoredEventKind::SpawnClaim as i32
+    );
+    let accepted_claim = patchbay_contracts::patchbay::SpawnClaimEvent::decode(
+        continuation_events[0].payload.payload.as_slice(),
+    )
+    .expect("accepted continuation claim decodes");
+    let patchbay_contracts::patchbay::spawn_claim_event::Mutation::Accepted(accepted_claim) =
+        accepted_claim.mutation.expect("claim mutation")
+    else {
+        panic!("expected accepted claim mutation");
+    };
+    let prior = match spawn_continuation() {
+        spawn_request::Intent::Continuation(continuation) => continuation.prior,
+        _ => unreachable!(),
+    };
+    assert_eq!(accepted_claim.claim.as_ref().unwrap().expected_prior, prior);
+    assert_eq!(
+        accepted_claim
+            .accepted_operation
+            .as_ref()
+            .and_then(|accepted| accepted.authorizing_grant_id.as_ref())
+            .map(|grant| grant.value.as_str()),
+        Some("spawn-grant")
+    );
+    assert_eq!(
+        accepted_claim
+            .compound_authority
+            .as_ref()
+            .and_then(|authority| authority.replacement_grant_id.as_ref())
+            .map(|grant| grant.value.as_str()),
+        Some("replacement-grant")
+    );
+    let replayed_claims = patchbay_core::session::rebuild_spawn_claims_from_log(
+        &continuation_storage,
+        &authority_domain(),
+    )
+    .await
+    .expect("claim replay succeeds");
+    assert_eq!(
+        replayed_claims
+            .claim_for_operation(&CommandId {
+                value: "continuation-command".to_owned(),
+            })
+            .expect("replayed claim")
+            .compound_authority,
+        accepted_claim.compound_authority
     );
 
     let fresh_storage = RusqliteStorage::open_in_memory().unwrap();
@@ -1308,15 +1351,77 @@ async fn guarded_continuation_writes_no_event_while_fresh_spawn_uses_resolved_gr
     assert_eq!(fresh_grant.resolved_calls.load(Ordering::Relaxed), 1);
     assert_eq!(fresh_resolver.calls.load(Ordering::Relaxed), 1);
     let events = durable_events(&fresh_storage).await;
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].payload.kind, StoredEventKind::Operation as i32);
-    let accepted = AcceptedOperation::decode(events[0].payload.payload.as_slice())
-        .expect("accepted fresh-spawn envelope decodes");
+    assert_eq!(events.len(), 2, "source plus acceptance audit");
+    assert_eq!(events[0].payload.kind, StoredEventKind::SpawnClaim as i32);
+    let accepted =
+        patchbay_contracts::patchbay::SpawnClaimEvent::decode(events[0].payload.payload.as_slice())
+            .expect("accepted fresh-spawn claim decodes");
+    let patchbay_contracts::patchbay::spawn_claim_event::Mutation::Accepted(accepted) =
+        accepted.mutation.expect("claim mutation")
+    else {
+        panic!("expected accepted claim mutation");
+    };
     assert_eq!(
-        accepted.authorizing_grant_id,
+        accepted
+            .accepted_operation
+            .and_then(|accepted| accepted.authorizing_grant_id),
         Some(GrantId {
             value: "test-grant".to_owned(),
         })
+    );
+    assert!(accepted.compound_authority.is_none());
+    assert_eq!(
+        accepted.claim.and_then(|claim| claim.claimed_generation),
+        Some(Generation { value: 1 })
+    );
+}
+
+#[tokio::test]
+async fn continuation_fence_rejects_new_n_bound_submission_canonically() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let continuation_grant = CompoundGrantCheck::new();
+    let resolver = TestTargetResolver::new(true);
+    let continuation = submit(
+        &storage,
+        &continuation_grant,
+        &resolver,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        spawn_operation(spawn_continuation(), "continuation-command"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome(&continuation), SubmissionOutcome::Accepted);
+
+    let grant = TestGrantCheck::new(true);
+    let mut n_bound = operation();
+    n_bound.command_id = Some(CommandId {
+        value: "after-fence".to_owned(),
+    });
+    n_bound.idempotency_key = "after-fence-key".to_owned();
+    let rejected = submit(
+        &storage,
+        &grant,
+        &resolver,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        n_bound,
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome(&rejected), SubmissionOutcome::Rejected);
+    assert_eq!(failure(&rejected), FailureCode::Superseded);
+    assert_eq!(rejected.reason_code, "replacement_pending");
+    assert!(rejected.diagnostic_message.contains("replacement pending"));
+    assert_eq!(
+        durable_events(&storage)
+            .await
+            .iter()
+            .filter(|event| event.payload.kind == StoredEventKind::Operation as i32)
+            .count(),
+        0
     );
 }
 

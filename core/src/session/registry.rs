@@ -518,11 +518,32 @@ impl SessionRegistry {
             .classified_target
             .as_ref()
             .expect("staged successor validated");
-        self.logical_targets.reserve_candidate(
-            target
-                .logical_target_id
+        let logical_target_id = target
+            .logical_target_id
+            .as_ref()
+            .expect("staged successor validated");
+        if self.logical_targets.get(logical_target_id).is_none() {
+            let claim = staged
+                .exact_claim
                 .as_ref()
-                .expect("staged successor validated"),
+                .expect("staged successor validated");
+            if claim.expected_prior.is_some() {
+                return Err(SessionError::CorruptLog(
+                    "continuation staged successor has no existing logical target".to_owned(),
+                ));
+            }
+            let report = staged.report.as_ref().expect("staged successor validated");
+            self.logical_targets.create(
+                logical_target_id.clone(),
+                report
+                    .adapter_id
+                    .clone()
+                    .expect("staged successor validated"),
+                report.deployment_scope.clone(),
+            )?;
+        }
+        self.logical_targets.reserve_candidate(
+            logical_target_id,
             staged
                 .external_runtime_reservation
                 .clone()

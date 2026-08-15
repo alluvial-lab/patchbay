@@ -7,9 +7,10 @@
 use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
-    AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition, FailureCode, Observation,
-    ObservationKind, Operation, OperationKind, OperationState, Revocation, SpawnPromotionCommitted,
-    StoredEventKind,
+    spawn_claim_event, AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition,
+    FailureCode, Observation, ObservationKind, Operation, OperationKind, OperationState,
+    Revocation, RuntimeGenerationRef, SpawnClaimAccepted, SpawnClaimEvent,
+    SpawnPriorWorkDisposition, SpawnPriorWorkEffect, SpawnPromotionCommitted, StoredEventKind,
 };
 use prost::Message;
 
@@ -36,6 +37,10 @@ pub struct CommandIndex {
     /// avoid re-executing a non-idempotent spawn while completion waits for its
     /// correlated session fact.
     deferred_spawn_successes: HashSet<CommandId>,
+    /// Work offered or running against a generation fenced by an accepted
+    /// continuation. Its lifecycle remains reconcilable, but delivery must
+    /// never offer it again.
+    replacement_quiesce: HashSet<CommandId>,
 }
 
 impl CommandIndex {
@@ -66,13 +71,13 @@ impl CommandIndex {
             // retained here is a successful spawn result whose terminalization
             // is deliberately deferred to the descendant-completion owner.
             StoredEventKind::Observation => self.apply_observation(event),
+            StoredEventKind::SpawnClaim => self.apply_spawn_claim(event),
             StoredEventKind::SpawnPromotionCommitted => self.apply_spawn_promotion(event),
             StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
             | StoredEventKind::SessionState
             | StoredEventKind::ResourceState
-            | StoredEventKind::SpawnClaim
             | StoredEventKind::SpawnExecutionEvidence
             | StoredEventKind::SpawnSuccessorEvidenceStaged
             | StoredEventKind::QuarantinedRuntimeEvidence
@@ -117,6 +122,64 @@ impl CommandIndex {
     #[must_use]
     pub fn has_deferred_spawn_success(&self, command_id: &CommandId) -> bool {
         self.deferred_spawn_successes.contains(command_id)
+    }
+
+    /// Whether durable evidence forbids offering this command again.
+    #[must_use]
+    pub fn delivery_is_suppressed(&self, command_id: &CommandId) -> bool {
+        self.deferred_spawn_successes.contains(command_id)
+            || self.replacement_quiesce.contains(command_id)
+    }
+
+    /// Derive the complete, stable-order effect list for non-terminal work
+    /// bound to one exact prior runtime generation.
+    #[must_use]
+    pub fn spawn_prior_work_effects(
+        &self,
+        prior: &RuntimeGenerationRef,
+    ) -> Vec<SpawnPriorWorkEffect> {
+        let mut effects: Vec<_> = self
+            .commands
+            .values()
+            .filter(|record| {
+                record.operation.target_scope.as_ref().is_some_and(|scope| {
+                    crate::session::runtime_ref_matches_target_scope(prior, scope)
+                })
+            })
+            .filter_map(|record| {
+                let (disposition, failure_code) = match record.state {
+                    OperationState::Accepted => (
+                        SpawnPriorWorkDisposition::SupersededBeforeOffer,
+                        FailureCode::Superseded,
+                    ),
+                    OperationState::Delivered | OperationState::Running => (
+                        SpawnPriorWorkDisposition::QuiesceOutcomeReconciliation,
+                        FailureCode::Unspecified,
+                    ),
+                    OperationState::Unspecified
+                    | OperationState::Completed
+                    | OperationState::Rejected
+                    | OperationState::Failed
+                    | OperationState::Expired
+                    | OperationState::Cancelled
+                    | OperationState::Superseded => return None,
+                };
+                Some(SpawnPriorWorkEffect {
+                    command_id: Some(record.command_id.clone()),
+                    prior_state: record.state as i32,
+                    disposition: disposition as i32,
+                    failure_code: failure_code as i32,
+                    reason_code: crate::session::REPLACEMENT_PENDING_REASON.to_owned(),
+                })
+            })
+            .collect();
+        effects.sort_by(|left, right| {
+            left.command_id
+                .as_ref()
+                .map(|id| id.value.as_bytes())
+                .cmp(&right.command_id.as_ref().map(|id| id.value.as_bytes()))
+        });
+        effects
     }
 
     /// Number of accepted commands in the projection.
@@ -206,6 +269,112 @@ impl CommandIndex {
         }
 
         let record = CommandRecord::new_accepted(operation, grant_id, event_lsn)?;
+        self.insert_recovered_record(record)
+    }
+
+    fn apply_spawn_claim(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
+        let (event_domain, event_lsn) = event_identity(event)?;
+        let claim_event =
+            SpawnClaimEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
+                AcceptanceError::CorruptRecord(format!(
+                    "cannot decode spawn claim at LSN {event_lsn}: {error}"
+                ))
+            })?;
+        if claim_event.authority_domain_id.as_ref() != Some(event_domain) {
+            return Err(AcceptanceError::CorruptLog(format!(
+                "spawn claim domain disagrees with event domain at LSN {event_lsn}"
+            )));
+        }
+        let Some(spawn_claim_event::Mutation::Accepted(accepted)) = claim_event.mutation else {
+            return Ok(());
+        };
+
+        // Stage the complete compound event. A malformed later effect cannot
+        // leave the accepted spawn or an earlier supersession half-applied.
+        let mut staged = self.clone();
+        staged.apply_spawn_claim_accepted(accepted, event_domain, event_lsn)?;
+        *self = staged;
+        Ok(())
+    }
+
+    fn apply_spawn_claim_accepted(
+        &mut self,
+        accepted: SpawnClaimAccepted,
+        event_domain: &AuthorityDomainId,
+        event_lsn: u64,
+    ) -> Result<(), AcceptanceError> {
+        let accepted_operation = accepted.accepted_operation.as_ref().ok_or_else(|| {
+            AcceptanceError::CorruptRecord(format!(
+                "accepted spawn claim at LSN {event_lsn} has no accepted operation"
+            ))
+        })?;
+        let operation = accepted_operation.operation.as_ref().ok_or_else(|| {
+            AcceptanceError::CorruptRecord(format!(
+                "accepted spawn claim at LSN {event_lsn} has no operation"
+            ))
+        })?;
+        if operation.authority_domain_id.as_ref() != Some(event_domain)
+            || OperationKind::try_from(operation.kind).ok() != Some(OperationKind::Spawn)
+        {
+            return Err(AcceptanceError::CorruptLog(format!(
+                "accepted spawn claim at LSN {event_lsn} wraps the wrong domain or kind"
+            )));
+        }
+        let claim = accepted.claim.as_ref().ok_or_else(|| {
+            AcceptanceError::CorruptRecord(format!(
+                "accepted spawn claim at LSN {event_lsn} has no claim"
+            ))
+        })?;
+        if claim.claim_operation_id.as_ref() != operation.command_id.as_ref() {
+            return Err(AcceptanceError::CorruptLog(format!(
+                "accepted spawn claim at LSN {event_lsn} has mismatched command identity"
+            )));
+        }
+
+        let expected_effects = match claim.expected_prior.as_ref() {
+            Some(prior) => self.spawn_prior_work_effects(prior),
+            None => Vec::new(),
+        };
+        if accepted.prior_work_effects != expected_effects {
+            return Err(AcceptanceError::CorruptLog(format!(
+                "accepted spawn claim at LSN {event_lsn} omits or changes prior-work effects"
+            )));
+        }
+        for effect in &accepted.prior_work_effects {
+            let command_id = effect
+                .command_id
+                .as_ref()
+                .expect("effects compared exactly");
+            let record = self
+                .commands
+                .get_mut(command_id)
+                .expect("effects derived above");
+            match SpawnPriorWorkDisposition::try_from(effect.disposition).ok() {
+                Some(SpawnPriorWorkDisposition::SupersededBeforeOffer) => {
+                    record.state = OperationState::Superseded;
+                    record.failure_code = Some(FailureCode::Superseded);
+                    record.terminal_lsn = Some(event_lsn);
+                }
+                Some(SpawnPriorWorkDisposition::QuiesceOutcomeReconciliation) => {
+                    self.replacement_quiesce.insert(command_id.clone());
+                }
+                Some(SpawnPriorWorkDisposition::Unspecified) | None => {
+                    return Err(AcceptanceError::CorruptRecord(format!(
+                        "accepted spawn claim at LSN {event_lsn} has unknown prior-work disposition"
+                    )));
+                }
+            }
+        }
+
+        let grant_id = accepted_operation
+            .authorizing_grant_id
+            .clone()
+            .ok_or_else(|| {
+                AcceptanceError::CorruptRecord(format!(
+                    "accepted spawn claim at LSN {event_lsn} has no spawning Grant"
+                ))
+            })?;
+        let record = CommandRecord::new_accepted(operation.clone(), grant_id, event_lsn)?;
         self.insert_recovered_record(record)
     }
 

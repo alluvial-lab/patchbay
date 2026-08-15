@@ -1,7 +1,7 @@
 ---
 id: spawn-delivery-atomic-claim-idempotency-generation
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, security, verification]
 parent: research-handoff-spawn
 depends_on: [fleet-spawn-target-resolution]
@@ -9,7 +9,7 @@ release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-15
 ---
 
 # Atomic spawn claim and prior-generation delivery fence
@@ -43,14 +43,28 @@ Fence behavior:
 
 ## Acceptance evidence
 
-- [ ] Two concurrent distinct claims for one expected generation produce at most one accepted record and one delivery.
-- [ ] Exact retry returns the same claim and both continuation Grant provenance ids.
-- [ ] Changed payload under the same key rejects without projection mutation.
-- [ ] Claim activation, exact-N pending-replacement fence, and complete prior-work effect list are atomic and replay-identical.
-- [ ] N-bound work cannot be accepted/offered after the fence; a barrier race has an explicit before/after winner, and no affected pre-fence work is omitted.
-- [ ] Terminal command state alone never releases the claim; active/poisoned records block new claimants.
-- [ ] Delivery carries the persisted claim/provenance and never reconstructs a generation.
+- [x] Two concurrent distinct claims for one expected generation produce at most one accepted record and one delivery.
+- [x] Exact retry returns the same claim and both continuation Grant provenance ids.
+- [x] Changed payload under the same key rejects without projection mutation.
+- [x] Claim activation, exact-N pending-replacement fence, and complete prior-work effect list are atomic and replay-identical.
+- [x] N-bound work cannot be accepted/offered after the fence; a barrier race has an explicit before/after winner, and no affected pre-fence work is omitted.
+- [x] Terminal command state alone never releases the claim; active/poisoned records block new claimants.
+- [x] Delivery carries the persisted claim/provenance and never reconstructs a generation.
 
 ## Ordering constraint
 
 Consumes completed contracts and operation-aware compound resolution. Claimed-successor staging follows.
+
+## Implementation notes
+
+- Execution capability: inline implementation in the host worker; stopped at `review` for independent review.
+- Added a dedicated storage acceptance route that reconciles idempotency before claimability, rebuilds claim and command pre-state inside one SQLite transaction, derives the complete stable-order prior-work effect list, validates both staged projections, and atomically commits the accepted claim envelope, idempotency row, and acceptance audit. Generic storage routes reject accepted claim sources.
+- Removed Unit 1's continuation guard. Fresh and continuation spawn now persist only the `SpawnClaimAccepted` source envelope. Continuation round-trips the spawning Grant, replacement Grant, exact N prior, N+1 claim, pending-replacement fence, and transaction-derived supersede/quiesce effects; exact retry returns those original durable bytes.
+- `CommandIndex`, diagnostics, completion compatibility, projection recovery, and adapter delivery decode the accepted Operation from the claim envelope. A shared `CoreDecisionGate` linearizes offer eligibility against claim activation; command replay suppresses superseded and quiescing N-bound work. Fresh claimed-successor staging now creates the logical-target record from the first authenticated deployment-scoped report when no prior generation exists.
+- Dedicated evidence covers distinct-claim concurrency, exact retry and changed-payload conflict, complete effect derivation, replay/restart fence reconstruction, generic-route exclusion, canonical post-fence rejection, and deterministic delivery-first/fence-first barrier outcomes. Existing completion/evidence integration fixtures were migrated to the dedicated writer.
+- Controlled mutations, all reverted with `git restore`: removing claim exclusivity produced two accepted owners and failed `distinct_continuations_race_to_exactly_one_durable_owner`; removing idempotency defenses appended a duplicate claim and failed `exact_retry_returns_original_claim_and_changed_payload_is_inert`; dropping prior-work fence effects offered `n-bound-race` after activation and failed the delivery barrier oracle; truncating compound provenance failed the continuation durable round-trip oracle.
+- Verification group 1 — `cargo test --workspace --all-features`: **PASS**, including spawn claim race/replay, server barrier, full completion, and execution-evidence integrations. `cargo clippy --workspace --all-targets -- -D warnings`: **PASS**.
+- Verification group 2 — repository model runner `./formal/run-model-checks.sh`: **PASS**, 20/20 checks. (The requested legacy `./scripts/verify-models.sh` path is not present in this checkout.)
+- Verification group 3 — contract generation/build/drift, vectors, model traceability, presentation checks, and generated-tree diff: **PASS**. No `.proto` or generated contract changes.
+- Verification group 4 — `npm --prefix {pi-adapter,cli,web-cockpit,web-server,e2e} test`: **PASS** (35, 46 plus real-core resource, 128, 31, and walking-skeleton suites respectively); `cargo fmt --all --check`/`git diff --check`: **PASS**.
+- `pi-adapter` source changes present in the shared checkout belong to the parallel deployment-authority worker and were not modified or included in this story's commit.

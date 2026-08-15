@@ -1152,10 +1152,17 @@ impl TargetResolver for LockedTargetResolver {
         if let TargetBinding::SpawnAdapter { claim, .. } = &binding {
             match self.spawn_claims.lock().await.classify_claim(claim) {
                 SpawnClaimability::Available | SpawnClaimability::ExactRetry(_) => {}
-                SpawnClaimability::Conflict(_) | SpawnClaimability::Invalid => {
+                SpawnClaimability::Conflict(record) => {
+                    let command_id = record.claim.claim_operation_id.clone().ok_or_else(|| {
+                        TargetNotFound::NotFound {
+                            target: "durable spawn claim has no operation id".to_owned(),
+                        }
+                    })?;
+                    return Err(TargetNotFound::ReplacementPending { command_id });
+                }
+                SpawnClaimability::Invalid => {
                     return Err(TargetNotFound::NotFound {
-                        target: "spawn generation claim is already consumed or malformed"
-                            .to_owned(),
+                        target: "spawn generation claim is malformed".to_owned(),
                     });
                 }
             }
@@ -1562,10 +1569,6 @@ mod tests {
                     },
                 ),
             ),
-            StoredEventPayload {
-                kind: StoredEventKind::Operation as i32,
-                payload: accepted_operation.encode_to_vec(),
-            },
             encode_spawn_claim_event(&SpawnClaimEvent {
                 authority_domain_id: Some(domain.clone()),
                 mutation: Some(spawn_claim_event::Mutation::Accepted(
@@ -1600,6 +1603,59 @@ mod tests {
                     )
                     .await
                     .unwrap()
+            } else if payload.kind == StoredEventKind::SpawnClaim as i32 {
+                let claim_event = SpawnClaimEvent::decode(payload.payload.as_slice()).unwrap();
+                let spawn_claim_event::Mutation::Accepted(accepted) = claim_event.mutation.unwrap()
+                else {
+                    panic!("expected accepted claim fixture");
+                };
+                let accepted_operation = accepted.accepted_operation.as_ref().unwrap();
+                let accepted_wire = accepted_operation.operation.as_ref().unwrap();
+                let mut audit = AuditRecordDraft::new(
+                    Timestamp {
+                        seconds: 10,
+                        nanos: 0,
+                    },
+                    AuditEventKind::CommandSubmissionAccepted,
+                );
+                audit.actor_id = accepted_wire
+                    .sender
+                    .as_ref()
+                    .and_then(|sender| sender.actor_id.clone());
+                audit.endpoint_id = accepted_wire
+                    .sender
+                    .as_ref()
+                    .and_then(|sender| sender.endpoint_id.clone());
+                audit.device_id = accepted_wire
+                    .sender
+                    .as_ref()
+                    .and_then(|sender| sender.device_id.clone());
+                audit.command_id = accepted_wire.command_id.clone();
+                audit.grant_id = accepted_operation.authorizing_grant_id.clone();
+                audit.target_scope = accepted_wire.target_scope.clone();
+                audit.reason_code = "operation_spawn".to_owned();
+                let key = patchbay_contracts::patchbay::IdempotencyKey {
+                    value: accepted_wire.idempotency_key.clone(),
+                };
+                let logical_payload = accepted_wire.encode_to_vec();
+                let committed = storage
+                    .append_spawn_claim_accepted(
+                        &domain,
+                        &key,
+                        &patchbay_core::storage::TargetKey::new("spawn-target".to_owned()).unwrap(),
+                        accepted,
+                        audit,
+                        logical_payload,
+                    )
+                    .await
+                    .unwrap();
+                let patchbay_core::storage::SpawnClaimDedupOutcome::Appended(committed) = committed
+                else {
+                    panic!("claim fixture unexpectedly deduplicated");
+                };
+                assert_eq!(committed.audit_event_id, event_id(expected_lsn + 1));
+                expected_lsn += 1;
+                committed.source_event_id
             } else if payload.kind == StoredEventKind::Observation as i32
                 && Observation::decode(payload.payload.as_slice())
                     .ok()
@@ -1640,7 +1696,7 @@ mod tests {
         };
         let promotion = SpawnPromotionCommitted {
             authority_domain_id: Some(domain.clone()),
-            accepted_claim_event_id: Some(event_id(5)),
+            accepted_claim_event_id: Some(event_id(4)),
             accepted_claim: Some(accepted_claim),
             lifecycle: vec![
                 SpawnPromotionLifecycleEvidence {

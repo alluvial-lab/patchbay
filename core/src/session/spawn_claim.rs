@@ -18,7 +18,7 @@ use patchbay_contracts::patchbay::{
     SpawnExecutionEvidenceProducer, SpawnExecutionPhase, SpawnGenerationClaim,
     SpawnPendingReplacementFence, SpawnPriorWorkDisposition, SpawnPriorWorkEffect,
     SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
-    TargetScopeKind,
+    TargetScope, TargetScopeKind,
 };
 use prost::Message;
 
@@ -81,6 +81,7 @@ pub trait SpawnClaimQuery {
     fn claim_for_operation(&self, command_id: &CommandId) -> Option<&SpawnClaimRecord>;
     fn classify_claim(&self, claim: &SpawnGenerationClaim) -> SpawnClaimability<'_>;
     fn delivery_fence(&self, runtime: &RuntimeGenerationRef) -> SpawnDeliveryFence;
+    fn delivery_fence_for_target_scope(&self, scope: &TargetScope) -> SpawnDeliveryFence;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -487,8 +488,24 @@ impl SpawnClaimQuery for SpawnClaimRegistry {
     }
 
     fn delivery_fence(&self, runtime: &RuntimeGenerationRef) -> SpawnDeliveryFence {
+        self.delivery_fence_matching(|prior| prior == runtime)
+    }
+
+    fn delivery_fence_for_target_scope(&self, scope: &TargetScope) -> SpawnDeliveryFence {
+        self.delivery_fence_matching(|prior| runtime_ref_matches_target_scope(prior, scope))
+    }
+}
+
+impl SpawnClaimRegistry {
+    fn delivery_fence_matching(
+        &self,
+        matches_prior: impl Fn(&RuntimeGenerationRef) -> bool,
+    ) -> SpawnDeliveryFence {
         let Some((command_id, _)) = self.records.iter().find(|(command_id, record)| {
-            record.pending_replacement.as_ref() == Some(runtime)
+            record
+                .pending_replacement
+                .as_ref()
+                .is_some_and(&matches_prior)
                 && matches!(
                     record.disposition,
                     SpawnClaimDisposition::Active
@@ -507,6 +524,29 @@ impl SpawnClaimQuery for SpawnClaimRegistry {
             reason_code: REPLACEMENT_PENDING_REASON,
         }
     }
+}
+
+/// Whether a runtime-targeted Operation names the exact external half of a
+/// logical runtime-generation reference. `TargetScope` deliberately does not
+/// duplicate `LogicalTargetId`; the active claim supplies that stable identity.
+/// All external identity dimensions still match exactly.
+#[must_use]
+pub fn runtime_ref_matches_target_scope(
+    runtime: &RuntimeGenerationRef,
+    scope: &TargetScope,
+) -> bool {
+    let Some(external) = runtime.external_runtime.as_ref() else {
+        return false;
+    };
+    TargetScopeKind::try_from(scope.kind).ok() == Some(TargetScopeKind::RuntimeSession)
+        && scope.adapter_id == external.adapter_id
+        && scope.deployment_scope == external.deployment_scope
+        && scope.runtime_session_id == external.runtime_session_id
+        && scope.session_generation == external.generation
+        && scope.actor_id.is_none()
+        && scope.resource.is_none()
+        && scope.project_or_group.is_empty()
+        && scope.legacy_audit_resource_id.is_empty()
 }
 
 /// Exact legal disposition adjacency. Terminal dispositions never reactivate.

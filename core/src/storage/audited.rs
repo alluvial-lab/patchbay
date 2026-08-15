@@ -10,16 +10,16 @@
 use patchbay_contracts::patchbay::{
     AcceptedOperation, AuditEventKind, AuthorityDomainId, CommandTransition, FailureCode,
     Observation, ObservationKind, OperationKind, OperatorRecord, QuarantinedRuntimeEvidence,
-    Revocation, SecurityLockdownEvent, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged,
-    StoredEventKind, StoredEventPayload,
+    Revocation, SecurityLockdownEvent, SpawnClaimAccepted, SpawnPromotionCommitted,
+    SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
 use super::{
     AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDecisionAppend, AuditedDedupOutcome,
     CoreGenerationStore, DedupOutcome, GrantAppendOutcome, GrantIdentityKey,
-    ObservationTransitionAppend, RecordedEvent, SpawnPromotionAppend, Storage, StorageError,
-    StoredSnapshot, TargetKey,
+    ObservationTransitionAppend, RecordedEvent, SpawnClaimDedupOutcome, SpawnPromotionAppend,
+    Storage, StorageError, StoredSnapshot, TargetKey,
 };
 use crate::time::{Clock, SystemClock};
 
@@ -372,6 +372,7 @@ fn reject_generic_special(payload: &StoredEventPayload) -> Result<(), StorageErr
             kind,
             StoredEventKind::Grant
                 | StoredEventKind::DescendantGrant
+                | StoredEventKind::SpawnClaim
                 | StoredEventKind::SpawnSuccessorEvidenceStaged
                 | StoredEventKind::SpawnPromotionCommitted
                 | StoredEventKind::QuarantinedRuntimeEvidence
@@ -624,6 +625,27 @@ where
     ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
         self.inner
             .append_spawn_successor_staged_idempotent(authority_domain_id, staged)
+            .await
+    }
+
+    async fn append_spawn_claim_accepted(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &patchbay_contracts::patchbay::IdempotencyKey,
+        target: &TargetKey,
+        accepted: SpawnClaimAccepted,
+        audit: AuditRecordDraft,
+        logical_payload: Vec<u8>,
+    ) -> Result<SpawnClaimDedupOutcome, StorageError> {
+        self.inner
+            .append_spawn_claim_accepted(
+                authority_domain_id,
+                key,
+                target,
+                accepted,
+                audit,
+                logical_payload,
+            )
             .await
     }
 

@@ -5,9 +5,9 @@
 //! from depending on either sibling feature's implementation.
 
 use patchbay_contracts::patchbay::{
-    ActorId, AdapterId, AuthorityDomainId, ContinuationAuthorityProvenance, ElicitationId, EventId,
-    Generation, GrantId, Operation, OperationKind, ResponseContract, RuntimeSessionId,
-    SpawnGenerationClaim, SpawnRequest, TargetScope,
+    ActorId, AdapterId, AuthorityDomainId, CommandId, ContinuationAuthorityProvenance,
+    ElicitationId, EventId, Generation, GrantId, Operation, OperationKind, ResponseContract,
+    RuntimeSessionId, SpawnGenerationClaim, SpawnRequest, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -199,4 +199,6 @@ pub enum TargetBinding {
 pub enum TargetNotFound {
     #[error("target not found: {target}")]
     NotFound { target: String },
+    #[error("runtime generation has pending replacement by command {command_id:?}")]
+    ReplacementPending { command_id: CommandId },
 }

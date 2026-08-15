@@ -30,11 +30,12 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    runtime_generation_disposition, typed_correlation, AuditEventKind, AuditPage, AuditRecord,
-    AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, EventId, FailureCode,
-    Generation, Grant, IdempotencyKey, Lsn, Observation, ObservationKind, OperationKind,
-    OperationState, QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason,
-    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
+    runtime_generation_disposition, spawn_claim_event, typed_correlation, AuditEventKind,
+    AuditPage, AuditRecord, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
+    EventId, FailureCode, Generation, Grant, IdempotencyKey, Lsn, Observation, ObservationKind,
+    OperationKind, OperationState, QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason,
+    SpawnClaimAccepted, SpawnClaimEvent, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged,
+    StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
@@ -44,8 +45,8 @@ use super::port::{
     classify_observation_write_route, event_id, AuditPageSpec, AuditRecordDraft, AuditedAppend,
     AuditedBatchAppend, AuditedDecisionAppend, AuditedDedupOutcome, CoreGenerationStore,
     DedupOutcome, GrantAppendOutcome, GrantIdentityKey, ObservationTransitionAppend,
-    ObservationWriteRoute, RecordedEvent, SpawnPromotionAppend, Storage, StorageError,
-    StoredSnapshot, TargetKey,
+    ObservationWriteRoute, RecordedEvent, SpawnClaimAppend, SpawnClaimDedupOutcome,
+    SpawnPromotionAppend, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 
 pub const LATEST_SCHEMA_VERSION: u32 = 5;
@@ -758,6 +759,15 @@ enum WriterCommand {
         staged: Box<SpawnSuccessorEvidenceStaged>,
         reply: oneshot::Sender<Result<EventId, StorageError>>,
     },
+    AppendSpawnClaimAccepted {
+        authority_domain_id: String,
+        key: String,
+        target: String,
+        accepted: Box<SpawnClaimAccepted>,
+        audit: AuditRecordDraft,
+        logical_payload: Vec<u8>,
+        reply: oneshot::Sender<Result<SpawnClaimDedupOutcome, StorageError>>,
+    },
     AppendSpawnPromotionAudited {
         authority_domain_id: String,
         promotion: Box<SpawnPromotionCommitted>,
@@ -1028,6 +1038,26 @@ async fn writer_actor(
                     &mut db,
                     &authority_domain_id,
                     *staged,
+                );
+                let _ = reply.send(result);
+            }
+            WriterCommand::AppendSpawnClaimAccepted {
+                authority_domain_id,
+                key,
+                target,
+                accepted,
+                audit,
+                logical_payload,
+                reply,
+            } => {
+                let result = do_append_spawn_claim_accepted(
+                    &mut db,
+                    &authority_domain_id,
+                    &key,
+                    &target,
+                    *accepted,
+                    audit,
+                    logical_payload,
                 );
                 let _ = reply.send(result);
             }
@@ -2543,6 +2573,216 @@ fn do_append_quarantined_runtime_evidence_audited(
     })
 }
 
+fn replay_spawn_acceptance_prestate(
+    events: &[RecordedEvent],
+    domain: &AuthorityDomainId,
+) -> Result<
+    (
+        crate::acceptance::CommandIndex,
+        crate::session::SpawnClaimRegistry,
+        u64,
+    ),
+    StorageError,
+> {
+    let mut commands = crate::acceptance::CommandIndex::new();
+    let mut claims = crate::session::SpawnClaimRegistry::new(domain.clone())
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let mut previous_lsn = 0;
+    for event in events {
+        let validated = crate::storage::validate_next_replay_event(domain, previous_lsn, event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        commands
+            .apply(event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        claims
+            .observe(event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        previous_lsn = validated.lsn;
+    }
+    Ok((commands, claims, previous_lsn))
+}
+
+fn validate_spawn_acceptance_audit(
+    accepted: &SpawnClaimAccepted,
+    audit: &AuditRecordDraft,
+    domain: &AuthorityDomainId,
+) -> Result<(), StorageError> {
+    audit.validate(domain)?;
+    let accepted_operation = accepted.accepted_operation.as_ref().ok_or_else(|| {
+        StorageError::CorruptRecord("spawn claim acceptance has no accepted operation".to_owned())
+    })?;
+    let operation = accepted_operation.operation.as_ref().ok_or_else(|| {
+        StorageError::CorruptRecord("spawn claim acceptance has no operation".to_owned())
+    })?;
+    let sender = operation.sender.as_ref();
+    if audit.kind != AuditEventKind::CommandSubmissionAccepted
+        || audit.reason_code != "operation_spawn"
+        || audit.command_id != operation.command_id
+        || audit.grant_id != accepted_operation.authorizing_grant_id
+        || audit.target_scope != operation.target_scope
+        || audit.actor_id != sender.and_then(|value| value.actor_id.clone())
+        || audit.endpoint_id != sender.and_then(|value| value.endpoint_id.clone())
+        || audit.device_id != sender.and_then(|value| value.device_id.clone())
+        || audit.source_event_id.is_some()
+    {
+        return Err(StorageError::InvalidAuditRecord(
+            "spawn claim acceptance requires canonical submission audit framing".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn do_append_spawn_claim_accepted(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    key: &str,
+    target: &str,
+    mut accepted: SpawnClaimAccepted,
+    mut audit: AuditRecordDraft,
+    logical_payload: Vec<u8>,
+) -> Result<SpawnClaimDedupOutcome, StorageError> {
+    let domain = AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    };
+    if authority_domain_id.is_empty() || key.is_empty() || target.is_empty() {
+        return Err(StorageError::CorruptRecord(
+            "spawn claim acceptance has an empty durable identity".to_owned(),
+        ));
+    }
+    audit.source_event_id = None;
+    validate_spawn_acceptance_audit(&accepted, &audit, &domain)?;
+
+    let tx = db.transaction().map_err(map_write_err)?;
+    let existing: Option<(i64, Vec<u8>)> = tx
+        .query_row(
+            "SELECT lsn, payload_bytes FROM idempotency_keys
+             WHERE authority_domain_id = ?1 AND key = ?2 AND target = ?3",
+            rusqlite::params![authority_domain_id, key, target],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_write_err)?;
+    if let Some((existing_lsn, existing_bytes)) = existing {
+        if existing_bytes != logical_payload {
+            return Err(StorageError::IdempotencyConflict);
+        }
+        let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
+        let existing_event = events
+            .iter()
+            .find(|event| {
+                event.event_id.lsn.as_ref().map(|lsn| lsn.value) == Some(existing_lsn as u64)
+            })
+            .ok_or_else(|| {
+                StorageError::CorruptRecord(
+                    "spawn idempotency index references a missing event".to_owned(),
+                )
+            })?;
+        if existing_event.payload.kind != StoredEventKind::SpawnClaim as i32 {
+            return Err(StorageError::CorruptRecord(
+                "spawn idempotency index references a non-claim event".to_owned(),
+            ));
+        }
+        let existing_claim = SpawnClaimEvent::decode(existing_event.payload.payload.as_slice())
+            .map_err(|error| {
+                StorageError::CorruptRecord(format!(
+                    "cannot decode existing spawn claim acceptance: {error}"
+                ))
+            })?;
+        let Some(spawn_claim_event::Mutation::Accepted(existing_accepted)) =
+            existing_claim.mutation
+        else {
+            return Err(StorageError::CorruptRecord(
+                "spawn idempotency index references a disposition event".to_owned(),
+            ));
+        };
+        let source_event_id = existing_event.event_id.clone();
+        audit.source_event_id = Some(source_event_id.clone());
+        let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
+        tx.commit().map_err(map_write_err)?;
+        return Ok(SpawnClaimDedupOutcome::Duplicate(SpawnClaimAppend {
+            source_event_id,
+            audit_event_id,
+            accepted: existing_accepted,
+        }));
+    }
+
+    let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
+    let (commands, claims, previous_lsn) = replay_spawn_acceptance_prestate(&events, &domain)?;
+    let claim = accepted.claim.as_ref().ok_or_else(|| {
+        StorageError::CorruptRecord("spawn claim acceptance has no claim".to_owned())
+    })?;
+    match crate::session::SpawnClaimQuery::classify_claim(&claims, claim) {
+        crate::session::SpawnClaimability::Available => {}
+        crate::session::SpawnClaimability::ExactRetry(record)
+        | crate::session::SpawnClaimability::Conflict(record) => {
+            let command_id = record
+                .claim
+                .claim_operation_id
+                .as_ref()
+                .map_or_else(String::new, |id| id.value.clone());
+            return Err(StorageError::SpawnClaimConflict { command_id });
+        }
+        crate::session::SpawnClaimability::Invalid => {
+            return Err(StorageError::CorruptRecord(
+                "spawn claim acceptance carries an invalid claim".to_owned(),
+            ));
+        }
+    }
+    accepted.prior_work_effects = claim
+        .expected_prior
+        .as_ref()
+        .map_or_else(Vec::new, |prior| commands.spawn_prior_work_effects(prior));
+
+    let source = crate::session::encode_spawn_claim_event(&SpawnClaimEvent {
+        authority_domain_id: Some(domain.clone()),
+        mutation: Some(spawn_claim_event::Mutation::Accepted(accepted.clone())),
+    });
+    let expected_lsn = previous_lsn.checked_add(1).ok_or_else(|| {
+        StorageError::CorruptRecord("spawn claim acceptance LSN overflow".to_owned())
+    })?;
+    let candidate = RecordedEvent {
+        event_id: event_id(domain.clone(), expected_lsn),
+        payload: source.clone(),
+    };
+    let mut staged_commands = commands;
+    let mut staged_claims = claims;
+    staged_claims
+        .observe(&candidate)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    staged_commands
+        .apply(&candidate)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+
+    let (source_lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
+    if source_lsn as u64 != expected_lsn {
+        return Err(StorageError::CorruptRecord(format!(
+            "SQLite assigned spawn claim LSN {source_lsn}, expected {expected_lsn}"
+        )));
+    }
+    tx.execute(
+        "INSERT INTO idempotency_keys (authority_domain_id, key, target, lsn, payload_bytes)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![
+            authority_domain_id,
+            key,
+            target,
+            source_lsn,
+            logical_payload
+        ],
+    )
+    .map_err(map_write_err)?;
+    let source_event_id = candidate.event_id;
+    audit.source_event_id = Some(source_event_id.clone());
+    let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
+    tx.commit().map_err(map_write_err)?;
+    Ok(SpawnClaimDedupOutcome::Appended(SpawnClaimAppend {
+        source_event_id,
+        audit_event_id,
+        accepted,
+    }))
+}
+
 fn do_append_spawn_successor_staged_idempotent(
     db: &mut Connection,
     authority_domain_id: &str,
@@ -2842,6 +3082,43 @@ fn do_append_spawn_promotion_audited(
     })
 }
 
+fn reject_pending_replacement_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    authority_domain_id: &str,
+    source: &StoredEventPayload,
+) -> Result<(), StorageError> {
+    if source.kind != StoredEventKind::Operation as i32 {
+        return Ok(());
+    }
+    // The low-level storage smoke contract historically permits opaque bytes
+    // under known kinds; typed acceptance rejects those before this route.
+    // Only a decodable, exact runtime target can intersect a replacement fence.
+    let Ok(accepted) =
+        patchbay_contracts::patchbay::AcceptedOperation::decode(source.payload.as_slice())
+    else {
+        return Ok(());
+    };
+    let Some(operation) = accepted.operation.as_ref() else {
+        return Ok(());
+    };
+    let Some(scope) = operation.target_scope.as_ref() else {
+        return Ok(());
+    };
+    let domain = AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    };
+    let events = recorded_events_in_transaction(tx, authority_domain_id)?;
+    let (_, claims, _) = replay_spawn_acceptance_prestate(&events, &domain)?;
+    match crate::session::SpawnClaimQuery::delivery_fence_for_target_scope(&claims, scope) {
+        crate::session::SpawnDeliveryFence::Open => Ok(()),
+        crate::session::SpawnDeliveryFence::ReplacementPending {
+            claim_operation_id, ..
+        } => Err(StorageError::ReplacementPending {
+            command_id: claim_operation_id.value,
+        }),
+    }
+}
+
 fn do_append_dedup_audited(
     db: &mut Connection,
     authority_domain_id: &str,
@@ -2876,6 +3153,7 @@ fn do_append_dedup_audited(
             lsn
         }
         None => {
+            reject_pending_replacement_in_transaction(&tx, authority_domain_id, &source)?;
             let (lsn, encoded) = insert_event(&tx, authority_domain_id, &source)?;
             tx.execute(
                 "INSERT INTO idempotency_keys (authority_domain_id, key, target, lsn, payload_bytes) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -2960,7 +3238,9 @@ fn do_append_dedup(
             )))
         }
         None => {
-            // New key — append the event and register the key in one transaction.
+            // New key — fence against a continuation accepted by any earlier
+            // writer transaction, then append/register atomically.
+            reject_pending_replacement_in_transaction(&tx, authority_domain_id, payload)?;
             tx.execute(
                 "INSERT INTO events (authority_domain_id, kind, payload) VALUES (?1, ?2, ?3)",
                 rusqlite::params![authority_domain_id, kind as i32, encoded],
@@ -3356,7 +3636,8 @@ fn reject_generic_unaudited_special(payload: &StoredEventPayload) -> Result<(), 
         || matches!(
             StoredEventKind::try_from(payload.kind).ok(),
             Some(
-                StoredEventKind::SpawnSuccessorEvidenceStaged
+                StoredEventKind::SpawnClaim
+                    | StoredEventKind::SpawnSuccessorEvidenceStaged
                     | StoredEventKind::SpawnPromotionCommitted
                     | StoredEventKind::QuarantinedRuntimeEvidence
             )
@@ -3680,6 +3961,33 @@ impl Storage for RusqliteStorage {
             .send(WriterCommand::AppendSpawnSuccessorStagedIdempotent {
                 authority_domain_id: authority_domain_id.value.clone(),
                 staged: Box::new(staged),
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_spawn_claim_accepted(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        accepted: SpawnClaimAccepted,
+        audit: AuditRecordDraft,
+        logical_payload: Vec<u8>,
+    ) -> Result<SpawnClaimDedupOutcome, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendSpawnClaimAccepted {
+                authority_domain_id: authority_domain_id.value.clone(),
+                key: key.value.clone(),
+                target: target.as_str().to_owned(),
+                accepted: Box::new(accepted),
+                audit,
+                logical_payload,
                 reply: reply_tx,
             })
             .await

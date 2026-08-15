@@ -4,19 +4,20 @@ use std::sync::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, resource_report, resource_report_mutation, spawn_claim_event,
-    spawn_request, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
-    AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport,
-    AdapterDiagnosticSeverity, AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory,
-    AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition, EndpointId,
-    FailureCode, FreshSpawn, Generation, IdempotencyKey, LogicalTargetCreated, LogicalTargetId,
-    Lsn, Observation, ObservationKind, Operation, OperationKind, PayloadContentType,
-    PayloadEnvelope, ReceiveRequest, ResourceCapability, ResourceFreshnessState, ResourceId,
-    ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
-    ResourceReportMutation, ResourceSnapshotReport, ResourceStateUnknown, ResourceStateUpsert,
-    ResourceViewReport, RuntimeSessionId, SchemaDescriptor, SecurityLockdownEntered,
-    SessionActivityState, SessionConnectivityState, SessionReportSourceCursor, SpawnClaimAccepted,
-    SpawnClaimEvent, SpawnGenerationClaim, SpawnRequest, SpawnTargetSpec, StoredEventKind,
+    observation_request, resource_report, resource_report_mutation, spawn_request,
+    typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability,
+    AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity,
+    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
+    AuditEventKind, AuthorityDomainId, CommandId, CommandTransition,
+    ContinuationAuthorityProvenance, EndpointId, ExternalRuntimeRef, FailureCode, FreshSpawn,
+    Generation, GrantId, IdempotencyKey, LogicalTargetCreated, LogicalTargetId, Lsn, Observation,
+    ObservationKind, Operation, OperationKind, PayloadContentType, PayloadEnvelope, ReceiveRequest,
+    ResourceCapability, ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind,
+    ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshotReport,
+    ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport, RuntimeGenerationRef,
+    RuntimeSessionId, SchemaDescriptor, SecurityLockdownEntered, SessionActivityState,
+    SessionConnectivityState, SessionReportSourceCursor, SpawnClaimAccepted, SpawnGenerationClaim,
+    SpawnPendingReplacementFence, SpawnRequest, SpawnTargetSpec, StoredEventKind,
     StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
@@ -1804,33 +1805,41 @@ async fn managed_spawn_report_stages_exclusively_and_never_registers_current_ses
             value: "test-grant".to_owned(),
         }),
     };
+    let accepted_claim = SpawnClaimAccepted {
+        accepted_operation: Some(accepted),
+        claim: Some(SpawnGenerationClaim {
+            authority_domain_id: Some(domain.clone()),
+            claim_operation_id: operation.command_id.clone(),
+            logical_target_id: Some(logical_target_id),
+            expected_prior: None,
+            claimed_generation: Some(Generation { value: 1 }),
+        }),
+        ..SpawnClaimAccepted::default()
+    };
+    let mut audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        AuditEventKind::CommandSubmissionAccepted,
+    );
+    audit.command_id = operation.command_id.clone();
+    audit.grant_id = accepted_claim
+        .accepted_operation
+        .as_ref()
+        .and_then(|accepted| accepted.authorizing_grant_id.clone());
+    audit.target_scope = operation.target_scope.clone();
+    audit.reason_code = "operation_spawn".to_owned();
     storage
-        .append(
+        .append_spawn_claim_accepted(
             &domain,
-            StoredEventPayload {
-                kind: StoredEventKind::Operation as i32,
-                payload: accepted.encode_to_vec(),
+            &IdempotencyKey {
+                value: operation.idempotency_key.clone(),
             },
-        )
-        .await
-        .unwrap();
-    storage
-        .append(
-            &domain,
-            patchbay_core::session::encode_spawn_claim_event(&SpawnClaimEvent {
-                authority_domain_id: Some(domain.clone()),
-                mutation: Some(spawn_claim_event::Mutation::Accepted(SpawnClaimAccepted {
-                    accepted_operation: Some(accepted),
-                    claim: Some(SpawnGenerationClaim {
-                        authority_domain_id: Some(domain.clone()),
-                        claim_operation_id: operation.command_id.clone(),
-                        logical_target_id: Some(logical_target_id),
-                        expected_prior: None,
-                        claimed_generation: Some(Generation { value: 1 }),
-                    }),
-                    ..SpawnClaimAccepted::default()
-                })),
-            }),
+            &TargetKey::new("managed-spawn-target".to_owned()).unwrap(),
+            accepted_claim,
+            audit,
+            operation.encode_to_vec(),
         )
         .await
         .unwrap();
@@ -2705,6 +2714,137 @@ async fn deferred_spawn_success_suppresses_redelivery_after_restart_and_reattach
     );
 }
 
+async fn delivery_claim_barrier_case(delivery_first: bool) {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let gate = CoreDecisionGate::default();
+    let service = AdapterControlServiceImpl::new_with_decision_gate(
+        storage.clone(),
+        domain.clone(),
+        evidence_verifier(),
+        gate.clone(),
+    )
+    .await
+    .expect("service initializes");
+    let attachment_token = attach_generation(&service, domain.clone(), 1).await;
+    let mut subscription = receive_from_start(&service, &attachment_token).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), subscription.next())
+            .await
+            .is_err()
+    );
+
+    let held = gate.acquire().await;
+    let operation = targeted_operation(domain.clone(), "n-bound-race");
+    storage
+        .append(
+            &domain,
+            StoredEventPayload {
+                kind: StoredEventKind::Operation as i32,
+                payload: accepted_operation_bytes(&operation),
+            },
+        )
+        .await
+        .expect("N-bound operation fixture appends");
+
+    if delivery_first {
+        // The subscription's next scan queues on the held gate before claim
+        // acceptance, making the offer the explicit before-fence winner.
+        tokio::time::sleep(DELIVERY_SCAN_INTERVAL + Duration::from_millis(30)).await;
+    }
+    let claim_gate = gate.clone();
+    let claim_storage = storage.clone();
+    let claim_domain = domain.clone();
+    let claim_task = tokio::spawn(async move {
+        let _guard = claim_gate.acquire().await;
+        append_replacement_claim(&claim_storage, &claim_domain, "replacement").await;
+    });
+    if !delivery_first {
+        // Queue delivery after claim so the durable fence is visible first.
+        tokio::time::sleep(DELIVERY_SCAN_INTERVAL + Duration::from_millis(30)).await;
+    }
+    drop(held);
+
+    if delivery_first {
+        let offered = tokio::time::timeout(Duration::from_secs(1), subscription.next())
+            .await
+            .expect("before-fence delivery is enqueued")
+            .expect("subscription remains open")
+            .expect("delivery is valid");
+        assert_eq!(offered.operation, Some(operation.clone()));
+    }
+    claim_task.await.expect("claim task completes");
+    if !delivery_first {
+        if let Ok(Some(Ok(delivery))) =
+            tokio::time::timeout(Duration::from_millis(250), subscription.next()).await
+        {
+            assert_eq!(
+                delivery
+                    .operation
+                    .as_ref()
+                    .and_then(|operation| operation.command_id.as_ref())
+                    .map(|command_id| command_id.value.as_str()),
+                Some("replacement"),
+                "only the persisted replacement claim may be delivered after activation"
+            );
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(250), subscription.next())
+                .await
+                .is_err(),
+            "N-bound work must not be delivered after the fence"
+        );
+    }
+
+    let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
+    let restarted = command_projection_from_events(&events, &domain).expect("restart replay");
+    let record = restarted
+        .index
+        .get_command(operation.command_id.as_ref().unwrap())
+        .expect("pre-fence command remains explicit");
+    assert_eq!(record.state, OperationState::Superseded);
+    let restarted_deliveries = deliveries_for_events(&events, &restarted.index, &adapter_id(), 0);
+    assert!(restarted_deliveries.iter().all(|delivery| {
+        delivery
+            .as_ref()
+            .ok()
+            .and_then(|delivery| delivery.operation.as_ref())
+            .and_then(|operation| operation.command_id.as_ref())
+            != operation.command_id.as_ref()
+    }));
+    let replacement_delivery = restarted_deliveries
+        .iter()
+        .filter_map(|delivery| delivery.as_ref().ok())
+        .find(|delivery| {
+            delivery
+                .operation
+                .as_ref()
+                .and_then(|operation| operation.command_id.as_ref())
+                .is_some_and(|command_id| command_id.value == "replacement")
+        })
+        .expect("restart delivery is reconstructed from the persisted claim envelope");
+    assert_eq!(
+        replacement_delivery
+            .delivery_event_id
+            .as_ref()
+            .and_then(|event_id| event_id.lsn)
+            .map(|lsn| lsn.value),
+        events
+            .iter()
+            .find(|event| event.payload.kind == StoredEventKind::SpawnClaim as i32)
+            .and_then(|event| event.event_id.lsn)
+            .map(|lsn| lsn.value)
+    );
+}
+
+#[tokio::test]
+async fn delivery_and_continuation_acceptance_barrier_has_explicit_before_and_after_winners() {
+    delivery_claim_barrier_case(false).await;
+    delivery_claim_barrier_case(true).await;
+}
+
 #[tokio::test]
 async fn abnormal_delivery_stream_drop_marks_adapter_sessions_stale() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
@@ -3119,6 +3259,100 @@ fn targeted_operation(domain: AuthorityDomainId, command: &str) -> Operation {
         idempotency_key: format!("{command}-key"),
         ..Default::default()
     }
+}
+
+fn replacement_claim(domain: AuthorityDomainId, command_id: &str) -> SpawnClaimAccepted {
+    let exact_prior = RuntimeGenerationRef {
+        logical_target_id: Some(LogicalTargetId {
+            value: "logical-a".to_owned(),
+        }),
+        external_runtime: Some(ExternalRuntimeRef {
+            adapter_id: Some(adapter_id()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(runtime_session_id()),
+            generation: Some(Generation { value: 1 }),
+        }),
+    };
+    let operation = Operation {
+        command_id: Some(CommandId {
+            value: command_id.to_owned(),
+        }),
+        authority_domain_id: Some(domain.clone()),
+        kind: OperationKind::Spawn as i32,
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::Adapter as i32,
+            adapter_id: Some(adapter_id()),
+            ..TargetScope::default()
+        }),
+        idempotency_key: format!("{command_id}-key"),
+        ..Operation::default()
+    };
+    SpawnClaimAccepted {
+        accepted_operation: Some(AcceptedOperation {
+            operation: Some(operation),
+            authorizing_grant_id: Some(GrantId {
+                value: "spawn-grant".to_owned(),
+            }),
+        }),
+        claim: Some(SpawnGenerationClaim {
+            authority_domain_id: Some(domain),
+            claim_operation_id: Some(CommandId {
+                value: command_id.to_owned(),
+            }),
+            logical_target_id: exact_prior.logical_target_id.clone(),
+            expected_prior: Some(exact_prior.clone()),
+            claimed_generation: Some(Generation { value: 2 }),
+        }),
+        compound_authority: Some(ContinuationAuthorityProvenance {
+            exact_prior: Some(exact_prior.clone()),
+            replacement_grant_id: Some(GrantId {
+                value: "replacement-grant".to_owned(),
+            }),
+            replacement_authority_kind: OperationKind::SessionManagement as i32,
+        }),
+        pending_replacement: Some(SpawnPendingReplacementFence {
+            exact_prior: Some(exact_prior),
+            failure_code: FailureCode::Superseded as i32,
+            reason_code: patchbay_core::session::REPLACEMENT_PENDING_REASON.to_owned(),
+        }),
+        prior_work_effects: Vec::new(),
+    }
+}
+
+async fn append_replacement_claim(
+    storage: &RusqliteStorage,
+    domain: &AuthorityDomainId,
+    command_id: &str,
+) {
+    let accepted = replacement_claim(domain.clone(), command_id);
+    let accepted_operation = accepted.accepted_operation.as_ref().unwrap();
+    let operation = accepted_operation.operation.as_ref().unwrap();
+    let mut audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        AuditEventKind::CommandSubmissionAccepted,
+    );
+    audit.command_id = operation.command_id.clone();
+    audit.grant_id = accepted_operation.authorizing_grant_id.clone();
+    audit.target_scope = operation.target_scope.clone();
+    audit.reason_code = "operation_spawn".to_owned();
+    let key = IdempotencyKey {
+        value: operation.idempotency_key.clone(),
+    };
+    let logical_payload = operation.encode_to_vec();
+    storage
+        .append_spawn_claim_accepted(
+            domain,
+            &key,
+            &TargetKey::new("replacement-spawn".to_owned()).unwrap(),
+            accepted,
+            audit,
+            logical_payload,
+        )
+        .await
+        .expect("replacement claim appends");
 }
 
 fn resource_targeted_operation(domain: AuthorityDomainId, command: &str) -> Operation {

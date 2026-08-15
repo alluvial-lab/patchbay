@@ -1,7 +1,7 @@
 //! Durable descendant-grant completion derived from committed spawn facts.
 //!
 //! The fold never treats an in-memory latch as durable progress. It observes
-//! accepted spawn Operations, successful result evidence, correlated session
+//! accepted spawn decisions, successful result evidence, correlated session
 //! registration/replacement, completion audit records, descendant grants, and
 //! terminal transitions. [`SpawnDescendantTail::next_action`] then returns the
 //! next missing durable step in audit → grant → completion order.
@@ -9,12 +9,12 @@
 use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
-    session_state_event, typed_correlation, AcceptedOperation, ActorId, AuditEventKind,
-    AuditRecord, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, DeviceId,
-    EndpointId, EventId, FailureCode, GrantId, GrantRevocationPolicy, Observation, ObservationKind,
-    OperationKind, OperationState, Revocation, SessionGenerationBumped, SessionRegistered,
-    SessionStateEvent, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
-    TypedCorrelation,
+    session_state_event, spawn_claim_event, typed_correlation, AcceptedOperation, ActorId,
+    AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
+    DeviceId, EndpointId, EventId, FailureCode, GrantId, GrantRevocationPolicy, Observation,
+    ObservationKind, OperationKind, OperationState, Revocation, SessionGenerationBumped,
+    SessionRegistered, SessionStateEvent, SpawnClaimEvent, StoredEventKind, StoredEventPayload,
+    TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -177,6 +177,9 @@ impl SpawnDescendantTail {
 
         match kind {
             StoredEventKind::Operation => self.observe_operation(event, &event_domain, event_lsn),
+            StoredEventKind::SpawnClaim => {
+                self.observe_spawn_claim(event, &event_domain, event_lsn)
+            }
             StoredEventKind::Observation => {
                 self.observe_observation(event, &event_domain, event_lsn)
             }
@@ -192,7 +195,6 @@ impl SpawnDescendantTail {
             }
             StoredEventKind::Revocation => self.observe_revocation(event, &event_domain, event_lsn),
             StoredEventKind::ResourceState
-            | StoredEventKind::SpawnClaim
             | StoredEventKind::SpawnExecutionEvidence
             | StoredEventKind::SpawnSuccessorEvidenceStaged
             | StoredEventKind::QuarantinedRuntimeEvidence
@@ -476,6 +478,37 @@ impl SpawnDescendantTail {
                     "cannot decode accepted operation at LSN {event_lsn}: {error}"
                 ))
             })?;
+        self.observe_accepted_operation(accepted, event_domain, event_lsn)
+    }
+
+    fn observe_spawn_claim(
+        &mut self,
+        event: &RecordedEvent,
+        event_domain: &AuthorityDomainId,
+        event_lsn: u64,
+    ) -> Result<(), AuthorityError> {
+        let claim = SpawnClaimEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
+            AuthorityError::CorruptRecord(format!(
+                "cannot decode spawn claim at LSN {event_lsn}: {error}"
+            ))
+        })?;
+        let Some(spawn_claim_event::Mutation::Accepted(accepted)) = claim.mutation else {
+            return Ok(());
+        };
+        let accepted_operation = accepted.accepted_operation.ok_or_else(|| {
+            AuthorityError::CorruptRecord(format!(
+                "accepted spawn claim at LSN {event_lsn} has no operation"
+            ))
+        })?;
+        self.observe_accepted_operation(accepted_operation, event_domain, event_lsn)
+    }
+
+    fn observe_accepted_operation(
+        &mut self,
+        accepted: AcceptedOperation,
+        event_domain: &AuthorityDomainId,
+        event_lsn: u64,
+    ) -> Result<(), AuthorityError> {
         let operation = accepted.operation.ok_or_else(|| {
             AuthorityError::CorruptRecord(format!(
                 "accepted operation at LSN {event_lsn} has no operation"

@@ -4,9 +4,9 @@ use patchbay_contracts::patchbay::{
     no_external_effect_proof, session_state_event, spawn_claim_disposition_changed,
     spawn_claim_event, AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
     AdapterRefusalBeforeDeliveryProof, AdapterRegistration, AdapterSnapshotSupport,
-    AdapterTargetCategory, AuthorityDomainId, CommandId, CommandTransition,
+    AdapterTargetCategory, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition,
     ContinuationAuthorityProvenance, EndpointId, EventId, ExternalEffectDisposition,
-    ExternalRuntimeRef, FailureCode, Generation, GrantId, LogicalTargetId, Lsn,
+    ExternalRuntimeRef, FailureCode, Generation, GrantId, IdempotencyKey, LogicalTargetId, Lsn,
     NoExternalEffectProof, Observation, ObservationKind, Operation, OperationKind, OperationState,
     PayloadContentType, PayloadEnvelope, RuntimeGenerationRef, RuntimeSessionId,
     SessionConnectivityChanged, SessionConnectivityState, SessionStateEvent,
@@ -23,7 +23,9 @@ use patchbay_core::session::{
     rebuild_spawn_claims_from_log, SpawnClaimError, SpawnClaimQuery, SpawnClaimRegistry,
     SpawnClaimability, SpawnDeliveryFence, REPLACEMENT_PENDING_REASON,
 };
-use patchbay_core::storage::{RecordedEvent, RusqliteStorage, Storage};
+use patchbay_core::storage::{
+    AuditRecordDraft, RecordedEvent, RusqliteStorage, Storage, TargetKey,
+};
 use proptest::prelude::*;
 use prost::Message;
 
@@ -168,6 +170,7 @@ fn accepted_operation(command_id: &str) -> AcceptedOperation {
                 }),
                 ..TargetScope::default()
             }),
+            idempotency_key: format!("{command_id}-key"),
             ..Operation::default()
         }),
         authorizing_grant_id: Some(GrantId {
@@ -227,6 +230,37 @@ fn fresh_accepted(command_id: &str) -> SpawnClaimAccepted {
 
 fn accepted_event(lsn: u64, accepted: SpawnClaimAccepted) -> RecordedEvent {
     claim_event(lsn, spawn_claim_event::Mutation::Accepted(accepted))
+}
+
+async fn persist_claim(storage: &RusqliteStorage, accepted: SpawnClaimAccepted) {
+    let accepted_operation = accepted.accepted_operation.as_ref().unwrap();
+    let operation = accepted_operation.operation.as_ref().unwrap();
+    let mut audit = AuditRecordDraft::new(
+        prost_types::Timestamp {
+            seconds: 1,
+            nanos: 0,
+        },
+        AuditEventKind::CommandSubmissionAccepted,
+    );
+    audit.command_id = operation.command_id.clone();
+    audit.grant_id = accepted_operation.authorizing_grant_id.clone();
+    audit.target_scope = operation.target_scope.clone();
+    audit.reason_code = "operation_spawn".to_owned();
+    let key = IdempotencyKey {
+        value: format!("{}-key", operation.command_id.as_ref().unwrap().value),
+    };
+    let logical_payload = operation.encode_to_vec();
+    storage
+        .append_spawn_claim_accepted(
+            &domain(),
+            &key,
+            &TargetKey::new("spawn-target".to_owned()).unwrap(),
+            accepted,
+            audit,
+            logical_payload,
+        )
+        .await
+        .unwrap();
 }
 
 fn disposition_event(
@@ -1543,13 +1577,7 @@ fn target_abandonment_clears_fence_but_permanently_consumes_generation() {
 #[tokio::test]
 async fn hostile_checkpoint_cannot_manufacture_released_disposition_or_availability() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    storage
-        .append(
-            &domain(),
-            accepted_event(1, continuation_accepted("spawn-a")).payload,
-        )
-        .await
-        .unwrap();
+    persist_claim(&storage, continuation_accepted("spawn-a")).await;
 
     let hostile = SpawnClaimCheckpoint {
         authority_domain_id: Some(domain()),
@@ -1594,13 +1622,8 @@ async fn hostile_checkpoint_cannot_manufacture_released_disposition_or_availabil
 #[tokio::test]
 async fn cold_log_replay_matches_hot_active_claim_projection() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
-    let payloads = [
-        accepted_event(1, continuation_accepted("spawn-a")).payload,
-        sibling(2).payload,
-    ];
-    for payload in payloads {
-        storage.append(&domain(), payload).await.unwrap();
-    }
+    persist_claim(&storage, continuation_accepted("spawn-a")).await;
+    storage.append(&domain(), sibling(2).payload).await.unwrap();
     let replayed = rebuild_spawn_claims_from_log(&storage, &domain())
         .await
         .unwrap();

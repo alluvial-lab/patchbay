@@ -2,7 +2,7 @@ use patchbay_contracts::patchbay::{
     quarantined_runtime_evidence, runtime_generation_disposition, spawn_claim_event,
     typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
     AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AuditEventKind,
-    AuthorityDomainId, CommandId, CommandTransition, ContinuationAuthorityProvenance,
+    AuditRecord, AuthorityDomainId, CommandId, CommandTransition, ContinuationAuthorityProvenance,
     DescendantGrant, DescendantGrantProvenance, Elicitation, ElicitationId, ElicitationState,
     EndpointId, EventId, ExternalRuntimeRef, FailureCode, Generation, Grant, GrantId,
     GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LogicalTargetCreated, LogicalTargetId,
@@ -239,7 +239,7 @@ fn unstamped_promotion() -> SpawnPromotionCommitted {
         authority_domain_id: Some(domain()),
         promotion_event_id: None,
         completion_audit_event_id: None,
-        accepted_claim_event_id: Some(event_id(5)),
+        accepted_claim_event_id: Some(event_id(4)),
         accepted_claim: Some(accepted_claim()),
         lifecycle: vec![
             SpawnPromotionLifecycleEvidence {
@@ -435,6 +435,48 @@ fn successful_result() -> Observation {
     result(FailureCode::Unspecified)
 }
 
+fn spawn_acceptance_audit_event(
+    audit_lsn: u64,
+    source_lsn: u64,
+    accepted: &SpawnClaimAccepted,
+) -> RecordedEvent {
+    let accepted_operation = accepted.accepted_operation.as_ref().unwrap();
+    let operation = accepted_operation.operation.as_ref().unwrap();
+    recorded(
+        audit_lsn,
+        StoredEventPayload {
+            kind: StoredEventKind::AuditRecord as i32,
+            payload: AuditRecord {
+                audit_event_id: Some(event_id(audit_lsn)),
+                occurred_at: Some(Timestamp {
+                    seconds: 10,
+                    nanos: 0,
+                }),
+                kind: AuditEventKind::CommandSubmissionAccepted as i32,
+                actor_id: operation
+                    .sender
+                    .as_ref()
+                    .and_then(|sender| sender.actor_id.clone()),
+                device_id: operation
+                    .sender
+                    .as_ref()
+                    .and_then(|sender| sender.device_id.clone()),
+                endpoint_id: operation
+                    .sender
+                    .as_ref()
+                    .and_then(|sender| sender.endpoint_id.clone()),
+                command_id: operation.command_id.clone(),
+                grant_id: accepted_operation.authorizing_grant_id.clone(),
+                target_scope: operation.target_scope.clone(),
+                reason_code: "operation_spawn".to_owned(),
+                source_event_id: Some(event_id(source_lsn)),
+                ..AuditRecord::default()
+            }
+            .encode_to_vec(),
+        },
+    )
+}
+
 fn valid_prefix() -> Vec<RecordedEvent> {
     vec![
         attachment_event(1),
@@ -464,18 +506,12 @@ fn valid_prefix() -> Vec<RecordedEvent> {
         ),
         recorded(
             4,
-            StoredEventPayload {
-                kind: StoredEventKind::Operation as i32,
-                payload: accepted_operation().encode_to_vec(),
-            },
-        ),
-        recorded(
-            5,
             encode_spawn_claim_event(&SpawnClaimEvent {
                 authority_domain_id: Some(domain()),
                 mutation: Some(spawn_claim_event::Mutation::Accepted(accepted_claim())),
             }),
         ),
+        spawn_acceptance_audit_event(5, 4, &accepted_claim()),
         recorded(
             6,
             StoredEventPayload {
@@ -513,6 +549,86 @@ async fn append_prefix(storage: &RusqliteStorage, prefix: Vec<RecordedEvent>) {
                 .append_spawn_successor_staged_idempotent(&domain(), staged)
                 .await
                 .expect("staged fixture appends through its dedicated boundary")
+        } else if event.payload.kind == StoredEventKind::SpawnClaim as i32 {
+            let claim_event = SpawnClaimEvent::decode(event.payload.payload.as_slice())
+                .expect("claim fixture decodes");
+            let spawn_claim_event::Mutation::Accepted(accepted) =
+                claim_event.mutation.expect("claim fixture mutation")
+            else {
+                panic!("prefix fixture requires accepted claim");
+            };
+            let accepted_operation = accepted.accepted_operation.as_ref().unwrap();
+            let operation = accepted_operation.operation.as_ref().unwrap();
+            let mut audit = AuditRecordDraft::new(
+                Timestamp {
+                    seconds: 10,
+                    nanos: 0,
+                },
+                AuditEventKind::CommandSubmissionAccepted,
+            );
+            audit.actor_id = operation
+                .sender
+                .as_ref()
+                .and_then(|sender| sender.actor_id.clone());
+            audit.endpoint_id = operation
+                .sender
+                .as_ref()
+                .and_then(|sender| sender.endpoint_id.clone());
+            audit.device_id = operation
+                .sender
+                .as_ref()
+                .and_then(|sender| sender.device_id.clone());
+            audit.command_id = operation.command_id.clone();
+            audit.grant_id = accepted_operation.authorizing_grant_id.clone();
+            audit.target_scope = operation.target_scope.clone();
+            audit.reason_code = "operation_spawn".to_owned();
+            let key = IdempotencyKey {
+                value: operation.idempotency_key.clone(),
+            };
+            let logical_payload = operation.encode_to_vec();
+            match storage
+                .append_spawn_claim_accepted(
+                    &domain(),
+                    &key,
+                    &TargetKey::new("spawn-target".to_owned()).unwrap(),
+                    accepted,
+                    audit,
+                    logical_payload,
+                )
+                .await
+                .expect("claim fixture appends through its dedicated boundary")
+            {
+                patchbay_core::storage::SpawnClaimDedupOutcome::Appended(committed) => {
+                    committed.source_event_id
+                }
+                patchbay_core::storage::SpawnClaimDedupOutcome::Duplicate(_) => {
+                    panic!("prefix fixture unexpectedly deduplicated")
+                }
+            }
+        } else if event.payload.kind == StoredEventKind::AuditRecord as i32 {
+            let existing = storage
+                .read_after(
+                    &domain(),
+                    Lsn {
+                        value: event.event_id.lsn.as_ref().unwrap().value - 1,
+                    },
+                )
+                .await
+                .expect("audit fixture lookup succeeds")
+                .into_iter()
+                .find(|stored| stored.event_id == event.event_id);
+            if let Some(existing) = existing {
+                assert_eq!(
+                    existing.payload, event.payload,
+                    "dedicated writer audit bytes"
+                );
+                existing.event_id
+            } else {
+                storage
+                    .append(&domain(), event.payload)
+                    .await
+                    .expect("audit fixture appends")
+            }
         } else {
             storage
                 .append(&domain(), event.payload)
@@ -1556,13 +1672,6 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
         ),
         recorded(
             7,
-            StoredEventPayload {
-                kind: StoredEventKind::Operation as i32,
-                payload: accepted_operation().encode_to_vec(),
-            },
-        ),
-        recorded(
-            8,
             encode_spawn_claim_event(&SpawnClaimEvent {
                 authority_domain_id: Some(domain()),
                 mutation: Some(spawn_claim_event::Mutation::Accepted(
@@ -1570,6 +1679,7 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
                 )),
             }),
         ),
+        spawn_acceptance_audit_event(8, 7, &continuation_accepted),
         recorded(
             9,
             StoredEventPayload {
@@ -1602,7 +1712,7 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
         ),
     ];
     let mut promotion = unstamped_promotion();
-    promotion.accepted_claim_event_id = Some(event_id(8));
+    promotion.accepted_claim_event_id = Some(event_id(7));
     promotion.accepted_claim = Some(continuation_accepted);
     promotion.lifecycle[0].event_id = Some(event_id(9));
     promotion.lifecycle[1].event_id = Some(event_id(10));

@@ -24,7 +24,8 @@ use patchbay_contracts::patchbay::{
     ActorId, AdapterDiagnosticDetail, AuditEventKind, AuditPage, AuthorityDomainId, CommandId,
     CommandTransition, EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn,
     Observation, ObservationKind, OperationKind, OperationState, QuarantinedRuntimeEvidence,
-    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventPayload, TargetScope,
+    SpawnClaimAccepted, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventPayload,
+    TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -356,6 +357,24 @@ pub struct SpawnPromotionAppend {
     pub promotion: SpawnPromotionCommitted,
 }
 
+/// The exact accepted spawn decision committed by the dedicated claim writer.
+///
+/// Returning the stamped durable bytes prevents retry and delivery callers from
+/// reconstructing generation or compound Grant provenance from newer state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpawnClaimAppend {
+    pub source_event_id: EventId,
+    pub audit_event_id: EventId,
+    pub accepted: SpawnClaimAccepted,
+}
+
+/// Result of the exclusive atomic spawn-claim acceptance boundary.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SpawnClaimDedupOutcome {
+    Appended(SpawnClaimAppend),
+    Duplicate(SpawnClaimAppend),
+}
+
 /// Errors at the storage boundary.
 ///
 /// This type is deliberately backend-neutral: it does not carry `rusqlite::Error`
@@ -406,6 +425,16 @@ pub enum StorageError {
     /// "Idempotency and retry" (payload equivalence rule).
     #[error("idempotency key conflict: payload differs from the existing command")]
     IdempotencyConflict,
+
+    /// A continuation has atomically fenced new work for the exact prior
+    /// runtime generation. The command id identifies the durable claimant.
+    #[error("runtime generation has pending replacement by command {command_id}")]
+    ReplacementPending { command_id: String },
+
+    /// A distinct command attempted to consume an already-exclusive spawn
+    /// generation. Exact idempotency retries are reconciled before this check.
+    #[error("spawn generation is already claimed by command {command_id}")]
+    SpawnClaimConflict { command_id: String },
 
     /// An immutable grant identity already points at different canonical
     /// source content. The conflict is discovered before another source or
@@ -760,6 +789,29 @@ pub trait Storage: Send + Sync {
         async { Err(StorageError::UnsupportedOperation) }
     }
 
+    /// Atomically deduplicate and accept one spawn generation claim.
+    ///
+    /// Implementations must reconcile the idempotency key first, rebuild and
+    /// validate claim/command pre-state inside the writer transaction, derive
+    /// the complete prior-generation work effects there, and commit the exact
+    /// accepted claim plus its audit together. Distinct claims for one
+    /// exclusive key conflict; an exact retry returns the original accepted
+    /// bytes and appends only its retry audit. Generic append routes must reject
+    /// `SpawnClaim` source events.
+    #[allow(clippy::too_many_arguments)]
+    fn append_spawn_claim_accepted(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _key: &IdempotencyKey,
+        _target: &TargetKey,
+        _accepted: SpawnClaimAccepted,
+        _audit: AuditRecordDraft,
+        _logical_payload: Vec<u8>,
+    ) -> impl std::future::Future<Output = Result<SpawnClaimDedupOutcome, StorageError>> + Send
+    {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
     /// Atomically assign and stamp the promotion source id, its immediate
     /// completion-audit id, and the nested descendant Grant audit link, then
     /// commit source + audit in one backend transaction. Generic append paths
@@ -943,6 +995,10 @@ mod tests {
             (
                 "append_spawn_successor_staged_idempotent",
                 DedicatedSourceClass::Envelope(StoredEventKind::SpawnSuccessorEvidenceStaged),
+            ),
+            (
+                "append_spawn_claim_accepted",
+                DedicatedSourceClass::Envelope(StoredEventKind::SpawnClaim),
             ),
             (
                 "append_quarantined_runtime_evidence_audited",

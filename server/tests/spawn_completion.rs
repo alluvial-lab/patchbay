@@ -563,21 +563,30 @@ where
 }
 
 async fn seed_spawn_claim<S: Storage>(storage: &S) {
-    let accepted = storage
+    let events = storage
         .read_after(&domain(), Lsn { value: 0 })
         .await
-        .unwrap()
-        .into_iter()
-        .filter(|event| event.payload.kind == StoredEventKind::Operation as i32)
-        .filter_map(|event| AcceptedOperation::decode(event.payload.payload.as_slice()).ok())
-        .find(|accepted| {
-            accepted
-                .operation
-                .as_ref()
-                .and_then(|operation| operation.command_id.as_ref())
-                == Some(&command_id())
-        })
-        .expect("accepted spawn is durable before its claim");
+        .unwrap();
+    let claim_exists = events
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::SpawnClaim as i32)
+        .filter_map(|event| SpawnClaimEvent::decode(event.payload.payload.as_slice()).ok())
+        .any(|event| {
+            matches!(
+                event.mutation,
+                Some(spawn_claim_event::Mutation::Accepted(accepted))
+                    if accepted
+                        .accepted_operation
+                        .as_ref()
+                        .and_then(|accepted| accepted.operation.as_ref())
+                        .and_then(|operation| operation.command_id.as_ref())
+                        == Some(&command_id())
+            )
+        });
+    if claim_exists {
+        return;
+    }
+
     let logical_target_id = LogicalTargetId {
         value: "logical-spawn-1".to_owned(),
     };
@@ -597,56 +606,65 @@ async fn seed_spawn_claim<S: Storage>(storage: &S) {
         )
         .await
         .unwrap();
+    let operation = Operation {
+        command_id: Some(command_id()),
+        authority_domain_id: Some(domain()),
+        sender: Some(ActorEndpointRef {
+            actor_id: Some(actor()),
+            endpoint_id: Some(endpoint()),
+            device_id: Some(device()),
+            ..ActorEndpointRef::default()
+        }),
+        kind: OperationKind::Spawn as i32,
+        target_scope: Some(adapter_scope()),
+        idempotency_key: "spawn-1-key".to_owned(),
+        ..Operation::default()
+    };
+    let accepted_operation = AcceptedOperation {
+        operation: Some(operation.clone()),
+        authorizing_grant_id: Some(parent_grant_id()),
+    };
+    let accepted_claim = SpawnClaimAccepted {
+        accepted_operation: Some(accepted_operation),
+        claim: Some(SpawnGenerationClaim {
+            authority_domain_id: Some(domain()),
+            claim_operation_id: Some(command_id()),
+            logical_target_id: Some(logical_target_id),
+            expected_prior: None,
+            claimed_generation: Some(Generation { value: 1 }),
+        }),
+        ..SpawnClaimAccepted::default()
+    };
+    let mut audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 1_700_000_000,
+            nanos: 0,
+        },
+        AuditEventKind::CommandSubmissionAccepted,
+    );
+    audit.actor_id = Some(actor());
+    audit.endpoint_id = Some(endpoint());
+    audit.device_id = Some(device());
+    audit.command_id = Some(command_id());
+    audit.grant_id = Some(parent_grant_id());
+    audit.target_scope = Some(adapter_scope());
+    audit.reason_code = "operation_spawn".to_owned();
     storage
-        .append(
+        .append_spawn_claim_accepted(
             &domain(),
-            patchbay_core::session::encode_spawn_claim_event(&SpawnClaimEvent {
-                authority_domain_id: Some(domain()),
-                mutation: Some(spawn_claim_event::Mutation::Accepted(SpawnClaimAccepted {
-                    accepted_operation: Some(accepted),
-                    claim: Some(SpawnGenerationClaim {
-                        authority_domain_id: Some(domain()),
-                        claim_operation_id: Some(command_id()),
-                        logical_target_id: Some(logical_target_id),
-                        expected_prior: None,
-                        claimed_generation: Some(Generation { value: 1 }),
-                    }),
-                    ..SpawnClaimAccepted::default()
-                })),
-            }),
+            &IdempotencyKey {
+                value: operation.idempotency_key.clone(),
+            },
+            &TargetKey::new("adapter:pi".to_owned()).unwrap(),
+            accepted_claim,
+            audit,
+            operation.encode_to_vec(),
         )
         .await
         .unwrap();
 }
 
 async fn seed_adapter_scoped_spawn<S: Storage>(storage: &S) {
-    storage
-        .append(
-            &domain(),
-            StoredEventPayload {
-                kind: StoredEventKind::Operation as i32,
-                payload: AcceptedOperation {
-                    operation: Some(Operation {
-                        command_id: Some(command_id()),
-                        authority_domain_id: Some(domain()),
-                        sender: Some(ActorEndpointRef {
-                            actor_id: Some(actor()),
-                            endpoint_id: Some(endpoint()),
-                            device_id: Some(device()),
-                            ..ActorEndpointRef::default()
-                        }),
-                        kind: OperationKind::Spawn as i32,
-                        target_scope: Some(adapter_scope()),
-                        idempotency_key: "spawn-1-key".to_owned(),
-                        ..Operation::default()
-                    }),
-                    authorizing_grant_id: Some(parent_grant_id()),
-                }
-                .encode_to_vec(),
-            },
-        )
-        .await
-        .unwrap();
     seed_spawn_claim(storage).await;
     storage
         .append(

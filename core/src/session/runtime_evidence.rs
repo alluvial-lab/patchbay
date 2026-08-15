@@ -741,14 +741,26 @@ fn claim_matches_report_candidate(
             SpawnClaimDisposition::Active | SpawnClaimDisposition::PoisonedPendingReconciliation
         )
     };
-    disposition_matches
-        && claim.authority_domain_id.as_ref() == Some(authority_domain_id)
-        && record.adapter_id == report.adapter_id.clone().unwrap_or_default()
-        && target.is_some_and(|target| {
+    let target_matches = target.map_or_else(
+        || {
+            // A fresh claim reserves the stable logical id before the adapter
+            // reports the deployment-scoped external runtime for generation 1.
+            // The staging event creates that target from the authenticated
+            // report; continuations must always match an existing exact prior.
+            claim.expected_prior.is_none()
+                && report.adapter_id.as_ref() == Some(&record.adapter_id)
+                && !report.deployment_scope.is_empty()
+        },
+        |target| {
             target.current.as_ref() == claim.expected_prior.as_ref()
                 && report.adapter_id.as_ref() == Some(&target.adapter_id)
                 && report.deployment_scope == target.deployment_scope
-        })
+        },
+    );
+    disposition_matches
+        && claim.authority_domain_id.as_ref() == Some(authority_domain_id)
+        && record.adapter_id == report.adapter_id.clone().unwrap_or_default()
+        && target_matches
         && claim.claimed_generation == report.session_generation
 }
 

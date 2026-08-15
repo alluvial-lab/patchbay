@@ -1,16 +1,14 @@
 use patchbay_contracts::patchbay::{
-    no_external_effect_proof, observation_request, spawn_claim_event, AcceptedOperation,
+    no_external_effect_proof, observation_request, AcceptedOperation, ActorEndpointRef, ActorId,
     AdapterCapability, AdapterId, AdapterRefusalBeforeDeliveryProof, AdapterRegistration,
-    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuthorityDomainId, CommandId,
-    ExternalEffectDisposition, FailureCode, Generation, GrantId, LogicalTargetId, Lsn,
-    NoExternalEffectProof, ObservationRequest, Operation, OperationKind, SpawnClaimAccepted,
-    SpawnClaimEvent, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
-    SpawnGenerationClaim, StoredEventKind, TargetScope, TargetScopeKind,
+    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind,
+    AuthorityDomainId, CommandId, DeviceId, EndpointId, ExternalEffectDisposition, FailureCode,
+    Generation, GrantId, IdempotencyKey, LogicalTargetId, Lsn, NoExternalEffectProof,
+    ObservationRequest, Operation, OperationKind, SpawnClaimAccepted, SpawnExecutionEvidence,
+    SpawnExecutionEvidenceProducer, SpawnExecutionPhase, SpawnGenerationClaim, StoredEventKind,
+    TargetScope, TargetScopeKind,
 };
-use patchbay_core::{
-    session,
-    storage::{RusqliteStorage, Storage},
-};
+use patchbay_core::storage::{AuditRecordDraft, RusqliteStorage, Storage, TargetKey};
 use patchbay_core_server::{
     adapter_service::{
         AdapterControlServiceImpl, AdapterEvidenceVerifier, ADAPTER_ATTACHMENT_TOKEN_HEADER,
@@ -19,6 +17,7 @@ use patchbay_core_server::{
     rpc::adapter_control_service_server::AdapterControlService,
 };
 use prost::Message;
+use prost_types::Timestamp;
 use tonic::Request;
 
 const EVIDENCE: &str = "spawn-evidence-secret";
@@ -94,32 +93,75 @@ async fn authenticated_evidence_is_canonicalized_and_wrong_claim_is_not_appended
         expected_prior: None,
         claimed_generation: Some(Generation { value: 1 }),
     };
-    storage
-        .append(
-            &domain(),
-            session::encode_spawn_claim_event(&SpawnClaimEvent {
-                authority_domain_id: Some(domain()),
-                mutation: Some(spawn_claim_event::Mutation::Accepted(SpawnClaimAccepted {
-                    accepted_operation: Some(AcceptedOperation {
-                        operation: Some(Operation {
-                            command_id: claim.claim_operation_id.clone(),
-                            authority_domain_id: Some(domain()),
-                            kind: OperationKind::Spawn as i32,
-                            target_scope: Some(TargetScope {
-                                kind: TargetScopeKind::Adapter as i32,
-                                adapter_id: Some(adapter_id()),
-                                ..TargetScope::default()
-                            }),
-                            ..Operation::default()
-                        }),
-                        authorizing_grant_id: Some(GrantId {
-                            value: "spawn-grant".into(),
-                        }),
-                    }),
-                    claim: Some(claim.clone()),
-                    ..SpawnClaimAccepted::default()
-                })),
+    let operation = Operation {
+        command_id: claim.claim_operation_id.clone(),
+        authority_domain_id: Some(domain()),
+        sender: Some(ActorEndpointRef {
+            actor_id: Some(ActorId {
+                value: "operator".into(),
             }),
+            endpoint_id: Some(EndpointId {
+                value: "web".into(),
+            }),
+            device_id: Some(DeviceId {
+                value: "device".into(),
+            }),
+            ..ActorEndpointRef::default()
+        }),
+        kind: OperationKind::Spawn as i32,
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::Adapter as i32,
+            adapter_id: Some(adapter_id()),
+            ..TargetScope::default()
+        }),
+        idempotency_key: "spawn-evidence-key".into(),
+        ..Operation::default()
+    };
+    let accepted = SpawnClaimAccepted {
+        accepted_operation: Some(AcceptedOperation {
+            operation: Some(operation.clone()),
+            authorizing_grant_id: Some(GrantId {
+                value: "spawn-grant".into(),
+            }),
+        }),
+        claim: Some(claim.clone()),
+        ..SpawnClaimAccepted::default()
+    };
+    let mut audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 1_700_000_000,
+            nanos: 0,
+        },
+        AuditEventKind::CommandSubmissionAccepted,
+    );
+    audit.actor_id = operation
+        .sender
+        .as_ref()
+        .and_then(|sender| sender.actor_id.clone());
+    audit.endpoint_id = operation
+        .sender
+        .as_ref()
+        .and_then(|sender| sender.endpoint_id.clone());
+    audit.device_id = operation
+        .sender
+        .as_ref()
+        .and_then(|sender| sender.device_id.clone());
+    audit.command_id = operation.command_id.clone();
+    audit.grant_id = Some(GrantId {
+        value: "spawn-grant".into(),
+    });
+    audit.target_scope = operation.target_scope.clone();
+    audit.reason_code = "operation_spawn".into();
+    storage
+        .append_spawn_claim_accepted(
+            &domain(),
+            &IdempotencyKey {
+                value: operation.idempotency_key.clone(),
+            },
+            &TargetKey::new("adapter:pi".into()).unwrap(),
+            accepted,
+            audit,
+            operation.encode_to_vec(),
         )
         .await
         .expect("claim append");
