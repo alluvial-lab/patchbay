@@ -9,18 +9,19 @@ use patchbay_contracts::patchbay::{
     ActorId, AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport,
     AdapterDiagnosticSeverity, AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory,
     AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition,
-    ContinuationAuthorityProvenance, EndpointId, ExternalRuntimeRef, FailureCode, FreshSpawn,
-    Generation, GrantId, IdempotencyKey, LogicalTargetCreated, LogicalTargetId,
-    LogicalTargetInitialCurrentAssigned, Lsn, Observation, ObservationKind, Operation,
-    OperationKind, PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability,
-    ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind, ResourceProjectionContract,
-    ResourceReport, ResourceReportMutation, ResourceSnapshotReport, ResourceStateUnknown,
-    ResourceStateUpsert, ResourceViewReport, RuntimeGenerationRef, RuntimeSessionId,
-    SchemaDescriptor, SecurityLockdownEntered, SessionActivityState, SessionConnectivityState,
-    SessionReportSourceCursor, SessionStateEvent, SpawnClaimAccepted, SpawnClaimDisposition,
-    SpawnClaimEvent, SpawnContinuation, SpawnGenerationClaim, SpawnPendingReplacementFence,
-    SpawnRequest, SpawnTargetSpec, StoredEventKind, StoredEventPayload, TargetScope,
-    TargetScopeKind, TypedCorrelation,
+    ContinuationAuthorityProvenance, EndpointId, ExternalEffectDisposition, ExternalRuntimeRef,
+    FailureCode, FreshSpawn, Generation, GrantId, IdempotencyKey, LogicalTargetCreated,
+    LogicalTargetId, LogicalTargetInitialCurrentAssigned, Lsn, Observation, ObservationKind,
+    Operation, OperationKind, PayloadContentType, PayloadEnvelope, ReceiveRequest,
+    ResourceCapability, ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind,
+    ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshotReport,
+    ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport, RuntimeGenerationRef,
+    RuntimeSessionId, SchemaDescriptor, SecurityLockdownEntered, SessionActivityState,
+    SessionConnectivityState, SessionReportSourceCursor, SessionStateEvent, SpawnClaimAccepted,
+    SpawnClaimDisposition, SpawnClaimEvent, SpawnContinuation, SpawnExecutionEvidence,
+    SpawnExecutionEvidenceProducer, SpawnExecutionPhase, SpawnGenerationClaim,
+    SpawnPendingReplacementFence, SpawnRequest, SpawnTargetSpec, StoredEventKind,
+    StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
@@ -3257,6 +3258,7 @@ async fn delivery_claim_barrier_case(delivery_first: bool) {
     }
     drop(held);
 
+    let mut replacement_was_offered = false;
     if delivery_first {
         let offered = tokio::time::timeout(Duration::from_secs(1), subscription.next())
             .await
@@ -3279,6 +3281,7 @@ async fn delivery_claim_barrier_case(delivery_first: bool) {
                 Some("replacement"),
                 "only the persisted replacement claim may be delivered after activation"
             );
+            replacement_was_offered = true;
         }
         assert!(
             tokio::time::timeout(Duration::from_millis(250), subscription.next())
@@ -3313,20 +3316,31 @@ async fn delivery_claim_barrier_case(delivery_first: bool) {
                 .as_ref()
                 .and_then(|operation| operation.command_id.as_ref())
                 .is_some_and(|command_id| command_id.value == "replacement")
-        })
-        .expect("restart delivery is reconstructed from the persisted claim envelope");
-    assert_eq!(
-        replacement_delivery
-            .delivery_event_id
-            .as_ref()
-            .and_then(|event_id| event_id.lsn)
-            .map(|lsn| lsn.value),
-        events
-            .iter()
-            .find(|event| event.payload.kind == StoredEventKind::SpawnClaim as i32)
-            .and_then(|event| event.event_id.lsn)
-            .map(|lsn| lsn.value)
-    );
+        });
+    if replacement_was_offered {
+        assert!(
+            replacement_delivery.is_none(),
+            "a durably offered replacement claim must not be reconstructed for redelivery"
+        );
+        assert!(restarted.index.managed_spawn_was_offered(&CommandId {
+            value: "replacement".to_owned(),
+        }));
+    } else {
+        let replacement_delivery = replacement_delivery
+            .expect("never-offered restart delivery is reconstructed from the claim envelope");
+        assert_eq!(
+            replacement_delivery
+                .delivery_event_id
+                .as_ref()
+                .and_then(|event_id| event_id.lsn)
+                .map(|lsn| lsn.value),
+            events
+                .iter()
+                .find(|event| event.payload.kind == StoredEventKind::SpawnClaim as i32)
+                .and_then(|event| event.event_id.lsn)
+                .map(|lsn| lsn.value)
+        );
+    }
 }
 
 #[tokio::test]
@@ -3813,6 +3827,116 @@ async fn abnormal_stream_loss_poisons_managed_spawn_and_prevents_redelivery() {
         .await
         .is_err(),
         "poisoned exact command must not be automatically re-delivered"
+    );
+}
+
+#[tokio::test]
+async fn offered_without_ack_survives_core_restart_as_ambiguous_without_redelivery() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    let accepted = append_replacement_claim(&storage, &domain, "offered-before-restart").await;
+    let command_id = accepted
+        .claim
+        .as_ref()
+        .and_then(|claim| claim.claim_operation_id.as_ref())
+        .expect("accepted claim has a command id")
+        .clone();
+
+    let mut first_tail = receive_from_start(&service, &attachment_token).await;
+    let offered = first_tail
+        .next()
+        .await
+        .expect("managed spawn delivery exists")
+        .expect("managed spawn delivery is valid");
+    assert_eq!(
+        offered
+            .operation
+            .as_ref()
+            .and_then(|operation| operation.command_id.as_ref()),
+        Some(&command_id)
+    );
+    let hot = acceptance::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("durable offer marker rebuilds before restart");
+    assert!(hot.managed_spawn_was_offered(&command_id));
+
+    // Leak only the stream tail to suppress its in-process Drop callback. This
+    // models abrupt process death after bytes were yielded but before an ack;
+    // restart may rely only on the unchanged durable prefix.
+    std::mem::forget(first_tail);
+    drop(service);
+
+    let restarted =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service reconstructs and reconciles the durable offer");
+    let replayed = acceptance::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("command projection replays after offer reconciliation");
+    assert!(replayed.managed_spawn_was_offered(&command_id));
+    assert!(replayed.delivery_is_suppressed(&command_id));
+
+    let claims = session::rebuild_spawn_claims_from_log(&storage, &domain)
+        .await
+        .expect("claim projection replays after offer reconciliation");
+    let claim = claims
+        .claim_for_operation(&command_id)
+        .expect("offered claim remains projected");
+    assert_eq!(
+        claim.disposition,
+        SpawnClaimDisposition::PoisonedPendingReconciliation
+    );
+    assert!(matches!(
+        claims.delivery_fence(
+            accepted
+                .claim
+                .as_ref()
+                .and_then(|claim| claim.expected_prior.as_ref())
+                .expect("replacement claim has an exact prior")
+        ),
+        patchbay_core::session::SpawnDeliveryFence::ReplacementPending { .. }
+    ));
+
+    let events = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("restart reconciliation events");
+    let evidence: Vec<_> = events
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::SpawnExecutionEvidence as i32)
+        .map(|event| {
+            SpawnExecutionEvidence::decode(event.payload.payload.as_slice())
+                .expect("spawn execution evidence decodes")
+        })
+        .collect();
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(
+        SpawnExecutionPhase::try_from(evidence[0].phase).ok(),
+        Some(SpawnExecutionPhase::Offered)
+    );
+    assert_eq!(
+        ExternalEffectDisposition::try_from(evidence[0].external_effect_disposition).ok(),
+        Some(ExternalEffectDisposition::MayExist)
+    );
+    assert_eq!(
+        SpawnExecutionEvidenceProducer::try_from(evidence[0].producer).ok(),
+        Some(SpawnExecutionEvidenceProducer::Core)
+    );
+    assert_eq!(
+        FailureCode::try_from(evidence[0].failure_code).ok(),
+        Some(FailureCode::ExecutionOutcomeUnknown)
+    );
+
+    let restarted_token = attach_generation(&restarted, domain, 2).await;
+    let mut replacement = receive_from_start(&restarted, &restarted_token).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), replacement.next())
+            .await
+            .is_err(),
+        "an offered-before-crash managed spawn must never be re-delivered"
     );
 }
 

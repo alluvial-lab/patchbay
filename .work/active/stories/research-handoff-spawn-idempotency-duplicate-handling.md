@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-idempotency-duplicate-handling
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-registration, research-handoff-spawn-crash-external-effect-evidence-contract]
@@ -173,3 +173,27 @@ The 12 prior kills were also reconfirmed: old failure-only identified-launch poi
 - Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 23/23 tests.
 - Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 38/38 tests including the real core/adapter restart e2e.
 - `cargo fmt --all -- --check`, `git diff --check`, generated-contract diff, and final focused abnormal-stream-loss regressions: **PASS**.
+
+### Fix round 4 — 2026-08-15 durable offered-claim reconstruction
+
+- Execution capability: `openai-codex/gpt-5.6-sol`; direct-read implementation for the single pass-4 MATERIAL. Review weight remains `thorough` from the autopilot caller; a fresh independent pass-5 review follows.
+- Chosen architecture: durable reconstruction from the existing audited authority-domain prefix, not a protobuf change. Immediately before a managed spawn crosses the delivery stream boundary, `DeliveryTail` commits one canonical `CommandDelivered` audit marker (`managed_spawn_delivery_offered`) linked to the exact accepted claim event. The marker shares the decision gate and stream epoch, so an obsolete stream cannot commit an offer and a delivery cannot be yielded until its marker is durable.
+- `CommandIndex` now folds those exact markers into a replay-reconstructed managed-spawn offer set. The set suppresses a second delivery while the command remains `Accepted`, and startup/replacement-stream reconciliation maps an offered active claim to the existing `Offered / MayExist / ExecutionOutcomeUnknown` evidence path. An accepted claim with no marker remains active and deliverable. This preserves ordinary delivered-command retry semantics outside the managed-spawn lane.
+- Added `offered_without_ack_survives_core_restart_as_ambiguous_without_redelivery`: yield one managed claim, suppress the in-process Drop callback to model abrupt core death, rebuild from the unchanged prefix, prove the offer set is identical, prove the claim is poisoned with its fence retained and the exact ambiguous evidence row, reattach generation 2, and prove no redelivery. The prior accepted-after-drop and same-process offered-before-drop regressions remain green.
+- Updated the delivery/continuation barrier oracle to distinguish an actually offered replacement from a never-offered replacement: only the latter remains reconstructible for delivery after replay.
+- Files changed: `core/src/acceptance/{index,mod}.rs`, `server/src/adapter_service{,/tests}.rs`, and this story file. No protobuf, generated binding, foundation document, or other `.work/` item changed. Design discrepancy: none. Rationale: the audited marker is the smallest durable-log projection consistent with existing replay architecture and avoids a second protocol state family.
+
+#### Fix-round-4 mutation evidence
+
+Every mutant was applied alone on the main tree, exercised by one focused oracle, and restored with `git restore`; the tree was clean after each.
+
+- New replay-reconstruction mutant: skipping `AuditRecord -> managed offer` folding was killed by `offered_without_ack_survives_core_restart_as_ambiguous_without_redelivery` (exit 101 before delivery because the committed marker did not enter the projection).
+- All 13 prior mutants were re-confirmed killed (exit 101): unconditional `Accepted` disconnect poisoning; old failure-only identified-launch poisoning; removal of `Running` and removal of `Accepted` from ambiguous-Result eligibility; false poison of handshake progress and successful identified progress; omission of identified-runtime replay reservation; bypass of logical-target and claim-level external-runtime ownership; release on terminal state and admission of terminal-state silence as no-effect proof; omission of execution-evidence delivery suppression; and clearing the continuation fence on poison.
+
+#### Fix-round-4 verification
+
+- Verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS**, including 39 spawn-claim tests, 31 runtime-evidence/promotion tests, 79 server unit tests, all workspace integration/property tests and doctests, and warnings-denied clippy.
+- Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; generated paths clean, 55 vectors, 17 promoted vectors, 22 implementation checks, and 38 mutation witnesses.
+- Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 23/23 tests.
+- Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 38/38 tests including the real core/adapter restart e2e.
+- `cargo fmt --all -- --check`, `git diff --check`, generated-contract diff, and final clean-tree status: **PASS**.

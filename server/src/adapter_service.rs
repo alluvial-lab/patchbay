@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    future::Future,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -10,8 +11,8 @@ use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, runtime_generation_disposition,
     spawn_claim_event, AcceptedOperation, ActorEndpointRef, ActorId, AdapterDiagnosticReport,
     AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport, AttachRequest, AttachResult,
-    AuthorityDomainId, CommandId, Delivery, EventId, ExternalEffectDisposition, FailureCode,
-    Generation, Observation, ObservationKind, ObservationRequest, ObservationResult, OperationKind,
+    AuthorityDomainId, Delivery, EventId, ExternalEffectDisposition, FailureCode, Generation,
+    Observation, ObservationKind, ObservationRequest, ObservationResult, OperationKind,
     OperationState, ReceiveRequest, RuntimeEvidenceQuarantineReason,
     RuntimeEvidenceSourceAttachment, RuntimeGenerationDisposition, RuntimeGenerationRef,
     SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent, SpawnEvidenceAttachment,
@@ -272,7 +273,18 @@ where
         let adapters = adapter::rebuild_from_log(&storage, &authority_domain_id)
             .await
             .map_err(|error| error.to_string())?;
-        let commands = rebuild_command_projection(&storage, &authority_domain_id)
+        let mut commands = rebuild_command_projection(&storage, &authority_domain_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        reconcile_durable_spawn_offers_after_restart(
+            &storage,
+            &commands.index,
+            &adapters,
+            &authority_domain_id,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        commands = rebuild_command_projection(&storage, &authority_domain_id)
             .await
             .map_err(|error| error.to_string())?;
         let sessions = recover_session_registry(&storage, &authority_domain_id, &core_generation)
@@ -373,7 +385,8 @@ where
 const DELIVERY_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 
 type DeliveryStream = Pin<Box<dyn Stream<Item = Result<Delivery, Status>> + Send + 'static>>;
-type DisconnectCallback = Box<dyn FnOnce(HashSet<CommandId>) + Send + 'static>;
+type DisconnectCallback = Box<dyn FnOnce() + Send + 'static>;
+type ManagedOfferFuture = Pin<Box<dyn Future<Output = Result<bool, Status>> + Send + 'static>>;
 
 /// Deferred single-adapter materialization handle.
 ///
@@ -629,7 +642,6 @@ async fn poison_ambiguous_spawn_claims_for_adapter<S: Storage>(
     authority_domain_id: &AuthorityDomainId,
     adapter_id: &AdapterId,
     source_attachment: SpawnEvidenceAttachment,
-    offered_spawn_claims: &HashSet<CommandId>,
 ) -> Result<(), adapter::AdapterError> {
     let claims = session::rebuild_spawn_claims_from_log(storage, authority_domain_id)
         .await
@@ -642,13 +654,14 @@ async fn poison_ambiguous_spawn_claims_for_adapter<S: Storage>(
         .filter_map(|record| {
             let command_id = record.claim.claim_operation_id.as_ref()?;
             let command = commands.get_command(command_id)?;
-            // Delivered/running is durable offer evidence. Accepted alone is
-            // ambiguous only when this exact lost stream actually emitted it.
+            // Delivered/running is durable responsibility evidence. Accepted
+            // is ambiguous only after the canonical offer marker has committed;
+            // replay reconstructs that same set after an ungraceful restart.
             (matches!(
                 command.state,
                 OperationState::Delivered | OperationState::Running
             ) || (command.state == OperationState::Accepted
-                && offered_spawn_claims.contains(command_id)))
+                && commands.managed_spawn_was_offered(command_id)))
             .then(|| (record.claim.clone(), command.state))
         })
         .collect();
@@ -674,6 +687,54 @@ async fn poison_ambiguous_spawn_claims_for_adapter<S: Storage>(
                 },
             )
             .await?;
+    }
+    Ok(())
+}
+
+async fn reconcile_durable_spawn_offers_after_restart<S: Storage>(
+    storage: &S,
+    commands: &CommandIndex,
+    adapters: &AdapterRegistry,
+    authority_domain_id: &AuthorityDomainId,
+) -> Result<(), adapter::AdapterError> {
+    let adapter_ids: HashSet<_> = commands
+        .records()
+        .filter(|record| {
+            record.operation.kind == OperationKind::Spawn as i32
+                && (commands.managed_spawn_was_offered(&record.command_id)
+                    || matches!(
+                        record.state,
+                        OperationState::Delivered | OperationState::Running
+                    ))
+        })
+        .filter_map(|record| {
+            record
+                .operation
+                .target_scope
+                .as_ref()
+                .and_then(target_adapter_id)
+                .cloned()
+        })
+        .collect();
+
+    for adapter_id in adapter_ids {
+        let record = adapters.get(&adapter_id).ok_or_else(|| {
+            adapter::AdapterError::CorruptRecord(format!(
+                "offered managed spawn references unattached adapter {adapter_id:?}"
+            ))
+        })?;
+        poison_ambiguous_spawn_claims_for_adapter(
+            storage,
+            commands,
+            authority_domain_id,
+            &adapter_id,
+            SpawnEvidenceAttachment {
+                adapter_id: Some(adapter_id.clone()),
+                adapter_generation: record.registration.adapter_generation,
+                attachment_event_id: Some(record.attach_event_id.clone()),
+            },
+        )
+        .await?;
     }
     Ok(())
 }
@@ -980,64 +1041,204 @@ where
     Box::pin(ReceiverStream::new(receiver))
 }
 
-/// A long-lived delivery subscription treats every end or error as a lost
-/// connection. Obsolete streams are made inert by the callback's epoch fence.
-struct DeliveryTail {
-    inner: DeliveryStream,
-    on_abnormal_disconnect: Option<DisconnectCallback>,
-    /// Exact managed claims emitted by this stream, including offers whose
-    /// delivery acknowledgement never became durable.
-    offered_spawn_claims: HashSet<CommandId>,
+#[derive(Clone)]
+struct ManagedOfferContext<S> {
+    storage: S,
+    authority_domain_id: AuthorityDomainId,
+    adapter_id: AdapterId,
+    commands: Arc<Mutex<CommandProjection>>,
+    delivery_stream_epochs: Arc<Mutex<HashMap<AdapterId, u64>>>,
+    stream_epoch: u64,
+    decision_gate: CoreDecisionGate,
 }
 
-impl DeliveryTail {
-    fn new(inner: DeliveryStream, on_abnormal_disconnect: DisconnectCallback) -> Self {
+async fn persist_managed_spawn_offer<S>(
+    context: ManagedOfferContext<S>,
+    delivery: &Delivery,
+) -> Result<bool, Status>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    let accepted = delivery
+        .accepted_spawn
+        .as_ref()
+        .ok_or_else(|| Status::internal("managed offer has no accepted spawn envelope"))?;
+    let operation = accepted
+        .accepted_operation
+        .as_ref()
+        .and_then(|accepted| accepted.operation.as_ref())
+        .ok_or_else(|| Status::internal("managed offer has no accepted operation"))?;
+    let command_id = accepted
+        .claim
+        .as_ref()
+        .and_then(|claim| claim.claim_operation_id.as_ref())
+        .filter(|command_id| operation.command_id.as_ref() == Some(*command_id))
+        .ok_or_else(|| Status::internal("managed offer has inconsistent command identity"))?
+        .clone();
+
+    // The marker and stream epoch share the same linearization gate used by
+    // claim acceptance and replacement-stream establishment. A newer stream
+    // makes this pending offer inert before it can cross the durable boundary.
+    let _decision_guard = context.decision_gate.acquire().await;
+    let epochs = context.delivery_stream_epochs.lock().await;
+    if epochs.get(&context.adapter_id) != Some(&context.stream_epoch) {
+        return Ok(false);
+    }
+    let mut commands = context.commands.lock().await;
+    catch_up_command_projection(
+        &context.storage,
+        &context.authority_domain_id,
+        &mut commands,
+    )
+    .await
+    .map_err(map_acceptance_error_to_status)?;
+    if commands.index.managed_spawn_was_offered(&command_id) {
+        return Ok(false);
+    }
+    let record = commands.index.get_command(&command_id).ok_or_else(|| {
+        Status::internal("managed offer command disappeared from the durable projection")
+    })?;
+    if record.state != OperationState::Accepted || record.operation != *operation {
+        return Ok(false);
+    }
+
+    let mut audit = AuditRecordDraft::new(
+        crate::identity::now_timestamp().map_err(|error| Status::internal(error.to_string()))?,
+        patchbay_contracts::patchbay::AuditEventKind::CommandDelivered,
+    );
+    audit.actor_id = Some(ActorId {
+        value: context.adapter_id.value.clone(),
+    });
+    audit.command_id = Some(command_id.clone());
+    audit.target_scope = operation.target_scope.clone();
+    audit.reason_code = acceptance::MANAGED_SPAWN_OFFERED_REASON.to_owned();
+    audit.source_event_id = delivery.delivery_event_id.clone();
+    context
+        .storage
+        .append_audit(&context.authority_domain_id, audit)
+        .await
+        .map_err(map_storage_error_to_status)?;
+    catch_up_command_projection(
+        &context.storage,
+        &context.authority_domain_id,
+        &mut commands,
+    )
+    .await
+    .map_err(map_acceptance_error_to_status)?;
+    if !commands.index.managed_spawn_was_offered(&command_id) {
+        return Err(Status::internal(
+            "durable managed offer marker did not enter the command projection",
+        ));
+    }
+    drop(commands);
+    drop(epochs);
+    Ok(true)
+}
+
+struct PendingManagedOffer {
+    delivery: Delivery,
+    future: ManagedOfferFuture,
+}
+
+/// A long-lived delivery subscription treats every end or error as a lost
+/// connection. Obsolete streams are made inert by the callback's epoch fence.
+/// Managed spawn deliveries first await a durable offer marker, so a process
+/// restart can reconstruct exactly the same no-redelivery set.
+struct DeliveryTail<S> {
+    inner: DeliveryStream,
+    on_abnormal_disconnect: Option<DisconnectCallback>,
+    managed_offer_context: ManagedOfferContext<S>,
+    pending_managed_offer: Option<PendingManagedOffer>,
+}
+
+impl<S> Unpin for DeliveryTail<S> {}
+
+impl<S> DeliveryTail<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    fn new(
+        inner: DeliveryStream,
+        on_abnormal_disconnect: DisconnectCallback,
+        managed_offer_context: ManagedOfferContext<S>,
+    ) -> Self {
         Self {
             inner,
             on_abnormal_disconnect: Some(on_abnormal_disconnect),
-            offered_spawn_claims: HashSet::new(),
+            managed_offer_context,
+            pending_managed_offer: None,
         }
     }
 
     fn mark_abnormal_disconnect(&mut self) {
         if let Some(callback) = self.on_abnormal_disconnect.take() {
-            callback(std::mem::take(&mut self.offered_spawn_claims));
+            callback();
         }
     }
 }
 
-impl Stream for DeliveryTail {
+impl<S> Stream for DeliveryTail<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
     type Item = Result<Delivery, Status>;
 
     fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match self.inner.as_mut().poll_next(context) {
-            Poll::Ready(Some(Ok(delivery))) => {
-                if let Some(command_id) = delivery
-                    .accepted_spawn
-                    .as_ref()
-                    .and_then(|accepted| accepted.claim.as_ref())
-                    .and_then(|claim| claim.claim_operation_id.as_ref())
-                {
-                    self.offered_spawn_claims.insert(command_id.clone());
+        loop {
+            if let Some(pending) = self.pending_managed_offer.as_mut() {
+                match pending.future.as_mut().poll(context) {
+                    Poll::Ready(Ok(true)) => {
+                        let pending = self
+                            .pending_managed_offer
+                            .take()
+                            .expect("polled pending managed offer");
+                        return Poll::Ready(Some(Ok(pending.delivery)));
+                    }
+                    Poll::Ready(Ok(false)) => {
+                        self.pending_managed_offer = None;
+                        self.mark_abnormal_disconnect();
+                        return Poll::Ready(None);
+                    }
+                    Poll::Ready(Err(error)) => {
+                        self.pending_managed_offer = None;
+                        self.mark_abnormal_disconnect();
+                        return Poll::Ready(Some(Err(error)));
+                    }
+                    Poll::Pending => return Poll::Pending,
                 }
-                Poll::Ready(Some(Ok(delivery)))
             }
-            Poll::Ready(None) => {
-                self.mark_abnormal_disconnect();
-                Poll::Ready(None)
+
+            match self.inner.as_mut().poll_next(context) {
+                Poll::Ready(Some(Ok(delivery))) if delivery.accepted_spawn.is_some() => {
+                    let context = self.managed_offer_context.clone();
+                    let durable_delivery = delivery.clone();
+                    self.pending_managed_offer = Some(PendingManagedOffer {
+                        delivery,
+                        future: Box::pin(async move {
+                            persist_managed_spawn_offer(context, &durable_delivery).await
+                        }),
+                    });
+                }
+                Poll::Ready(Some(Ok(delivery))) => return Poll::Ready(Some(Ok(delivery))),
+                Poll::Ready(None) => {
+                    self.mark_abnormal_disconnect();
+                    return Poll::Ready(None);
+                }
+                Poll::Ready(Some(Err(error))) => {
+                    self.mark_abnormal_disconnect();
+                    return Poll::Ready(Some(Err(error)));
+                }
+                Poll::Pending => return Poll::Pending,
             }
-            result @ Poll::Ready(Some(Err(_))) => {
-                self.mark_abnormal_disconnect();
-                result
-            }
-            Poll::Pending => Poll::Pending,
         }
     }
 }
 
-impl Drop for DeliveryTail {
+impl<S> Drop for DeliveryTail<S> {
     fn drop(&mut self) {
-        self.mark_abnormal_disconnect();
+        if let Some(callback) = self.on_abnormal_disconnect.take() {
+            callback();
+        }
     }
 }
 
@@ -1882,6 +2083,35 @@ where
         let request = request.into_inner();
         require_same_adapter(request.adapter_id.as_ref(), &authenticated_adapter)?;
         let domain = self.require_attached(&authenticated_adapter).await?;
+        let stale_spawn_source = {
+            let adapters = self.adapters.lock().await;
+            let record = adapters.get(&authenticated_adapter).ok_or_else(|| {
+                Status::failed_precondition("adapter is no longer durably attached")
+            })?;
+            SpawnEvidenceAttachment {
+                adapter_id: Some(authenticated_adapter.clone()),
+                adapter_generation: record.registration.adapter_generation,
+                attachment_event_id: Some(record.attach_event_id.clone()),
+            }
+        };
+        {
+            let mut live_commands = self.commands.lock().await;
+            catch_up_command_projection(&self.storage, &domain, &mut live_commands)
+                .await
+                .map_err(map_acceptance_error_to_status)?;
+            poison_ambiguous_spawn_claims_for_adapter(
+                &self.storage,
+                &live_commands.index,
+                &domain,
+                &authenticated_adapter,
+                stale_spawn_source.clone(),
+            )
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+            catch_up_command_projection(&self.storage, &domain, &mut live_commands)
+                .await
+                .map_err(map_acceptance_error_to_status)?;
+        }
         let stream_epoch = {
             let mut epochs = self.delivery_stream_epochs.lock().await;
             let epoch = epochs.entry(authenticated_adapter.clone()).or_default();
@@ -1905,16 +2135,14 @@ where
             (events, live_commands.clone())
         };
 
-        let stale_spawn_source = {
-            let adapters = self.adapters.lock().await;
-            let record = adapters.get(&authenticated_adapter).ok_or_else(|| {
-                Status::failed_precondition("adapter is no longer durably attached")
-            })?;
-            SpawnEvidenceAttachment {
-                adapter_id: Some(authenticated_adapter.clone()),
-                adapter_generation: record.registration.adapter_generation,
-                attachment_event_id: Some(record.attach_event_id.clone()),
-            }
+        let managed_offer_context = ManagedOfferContext {
+            storage: self.storage.clone(),
+            authority_domain_id: domain.clone(),
+            adapter_id: authenticated_adapter.clone(),
+            commands: Arc::clone(&self.commands),
+            delivery_stream_epochs: Arc::clone(&self.delivery_stream_epochs),
+            stream_epoch,
+            decision_gate: self.decision_gate.clone(),
         };
         let storage = self.storage.clone();
         let commands = Arc::clone(&self.commands);
@@ -1929,7 +2157,7 @@ where
         let core_generation = self.core_generation;
         #[cfg(feature = "conformance-fault-injection")]
         let conformance_fault = self.conformance_fault;
-        let on_abnormal_disconnect: DisconnectCallback = Box::new(move |offered_spawn_claims| {
+        let on_abnormal_disconnect: DisconnectCallback = Box::new(move || {
             let task = async move {
                 // The shared decision gate prevents revocation from planning
                 // against a projection that disconnect reconciliation can
@@ -1956,7 +2184,6 @@ where
                                 &stale_domain,
                                 &stale_adapter,
                                 stale_spawn_source,
-                                &offered_spawn_claims,
                             )
                             .await;
                             let failed = adapter::fail_running_commands_for_adapter(
@@ -2107,7 +2334,7 @@ where
             initial_events,
             initial_projection,
         );
-        let tail = DeliveryTail::new(subscription, on_abnormal_disconnect);
+        let tail = DeliveryTail::new(subscription, on_abnormal_disconnect, managed_offer_context);
         Ok(Response::new(Box::pin(tail)))
     }
 }

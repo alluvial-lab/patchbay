@@ -7,11 +7,11 @@
 use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
-    spawn_claim_event, AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition,
-    ExternalEffectDisposition, FailureCode, Observation, ObservationKind, Operation, OperationKind,
-    OperationState, Revocation, RuntimeGenerationRef, SpawnClaimAccepted, SpawnClaimDisposition,
-    SpawnClaimEvent, SpawnExecutionEvidence, SpawnPriorWorkDisposition, SpawnPriorWorkEffect,
-    SpawnPromotionCommitted, StoredEventKind,
+    spawn_claim_event, AcceptedOperation, AuditEventKind, AuditRecord, AuthorityDomainId,
+    CommandId, CommandTransition, ExternalEffectDisposition, FailureCode, Observation,
+    ObservationKind, Operation, OperationKind, OperationState, Revocation, RuntimeGenerationRef,
+    SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent, SpawnExecutionEvidence,
+    SpawnPriorWorkDisposition, SpawnPriorWorkEffect, SpawnPromotionCommitted, StoredEventKind,
 };
 use prost::Message;
 
@@ -23,6 +23,11 @@ use super::{
 };
 
 type DedupKey = (String, String, String);
+
+/// Canonical durable audit marker written before a managed spawn delivery is
+/// yielded to an adapter. The marker is replay authority for the fact that an
+/// accepted non-idempotent claim has crossed the offer boundary.
+pub const MANAGED_SPAWN_OFFERED_REASON: &str = "managed_spawn_delivery_offered";
 
 /// The in-memory command index rebuilt from the durable event log.
 ///
@@ -42,6 +47,14 @@ pub struct CommandIndex {
     /// continuation. Its lifecycle remains reconcilable, but delivery must
     /// never offer it again.
     replacement_quiesce: HashSet<CommandId>,
+    /// Commands accepted through the compound managed-spawn claim envelope.
+    /// This distinguishes the non-idempotent claim lane from legacy/plain spawn
+    /// Operations while validating durable delivery-offer audit markers.
+    managed_spawn_claims: HashMap<CommandId, u64>,
+    /// Exact managed claims whose delivery offer decision is durable. This is
+    /// reconstructed from the authority-domain audit prefix and suppresses a
+    /// second offer before any adapter acknowledgement can arrive.
+    managed_spawn_offers: HashSet<CommandId>,
     /// A managed spawn has durable evidence reconciling its original external
     /// attempt. It must never be re-offered, whether the evidence proves no
     /// effect or reports ambiguity, even after restart replay.
@@ -79,6 +92,7 @@ impl CommandIndex {
             StoredEventKind::SpawnClaim => self.apply_spawn_claim(event),
             StoredEventKind::SpawnExecutionEvidence => self.apply_spawn_execution_evidence(event),
             StoredEventKind::SpawnPromotionCommitted => self.apply_spawn_promotion(event),
+            StoredEventKind::AuditRecord => self.apply_audit_record(event),
             StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
@@ -90,8 +104,7 @@ impl CommandIndex {
             | StoredEventKind::ControlSurfacePrincipal
             | StoredEventKind::OperatorSessionRevocation
             | StoredEventKind::ControlSurfaceRevocation
-            | StoredEventKind::SecurityLockdown
-            | StoredEventKind::AuditRecord => Ok(()),
+            | StoredEventKind::SecurityLockdown => Ok(()),
             StoredEventKind::Unspecified => Err(AcceptanceError::CorruptLog(
                 "command replay event kind is unspecified".to_owned(),
             )),
@@ -134,7 +147,15 @@ impl CommandIndex {
     pub fn delivery_is_suppressed(&self, command_id: &CommandId) -> bool {
         self.deferred_spawn_successes.contains(command_id)
             || self.replacement_quiesce.contains(command_id)
+            || self.managed_spawn_offers.contains(command_id)
             || self.spawn_execution_evidence.contains(command_id)
+    }
+
+    /// Whether replay has observed the canonical durable managed-spawn offer
+    /// marker for this exact command.
+    #[must_use]
+    pub fn managed_spawn_was_offered(&self, command_id: &CommandId) -> bool {
+        self.managed_spawn_offers.contains(command_id)
     }
 
     /// Derive the complete, stable-order effect list for non-terminal work
@@ -459,8 +480,82 @@ impl CommandIndex {
                     "accepted spawn claim at LSN {event_lsn} has no spawning Grant"
                 ))
             })?;
+        let command_id = operation
+            .command_id
+            .clone()
+            .expect("managed spawn acceptance validated command id");
         let record = CommandRecord::new_accepted(operation.clone(), grant_id, event_lsn)?;
-        self.insert_recovered_record(record)
+        self.insert_recovered_record(record)?;
+        self.managed_spawn_claims.insert(command_id, event_lsn);
+        Ok(())
+    }
+
+    fn apply_audit_record(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
+        let (event_domain, event_lsn) = event_identity(event)?;
+        let audit = AuditRecord::decode(event.payload.payload.as_slice()).map_err(|error| {
+            AcceptanceError::CorruptRecord(format!(
+                "cannot decode audit record at LSN {event_lsn}: {error}"
+            ))
+        })?;
+        if audit.reason_code != MANAGED_SPAWN_OFFERED_REASON {
+            return Ok(());
+        }
+        if audit.audit_event_id.as_ref() != Some(&event.event_id)
+            || AuditEventKind::try_from(audit.kind).ok() != Some(AuditEventKind::CommandDelivered)
+            || FailureCode::try_from(audit.failure_code).ok() != Some(FailureCode::Unspecified)
+        {
+            return Err(AcceptanceError::CorruptLog(format!(
+                "managed spawn offer marker at LSN {event_lsn} has invalid audit framing"
+            )));
+        }
+        let command_id = audit
+            .command_id
+            .as_ref()
+            .filter(|command_id| !command_id.value.is_empty())
+            .ok_or_else(|| {
+                AcceptanceError::CorruptRecord(format!(
+                    "managed spawn offer marker at LSN {event_lsn} has no command id"
+                ))
+            })?;
+        let record = self.commands.get(command_id).ok_or_else(|| {
+            AcceptanceError::CorruptLog(format!(
+                "managed spawn offer marker at LSN {event_lsn} references unknown command {command_id:?}"
+            ))
+        })?;
+        let accepted_lsn = self.managed_spawn_claims.get(command_id).copied();
+        let source_lsn = audit
+            .source_event_id
+            .as_ref()
+            .filter(|source| source.authority_domain_id.as_ref() == Some(event_domain))
+            .and_then(|source| source.lsn)
+            .filter(|source| Some(source.value) == accepted_lsn && source.value < event_lsn)
+            .ok_or_else(|| {
+                AcceptanceError::CorruptLog(format!(
+                    "managed spawn offer marker at LSN {event_lsn} does not reference its exact accepted claim"
+                ))
+            })?;
+        let target_adapter = record
+            .operation
+            .target_scope
+            .as_ref()
+            .and_then(crate::target::target_adapter_id);
+        if record.operation.kind != OperationKind::Spawn as i32
+            || !self.managed_spawn_claims.contains_key(command_id)
+            || audit.target_scope != record.operation.target_scope
+            || audit.actor_id.as_ref().map(|actor| actor.value.as_str())
+                != target_adapter.map(|adapter| adapter.value.as_str())
+            || Some(source_lsn.value) != accepted_lsn
+        {
+            return Err(AcceptanceError::CorruptLog(format!(
+                "managed spawn offer marker at LSN {event_lsn} disagrees with its accepted claim"
+            )));
+        }
+        if !self.managed_spawn_offers.insert(command_id.clone()) {
+            return Err(AcceptanceError::CorruptLog(format!(
+                "managed spawn command {command_id:?} has more than one durable offer marker"
+            )));
+        }
+        Ok(())
     }
 
     fn apply_observation(&mut self, event: &RecordedEvent) -> Result<(), AcceptanceError> {
