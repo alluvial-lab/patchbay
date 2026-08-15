@@ -2550,7 +2550,7 @@ fn subscription_scope() -> patchbay_contracts::patchbay::TargetScope {
     }
 }
 
-fn operator_facing_subscribe_event(mut event: RecordedEvent) -> Option<SubscribeEvent> {
+pub(crate) fn operator_facing_subscribe_event(mut event: RecordedEvent) -> Option<SubscribeEvent> {
     let kind = StoredEventKind::try_from(event.payload.kind).ok()?;
     if kind == StoredEventKind::Operation {
         redact_spawn_operation_event_for_operator(&mut event)?;

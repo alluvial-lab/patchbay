@@ -51,6 +51,8 @@ use serde_json::Value;
 use tonic::{Code, Request, Response};
 
 #[cfg(feature = "conformance-fault-injection")]
+use patchbay_contracts::patchbay::ContinuationContextStatus;
+#[cfg(feature = "conformance-fault-injection")]
 use patchbay_core_server::adapter_service::AdapterServiceConformanceFault;
 
 const RUNNER: &str = "rust-server";
@@ -3216,6 +3218,70 @@ async fn kill_source_ingress_mutation(
     Err("Rust mutation witnesses require conformance-fault-injection".into())
 }
 
+#[cfg(feature = "conformance-fault-injection")]
+async fn continuation_context_status_carriage(vector: &ConformanceVector) -> Result<(), String> {
+    let inputs = vector
+        .input
+        .pointer("/adapter_context_statuses")
+        .and_then(Value::as_array)
+        .ok_or("missing adapter_context_statuses")?;
+    let expected_reports = vector
+        .expected_outcome
+        .pointer("/staged_report_statuses")
+        .and_then(Value::as_array)
+        .ok_or("missing staged_report_statuses")?;
+    let expected_envelopes = vector
+        .expected_outcome
+        .pointer("/staged_envelope_statuses")
+        .and_then(Value::as_array)
+        .ok_or("missing staged_envelope_statuses")?;
+    if inputs != expected_reports
+        || inputs != expected_envelopes
+        || inputs.len() != 3
+        || vector
+            .expected_outcome
+            .pointer("/core_invents_status")
+            .and_then(Value::as_bool)
+            != Some(false)
+    {
+        return Err("continuation context vector input/outcome table disagrees".to_owned());
+    }
+
+    for value in inputs {
+        let name = value
+            .as_str()
+            .ok_or("continuation context status must be a string")?;
+        let adapter_status = match name {
+            "CONTINUATION_CONTEXT_STATUS_RESUMED" => ContinuationContextStatus::Resumed,
+            "CONTINUATION_CONTEXT_STATUS_NEW_CONTEXT" => ContinuationContextStatus::NewContext,
+            "CONTINUATION_CONTEXT_STATUS_UNKNOWN" => ContinuationContextStatus::Unknown,
+            _ => return Err(format!("unsupported continuation context status {name}")),
+        };
+        let staged =
+            patchbay_core_server::adapter_service::conformance_stage_continuation_context_status(
+                adapter_status,
+            )
+            .map_err(|error| format!("production staging rejected {name}: {error}"))?;
+        if staged.continuation_context_status != adapter_status as i32
+            || staged
+                .report
+                .as_ref()
+                .map(|report| report.continuation_context_status)
+                != Some(adapter_status as i32)
+        {
+            return Err(format!(
+                "production staging did not preserve independent adapter input {name}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "conformance-fault-injection"))]
+async fn continuation_context_status_carriage(_vector: &ConformanceVector) -> Result<(), String> {
+    Err("continuation context carriage conformance requires conformance-fault-injection".to_owned())
+}
+
 async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), String> {
     if vector.property_id.is_empty()
         || !matches!(vector.promotion_status.as_str(), "draft" | "promoted")
@@ -3229,6 +3295,9 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         "token_commune_degradation_projection" => run_token_degradation_trace(vector).await,
         "snapshot_reconciliation" => snapshot_reconciliation(vector).await,
         "session_report_source_ordering" => session_report_source_ordering(vector).await,
+        "continuation_context_status_carriage" => {
+            continuation_context_status_carriage(vector).await
+        }
         "resource_observation_source_binding"
         | "token_commune_current_generation_source_binding" => source_binding(vector).await,
         _ => Err(format!(
@@ -3246,6 +3315,7 @@ async fn conformance_vector_runner() {
     } else {
         vectors
             .values()
+            .filter(|vector| vector.promotion_status == "promoted")
             .flat_map(|vector| {
                 vector
                     .implementation_checks

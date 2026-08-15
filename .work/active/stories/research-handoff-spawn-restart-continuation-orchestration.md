@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-restart-continuation-orchestration
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, security]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-completion-promotion-driver, deployment-authority-workspace-scoped-revocable-keys]
@@ -72,7 +72,20 @@ Depends on verified atomic completion/promotion and adapter-local credential-ref
 ## Verification evidence
 
 - Rust: `cargo build --workspace --all-targets`, `cargo test --workspace`, and `cargo clippy --workspace --all-targets -- -D warnings` pass, including 35 runtime-evidence/promotion, 82 server-unit, and 12 spawn-completion tests.
-- Contracts: `check:drift`, `check:vectors`, `check:models`, and TypeScript build pass (55 vectors, 17 promoted vectors, 22 implementation checks, 38 mutation witnesses, 54 model-promotion blocks).
+- Contracts: `check:drift`, `check:vectors`, `check:models`, and TypeScript build pass (56 vectors, 17 promoted vectors, 24 implementation checks, 38 mutation witnesses, 54 model-promotion blocks).
 - TypeScript: operator-domain 26/26, Pi adapter 38/38 including real-core e2e, web cockpit 132/132 including browser build, and CLI 48/48 plus real-core resource projection pass.
 - Focused regressions reject missing quiesce, missing prior-runtime outcome, handshake-before-identity, stage-before-handshake, and phase-before-delivery; context carriage/rendering and pending/active lockdown spawn gating are covered.
 - Manual source mutation probes were killed for bypassed stage-before-handshake enforcement, omitted quiesce, omitted prior-terminated evidence, hard-coded adapter context outcome, and lockdown-enabled session-list spawn. Every source mutation was restored and the focused clean tests passed afterward.
+
+## Implementation notes — fix round 2
+
+- Execution capability: `openai-codex/gpt-5.6-sol`; direct-read implementation was appropriate because the material finding named the exact ingress copy, oracle, and vector registry seams.
+- Review weight: `thorough` from the autopilot caller; this round returns to review for the required independent pass 3.
+- Files changed: strengthened the authenticated continuation oracle in `server/src/adapter_service/tests.rs`; exposed the existing operator subscription projection crate-locally for that oracle; added a conformance-only production-constructor probe and `rust-server` vector case; added `contracts/vectors/spawn-continuation-context-status-carriage.json`; taught `check:vectors` to execute optional draft checks; refreshed the generated traceability table and vector-runner guidance.
+- Tests added/strengthened: all generated non-sentinel values (`RESUMED`, `NEW_CONTEXT`, `UNKNOWN`) now travel independently through authenticated exact-continuation ingress, durable staged report/envelope bytes, replay-derived promotion, and operator projection with exact equality assertions at every carriage point. The vector implementation check independently tables the same three inputs against the production staging constructor.
+- Mutation evidence: replacing the production copy with constant `RESUMED` failed the core oracle (exit 101 on `NEW_CONTEXT`) and `npm run check:vectors` (exit 1 in the registered Rust-server case). `git restore` restored the staged intended source; both clean checks then passed.
+- Vector classification rationale: the carriage vector remains `draft`, preserving the story's implementation-evidence-only assurance classification. Optional draft checks are now executed rather than silently registered but inert, so `check:vectors` genuinely constrains the new field without promoting a formal property.
+- Full verification: the mandatory Rust build/test/clippy (`-D warnings`), contracts drift/vectors/models/build, operator-domain build/tests, Pi adapter tests, web-cockpit tests, and CLI tests including real-core projection all pass. Current vector summary: 56 vectors, 17 promoted, 24 executed implementation checks, and 38 killed registered mutation witnesses.
+- Simplification: no new protocol vocabulary, proto edit, generated-binding change, or parallel context-status registry was introduced; one vector and one focused conformance probe cover the missing trace.
+- Discrepancies from design: none; this round strengthens trustworthy verification only.
+- Adjacent issues parked: none.

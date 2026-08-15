@@ -489,7 +489,7 @@ Each conformance vector lives as a JSON file under `contracts/vectors/` and carr
 }
 ```
 
-Run `node contracts/scripts/check-vectors.mjs` from the repository root (or `npm run check:vectors` from `contracts/ts/`) to validate the vectors, execute every promoted vector's registered package checks, and compare the traceability table below byte-for-byte without writing it. Draft vectors may remain metadata-only; promoted vectors require a non-empty `implementation_checks` list whose exact executed ids are reported by known Rust core/server or web-cockpit runners. Intentional traceability updates use the separate `npm --prefix contracts/ts run generate:vectors` command.
+Run `node contracts/scripts/check-vectors.mjs` from the repository root (or `npm run check:vectors` from `contracts/ts/`) to validate the vectors, execute every registered package check (including optional checks on draft vectors), and compare the traceability table below byte-for-byte without writing it. Draft vectors may remain metadata-only; promoted vectors require a non-empty `implementation_checks` list whose exact executed ids are reported by known Rust core/server or web-cockpit runners. Intentional traceability updates use the separate `npm --prefix contracts/ts run generate:vectors` command.
 
 A CI script reads all vectors and:
 
@@ -592,7 +592,7 @@ Summary: 54 modeled properties (9 promoted, 45 draft), 15 reserved-unmodeled sta
 
 Source vectors: `contracts/vectors/*.json`. CI check: `node contracts/scripts/check-vectors.mjs` (or `npm run check:vectors` from `contracts/ts/`).
 
-Summary: 55 vector(s), 17 promoted vector(s), 1 checked-normative property requiring promoted-vector coverage. Current checked-normative coverage gate is active.
+Summary: 56 vector(s), 17 promoted vector(s), 1 checked-normative property requiring promoted-vector coverage. Current checked-normative coverage gate is active.
 
 | Property id | Classification | Vectors | `.proto` fields/enums exercised by vectors |
 |---|---|---|---|
@@ -650,7 +650,7 @@ Summary: 55 vector(s), 17 promoted vector(s), 1 checked-normative property requi
 | `SnapshotConsistentPrefix` | stated-normative | — | — |
 | `SnapshotCrossDomainRejected` | stated-normative | — | — |
 | `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (promoted) | patchbay.LoadSnapshotRequest.view_kind<br>patchbay.LoadSnapshotResponse.snapshot_payload<br>patchbay.LoadSnapshotResponse.view_kind<br>patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.Resource.revision_lsn<br>patchbay.ResourceSnapshot.authority_domain_id<br>patchbay.ResourceSnapshot.core_generation<br>patchbay.ResourceSnapshot.resources<br>patchbay.ResourceSnapshot.snapshot_lsn<br>patchbay.SessionSnapshot.core_generation<br>patchbay.SessionSnapshot.lockdown<br>patchbay.SessionSnapshot.view_revisions<br>patchbay.StoredSessionCheckpoint.snapshot<br>patchbay.StoredSessionCheckpoint.tombstones |
-| `SpawnCreatesDescendantGrant` | stated-normative | — | — |
+| `SpawnCreatesDescendantGrant` | stated-normative | [spawn-continuation-context-status-carriage](../contracts/vectors/spawn-continuation-context-status-carriage.json) (draft) | patchbay.ContinuationContextStatus<br>patchbay.SessionReport.continuation_context_status<br>patchbay.SpawnSuccessorEvidenceStaged.continuation_context_status |
 | `SpawnRevocationDoesNotCascade` | stated-normative | — | — |
 | `SubscriptionAudited` | stated-normative | — | — |
 | `SubscriptionCursorReplayAuthorized` | stated-normative | [subscription-resume-rechecked](../contracts/vectors/subscription-resume-rechecked.json) (draft) | patchbay.AuditEventKind.AUDIT_EVENT_KIND_SUBSCRIPTION_DENIED<br>patchbay.AuditRecord.grant_id<br>patchbay.SubscribeRequest.authority_domain_id<br>patchbay.SubscribeRequest.cursor |

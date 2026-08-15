@@ -1,0 +1,35 @@
+{
+  "vector_id": "spawn-continuation-context-status-carriage",
+  "property_id": "SpawnCreatesDescendantGrant",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "rust-server", "case": "continuation_context_status_carriage" }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.ContinuationContextStatus",
+    "patchbay.SessionReport.continuation_context_status",
+    "patchbay.SpawnSuccessorEvidenceStaged.continuation_context_status"
+  ],
+  "description": "Each generated non-sentinel adapter continuation-context outcome is copied exactly from SessionReport into staged successor evidence; core-authored defaults are forbidden.",
+  "input": {
+    "adapter_context_statuses": [
+      "CONTINUATION_CONTEXT_STATUS_RESUMED",
+      "CONTINUATION_CONTEXT_STATUS_NEW_CONTEXT",
+      "CONTINUATION_CONTEXT_STATUS_UNKNOWN"
+    ]
+  },
+  "expected_outcome": {
+    "staged_report_statuses": [
+      "CONTINUATION_CONTEXT_STATUS_RESUMED",
+      "CONTINUATION_CONTEXT_STATUS_NEW_CONTEXT",
+      "CONTINUATION_CONTEXT_STATUS_UNKNOWN"
+    ],
+    "staged_envelope_statuses": [
+      "CONTINUATION_CONTEXT_STATUS_RESUMED",
+      "CONTINUATION_CONTEXT_STATUS_NEW_CONTEXT",
+      "CONTINUATION_CONTEXT_STATUS_UNKNOWN"
+    ],
+    "core_invents_status": false
+  },
+  "invariant_check": "For every committed continuation-context enum value, the production staging constructor carries the independent adapter input unchanged in both the exact report and staged envelope; replacing the copy with a constant RESUMED value violates the vector."
+}

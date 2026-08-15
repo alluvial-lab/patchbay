@@ -1056,7 +1056,7 @@ function validatePromotedInvariantExpectations(vectors) {
 
 function requestedImplementationChecks(vectors) {
   const byRunner = new Map();
-  for (const vector of vectors.filter((item) => item.promotion_status === 'promoted')) {
+  for (const vector of vectors) {
     for (const check of vector.implementation_checks ?? []) {
       const requests = byRunner.get(check.runner) ?? [];
       requests.push({ vector_id: vector.vector_id, case: check.case });

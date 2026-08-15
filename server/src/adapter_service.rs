@@ -560,6 +560,109 @@ fn staged_successor_for_claim(
     Ok(staged)
 }
 
+/// Conformance-only product-seam probe for the adapter-report-to-staged-evidence
+/// copy. The vector runner supplies each generated non-sentinel status and
+/// observes the production constructor rather than rebuilding its expected
+/// output from a second test-side constructor.
+#[cfg(feature = "conformance-fault-injection")]
+pub fn conformance_stage_continuation_context_status(
+    adapter_status: patchbay_contracts::patchbay::ContinuationContextStatus,
+) -> Result<SpawnSuccessorEvidenceStaged, Status> {
+    use patchbay_contracts::patchbay::{
+        runtime_generation_disposition::Disposition, AdapterId, CommandId,
+        ContinuationAuthorityProvenance, ExternalRuntimeRef, RuntimeEvidenceSourceAttachment,
+        RuntimeGenerationClaimedSuccessor, SessionActivityState, SessionConnectivityState,
+        SessionReport, SessionReportSourceCursor, SpawnGenerationClaim,
+    };
+
+    let domain = AuthorityDomainId {
+        value: "conformance-continuation".to_owned(),
+    };
+    let adapter_id = AdapterId {
+        value: "conformance-adapter".to_owned(),
+    };
+    let command_id = CommandId {
+        value: "conformance-continuation-command".to_owned(),
+    };
+    let logical_target_id = patchbay_contracts::patchbay::LogicalTargetId {
+        value: "conformance-logical-target".to_owned(),
+    };
+    let prior = RuntimeGenerationRef {
+        logical_target_id: Some(logical_target_id.clone()),
+        external_runtime: Some(ExternalRuntimeRef {
+            adapter_id: Some(adapter_id.clone()),
+            deployment_scope: "conformance-scope".to_owned(),
+            runtime_session_id: Some(patchbay_contracts::patchbay::RuntimeSessionId {
+                value: "conformance-prior-runtime".to_owned(),
+            }),
+            generation: Some(Generation { value: 1 }),
+        }),
+    };
+    let claim = SpawnGenerationClaim {
+        authority_domain_id: Some(domain.clone()),
+        claim_operation_id: Some(command_id.clone()),
+        logical_target_id: Some(logical_target_id),
+        expected_prior: Some(prior.clone()),
+        claimed_generation: Some(Generation { value: 2 }),
+    };
+    let claim_record = session::SpawnClaimRecord {
+        claim: claim.clone(),
+        accepted_lsn: 1,
+        compound_authority: Some(ContinuationAuthorityProvenance {
+            exact_prior: Some(prior.clone()),
+            replacement_grant_id: Some(patchbay_contracts::patchbay::GrantId {
+                value: "conformance-replacement-grant".to_owned(),
+            }),
+            replacement_authority_kind: OperationKind::SessionManagement as i32,
+        }),
+        disposition: SpawnClaimDisposition::Active,
+        pending_replacement: Some(prior.clone()),
+        latest_disposition_lsn: 1,
+        adapter_id: adapter_id.clone(),
+    };
+    let report = SessionReport {
+        adapter_id: Some(adapter_id.clone()),
+        deployment_scope: "conformance-scope".to_owned(),
+        runtime_session_id: Some(patchbay_contracts::patchbay::RuntimeSessionId {
+            value: "conformance-successor-runtime".to_owned(),
+        }),
+        session_generation: Some(Generation { value: 2 }),
+        connectivity: SessionConnectivityState::Live as i32,
+        activity: SessionActivityState::Idle as i32,
+        spawn_origin: Some(patchbay_contracts::patchbay::TypedCorrelation {
+            r#ref: Some(
+                patchbay_contracts::patchbay::typed_correlation::Ref::CommandId(command_id.clone()),
+            ),
+        }),
+        source_cursor: Some(SessionReportSourceCursor {
+            adapter_generation: Some(Generation { value: 1 }),
+            revision: 1,
+        }),
+        continuation_context_status: adapter_status as i32,
+        ..SessionReport::default()
+    };
+    let disposition = RuntimeGenerationDisposition {
+        disposition: Some(Disposition::ClaimedSuccessor(
+            RuntimeGenerationClaimedSuccessor {
+                claim_operation_id: Some(command_id),
+                expected_prior: Some(prior),
+                claimed_generation: Some(Generation { value: 2 }),
+            },
+        )),
+    };
+    staged_successor_for_claim(
+        &domain,
+        report,
+        RuntimeEvidenceSourceAttachment {
+            adapter_id: Some(adapter_id),
+            adapter_generation: Some(Generation { value: 1 }),
+            attachment_event_id: Some(patchbay_core::storage::event_id(domain.clone(), 1)),
+        },
+        &claim_record,
+        disposition,
+    )
+}
+
 fn session_report_claim_operation(
     report: &patchbay_contracts::patchbay::SessionReport,
 ) -> Option<&patchbay_contracts::patchbay::CommandId> {

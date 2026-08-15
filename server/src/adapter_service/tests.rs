@@ -2599,7 +2599,19 @@ async fn exact_late_staged_retry_exits_before_any_full_rebuild_under_the_decisio
 }
 
 #[tokio::test]
-async fn exact_continuation_report_stages_n_plus_one_without_publishing_it() {
+async fn exact_continuation_report_carries_every_context_status_without_core_invention() {
+    for adapter_status in [
+        ContinuationContextStatus::Resumed,
+        ContinuationContextStatus::NewContext,
+        ContinuationContextStatus::Unknown,
+    ] {
+        assert_exact_continuation_context_status_carriage(adapter_status).await;
+    }
+}
+
+async fn assert_exact_continuation_context_status_carriage(
+    adapter_status: ContinuationContextStatus,
+) {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
@@ -2752,7 +2764,7 @@ async fn exact_continuation_report_stages_n_plus_one_without_publishing_it() {
     let mut report = session_report(SessionConnectivityState::Live);
     report.runtime_session_id = Some(successor_runtime_id.clone());
     report.session_generation = Some(Generation { value: 2 });
-    report.continuation_context_status = ContinuationContextStatus::Resumed as i32;
+    report.continuation_context_status = adapter_status as i32;
     report.spawn_origin = Some(TypedCorrelation {
         r#ref: Some(typed_correlation::Ref::CommandId(command_id)),
     });
@@ -2783,8 +2795,16 @@ async fn exact_continuation_report_stages_n_plus_one_without_publishing_it() {
     .expect("staged continuation evidence decodes");
     assert_eq!(
         ContinuationContextStatus::try_from(staged.continuation_context_status),
-        Ok(ContinuationContextStatus::Resumed),
-        "the core must preserve the adapter-reported context outcome"
+        Ok(adapter_status),
+        "staged storage must preserve the independent adapter input"
+    );
+    assert_eq!(
+        staged
+            .report
+            .as_ref()
+            .map(|report| report.continuation_context_status),
+        Some(adapter_status as i32),
+        "staged report bytes must preserve the independent adapter input"
     );
     assert_eq!(session_publication_counts(&events), (1, 0));
 
@@ -2815,6 +2835,108 @@ async fn exact_continuation_report_stages_n_plus_one_without_publishing_it() {
     assert!(hot
         .get_live_session(&adapter_id(), "machine-a", &successor_runtime_id)
         .is_none());
+
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            lifecycle_observation(
+                domain.clone(),
+                operation,
+                ObservationKind::Result,
+                FailureCode::Unspecified,
+            ),
+            &attachment_token,
+        ))
+        .await
+        .expect("successful continuation Result commits without terminalizing");
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SpawnExecutionEvidence(
+                    SpawnExecutionEvidence {
+                        authority_domain_id: Some(domain.clone()),
+                        exact_claim: accepted.claim.clone(),
+                        phase: SpawnExecutionPhase::SuccessEvidenceReported as i32,
+                        external_effect_disposition: ExternalEffectDisposition::Identified as i32,
+                        external_runtime: Some(successor),
+                        ..SpawnExecutionEvidence::default()
+                    },
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("post-staging continuation success evidence commits");
+
+    let promotion_prefix = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
+    let committed_at = Timestamp {
+        seconds: 20,
+        nanos: 0,
+    };
+    let promotion =
+        patchbay_core::session::next_spawn_promotion(&domain, &promotion_prefix, committed_at)
+            .expect("promotion replay accepts the exact continuation prefix")
+            .expect("the exact continuation prefix is promotion-ready");
+    let replayed_promotion =
+        patchbay_core::session::next_spawn_promotion(&domain, &promotion_prefix, committed_at)
+            .expect("fresh promotion replay accepts the same durable prefix")
+            .expect("fresh promotion replay reconstructs the successor");
+    assert_eq!(replayed_promotion, promotion);
+
+    let promoted_staged = promotion
+        .staged_successor
+        .as_ref()
+        .and_then(|evidence| evidence.staged.as_ref())
+        .expect("promotion carries staged continuation evidence");
+    assert_eq!(
+        promoted_staged.continuation_context_status,
+        adapter_status as i32
+    );
+    assert_eq!(
+        promoted_staged
+            .report
+            .as_ref()
+            .map(|report| report.continuation_context_status),
+        Some(adapter_status as i32),
+        "promotion replay must preserve the independent adapter input"
+    );
+
+    let projected = crate::service::operator_facing_subscribe_event(RecordedEvent {
+        event_id: patchbay_core::storage::event_id(
+            domain.clone(),
+            promotion_prefix.len() as u64 + 1,
+        ),
+        payload: StoredEventPayload {
+            kind: StoredEventKind::SpawnPromotionCommitted as i32,
+            payload: promotion.encode_to_vec(),
+        },
+    })
+    .expect("promotion is visible in the operator subscription projection");
+    let operator_promotion = patchbay_contracts::patchbay::SpawnPromotionCommitted::decode(
+        projected
+            .payload
+            .expect("operator event carries payload")
+            .payload
+            .as_slice(),
+    )
+    .expect("operator promotion decodes");
+    let operator_staged = operator_promotion
+        .staged_successor
+        .as_ref()
+        .and_then(|evidence| evidence.staged.as_ref())
+        .expect("operator promotion carries staged continuation evidence");
+    assert_eq!(
+        operator_staged.continuation_context_status,
+        adapter_status as i32
+    );
+    assert_eq!(
+        operator_staged
+            .report
+            .as_ref()
+            .map(|report| report.continuation_context_status),
+        Some(adapter_status as i32),
+        "operator projection must preserve the independent adapter input"
+    );
 }
 
 #[tokio::test]
@@ -5327,6 +5449,15 @@ fn replacement_claim(domain: AuthorityDomainId, command_id: &str) -> SpawnClaimA
             ..TargetScope::default()
         }),
         idempotency_key: format!("{command_id}-key"),
+        sender: Some(ActorEndpointRef {
+            actor_id: Some(ActorId {
+                value: "operator-a".to_owned(),
+            }),
+            endpoint_id: Some(EndpointId {
+                value: "browser-a".to_owned(),
+            }),
+            ..ActorEndpointRef::default()
+        }),
         payload: Some(PayloadEnvelope {
             payload: SpawnRequest {
                 intent: Some(spawn_request::Intent::Continuation(SpawnContinuation {
@@ -5391,6 +5522,18 @@ async fn append_replacement_claim(
         },
         AuditEventKind::CommandSubmissionAccepted,
     );
+    audit.actor_id = operation
+        .sender
+        .as_ref()
+        .and_then(|sender| sender.actor_id.clone());
+    audit.endpoint_id = operation
+        .sender
+        .as_ref()
+        .and_then(|sender| sender.endpoint_id.clone());
+    audit.device_id = operation
+        .sender
+        .as_ref()
+        .and_then(|sender| sender.device_id.clone());
     audit.command_id = operation.command_id.clone();
     audit.grant_id = accepted_operation.authorizing_grant_id.clone();
     audit.target_scope = operation.target_scope.clone();
