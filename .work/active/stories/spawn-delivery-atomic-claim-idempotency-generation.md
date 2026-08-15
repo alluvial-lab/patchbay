@@ -1,7 +1,7 @@
 ---
 id: spawn-delivery-atomic-claim-idempotency-generation
 kind: story
-stage: review
+stage: implementing
 tags: [adapter, protocol, security, verification]
 parent: research-handoff-spawn
 depends_on: [fleet-spawn-target-resolution]

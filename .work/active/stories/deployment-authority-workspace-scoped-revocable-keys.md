@@ -1,7 +1,7 @@
 ---
 id: deployment-authority-workspace-scoped-revocable-keys
 kind: story
-stage: review
+stage: implementing
 tags: [security, adapter, architecture]
 parent: research-handoff-spawn
 depends_on: [fleet-spawn-target-resolution]
