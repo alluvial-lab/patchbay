@@ -26,7 +26,9 @@ use prost::Message;
 use prost_types::Timestamp;
 
 use crate::{
-    acceptance::{exact_command_correlation, AcceptanceError, CommandIndex},
+    acceptance::{
+        exact_command_correlation, AcceptanceError, CommandIndex, RuntimeEvidenceCandidate,
+    },
     adapter::AdapterRegistry,
     authority::{
         descendant_grant_id, AuthorityError, AuthorityRegistry, DESCENDANT_GRANT_ALLOWED_KINDS,
@@ -814,11 +816,12 @@ pub fn classify_session_report(
     if same_native_lineage || !source_matches || report.spawn_origin.is_some() {
         identity_mismatch()
     } else {
-        RuntimeGenerationDisposition {
-            disposition: Some(runtime_generation_disposition::Disposition::Unknown(
-                RuntimeGenerationUnknown {},
-            )),
-        }
+        // An authenticated, unclaimed first report is the ordinary discovery
+        // boundary. Classifying it Current means the shared fence admits it to
+        // the existing source-order/identity validator; `Unknown` remains a
+        // reject/quarantine disposition and is never an ordinary-ingress
+        // exception.
+        current_disposition()
     }
 }
 
@@ -986,6 +989,27 @@ pub fn classify_runtime_target(
     }
 }
 
+pub fn quarantined_runtime_candidate(
+    authority_domain_id: &AuthorityDomainId,
+    candidate: RuntimeEvidenceCandidate,
+    disposition: RuntimeGenerationDisposition,
+    reason: RuntimeEvidenceQuarantineReason,
+    source: RuntimeEvidenceSourceAttachment,
+    sessions: &super::SessionRegistry,
+    claims: &SpawnClaimRegistry,
+) -> Result<QuarantinedRuntimeEvidence, RuntimeEvidenceError> {
+    let external = runtime_evidence_candidate_target(authority_domain_id, &candidate)?;
+    quarantine_envelope(
+        authority_domain_id,
+        candidate,
+        external,
+        disposition,
+        reason,
+        source,
+        (sessions, claims),
+    )
+}
+
 pub fn quarantined_observation(
     authority_domain_id: &AuthorityDomainId,
     observation: Observation,
@@ -995,16 +1019,14 @@ pub fn quarantined_observation(
     sessions: &super::SessionRegistry,
     claims: &SpawnClaimRegistry,
 ) -> Result<QuarantinedRuntimeEvidence, RuntimeEvidenceError> {
-    let external =
-        external_from_scope(observation.target_scope.as_ref(), "quarantined Observation")?;
-    quarantine_envelope(
+    quarantined_runtime_candidate(
         authority_domain_id,
         quarantined_runtime_evidence::Candidate::Observation(observation),
-        external,
         disposition,
         reason,
         source,
-        (sessions, claims),
+        sessions,
+        claims,
     )
 }
 
@@ -1017,16 +1039,14 @@ pub fn quarantined_session_report(
     sessions: &super::SessionRegistry,
     claims: &SpawnClaimRegistry,
 ) -> Result<QuarantinedRuntimeEvidence, RuntimeEvidenceError> {
-    let external = report_external(&report)
-        .ok_or_else(|| malformed("quarantined SessionReport has malformed runtime identity"))?;
-    quarantine_envelope(
+    quarantined_runtime_candidate(
         authority_domain_id,
         quarantined_runtime_evidence::Candidate::SessionReport(report),
-        external,
         disposition,
         reason,
         source,
-        (sessions, claims),
+        sessions,
+        claims,
     )
 }
 
@@ -1149,7 +1169,26 @@ pub fn canonical_runtime_evidence_classification_context(
                 .and_then(|id| claims.claim_for_operation(id))
                 .or_else(|| matching_candidate_claim(authority_domain_id, report, claims, targets))
         }
-        _ => None,
+        quarantined_runtime_evidence::Candidate::DeliveryAcknowledgement(acknowledgement) => {
+            acknowledgement
+                .command_id
+                .as_ref()
+                .and_then(|id| claims.claim_for_operation(id))
+        }
+        quarantined_runtime_evidence::Candidate::TranscriptStatus(status) => status
+            .observation
+            .as_ref()
+            .and_then(|observation| {
+                crate::acceptance::exact_command_correlation(&observation.correlations)
+            })
+            .and_then(|id| claims.claim_for_operation(&id)),
+        quarantined_runtime_evidence::Candidate::ElicitationMutation(mutation) => mutation
+            .elicitation
+            .as_ref()
+            .and_then(|elicitation| {
+                crate::acceptance::exact_command_correlation(&elicitation.correlations)
+            })
+            .and_then(|id| claims.claim_for_operation(&id)),
     };
     let active_claim = correlated_claim
         .filter(|record| {
@@ -1351,15 +1390,12 @@ pub fn validate_quarantined_runtime_evidence(
     Ok(())
 }
 
-/// Return the exact runtime target nested inside an admitted quarantine family.
-pub fn quarantined_candidate_target(
-    quarantined: &QuarantinedRuntimeEvidence,
+/// Return the exact runtime target nested inside one generated ingress family.
+pub fn runtime_evidence_candidate_target(
+    authority_domain_id: &AuthorityDomainId,
+    candidate: &RuntimeEvidenceCandidate,
 ) -> Result<ExternalRuntimeRef, RuntimeEvidenceError> {
-    let domain = nonempty_domain(quarantined.authority_domain_id.as_ref())?;
-    let candidate = quarantined
-        .candidate
-        .as_ref()
-        .ok_or_else(|| malformed("quarantine has no admitted generated candidate family"))?;
+    let domain = nonempty_domain(Some(authority_domain_id))?;
     let external = match candidate {
         quarantined_runtime_evidence::Candidate::Observation(observation) => {
             if observation.authority_domain_id.as_ref() != Some(domain) {
@@ -1423,8 +1459,20 @@ pub fn quarantined_candidate_target(
             )?
         }
     };
-    validate_external_runtime(&external, "quarantined candidate")?;
+    validate_external_runtime(&external, "runtime evidence candidate")?;
     Ok(external)
+}
+
+/// Return the exact runtime target nested inside an admitted quarantine family.
+pub fn quarantined_candidate_target(
+    quarantined: &QuarantinedRuntimeEvidence,
+) -> Result<ExternalRuntimeRef, RuntimeEvidenceError> {
+    let domain = nonempty_domain(quarantined.authority_domain_id.as_ref())?;
+    let candidate = quarantined
+        .candidate
+        .as_ref()
+        .ok_or_else(|| malformed("quarantine has no admitted generated candidate family"))?;
+    runtime_evidence_candidate_target(domain, candidate)
 }
 
 /// Canonical runtime-session audit target for the nested candidate.

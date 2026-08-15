@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-stale-event-fencing
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, security, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-generation-monotonicity-tombstoning]
@@ -9,7 +9,7 @@ release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-15
 ---
 
 # Shared runtime-generation fence and durable evidence quarantine
@@ -46,13 +46,24 @@ Quarantine carries the original typed candidate, exact classified/current/claim 
 
 ## Acceptance evidence
 
-- [ ] Legitimate first successor report stages through `ClaimedSuccessor` without a bypass.
-- [ ] Generation-N evidence after N+1 promotion yields quarantine/stale audit and no live mutation.
-- [ ] Stale ack/result/transcript/status/Elicitation/report candidates are equally inert.
-- [ ] Hot fold and replay see only the outer quarantine kind; a nested raw Observation cannot reach normal projections.
-- [ ] Current evidence still obeys source order, terminal finality, correlation, and authority; classifier success bypasses none.
-- [ ] Replaced adapter token/epoch and runtime generation independently fence evidence.
-- [ ] Enumeration test fails when any runtime ingress lacks the port or dispatches quarantine incorrectly.
+- [x] Legitimate first successor report stages through `ClaimedSuccessor` without a bypass.
+- [x] Generation-N evidence after N+1 promotion yields quarantine/stale audit and no live mutation.
+- [x] Stale ack/result/transcript/status/Elicitation/report candidates are equally inert.
+- [x] Hot fold and replay see only the outer quarantine kind; a nested raw Observation cannot reach normal projections.
+- [x] Current evidence still obeys source order, terminal finality, correlation, and authority; classifier success bypasses none.
+- [x] Replaced adapter token/epoch and runtime generation independently fence evidence.
+- [x] Enumeration test fails when any runtime ingress lacks the port or dispatches quarantine incorrectly.
+
+## Unit 5 implementation evidence
+
+- Added the consumer-owned `RuntimeGenerationFence` over the generated quarantine-candidate oneof and one reconciled implementation that delegates to the existing SessionReport and runtime-target classifiers. The boundary rejects `ClaimedSuccessor` for every non-SessionReport candidate even if a faulty fence returns it.
+- Routed authenticated SessionReport, delivery acknowledgement, Result, transcript Event, Status, Delta, and protobuf Elicitation ingress through that fence before their ordinary validators or writers. Current evidence still takes those existing paths; non-current evidence takes one typed atomic quarantine/audit writer.
+- Added normal Elicitation ingestion and replay projection support so stale Elicitation mutations have useful pre-state and cannot mutate it from inside a quarantine envelope.
+- Removed the former unclaimed-discovery `Unknown` exception: a current authenticated attachment's first valid SessionReport is classified `Current`, while unrelated unknown runtime evidence remains fenced.
+- Added generated-contract inventory oracles for `ObservationRequest`, every `ObservationKind`, and every `QuarantinedRuntimeEvidence.candidate` arm. A new generated family now requires an explicit routing decision.
+- Added all-family integration and projection tests proving outer-only durability plus hot-fold/replay inertness across session, command, Elicitation, authority, diagnostics, and adapter projections. Added an independent attachment-epoch versus runtime-generation fence test.
+- Killed all required local mutants: non-report `ClaimedSuccessor` bypass; quarantine writer using raw `Observation` outer kind; and command projection recursively dispatching nested quarantined Observation/transcript payloads.
+- Verification passed: workspace tests; targeted stale-generation/replay suites; workspace clippy with warnings denied; formatting and generated-contract drift check. No protocol or generated contract changed.
 
 ## Ordering constraint
 

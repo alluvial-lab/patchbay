@@ -25,6 +25,7 @@ pub use ingest::{
 pub use logical_target::{
     external_runtime_key, ExternalRuntimeKey, ExternalRuntimeOwnership, LogicalTargetError,
     LogicalTargetRecord, LogicalTargetRegistry, LogicalTargetTombstone,
+    ReconciledRuntimeGenerationFence,
 };
 pub use patchbay_contracts::patchbay::SessionReport;
 pub use registry::{ManagedLineageCheckpoint, SessionRecord, SessionRegistry, SessionTombstone};
@@ -35,7 +36,8 @@ pub use runtime_evidence::{
     classify_session_report, encode_quarantined_runtime_evidence, encode_spawn_promotion,
     encode_staged_successor, fold_spawn_promotion_ordered, next_spawn_promotion,
     quarantine_reason_code, quarantine_reason_for, quarantined_candidate_scope,
-    quarantined_candidate_target, quarantined_observation, quarantined_session_report,
+    quarantined_candidate_target, quarantined_observation, quarantined_runtime_candidate,
+    quarantined_session_report, runtime_evidence_candidate_target,
     source_matches_current_attachment, validate_quarantined_runtime_evidence,
     validate_spawn_promotion_envelope, validate_staged_successor, RuntimeEvidenceError,
     SpawnPromotionFoldError,

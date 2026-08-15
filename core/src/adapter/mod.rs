@@ -16,14 +16,17 @@ pub use capability::{
 
 use patchbay_contracts::patchbay::{
     typed_correlation, AdapterId, AdapterRegistration, AuthorityDomainId, CommandId,
-    CommandTransition, EventId, FailureCode, Observation, ObservationKind, OperationState,
-    PayloadContentType, PayloadEnvelope, StoredEventKind, StoredEventPayload, TargetScope,
-    TargetScopeKind,
+    CommandTransition, EventId, ExternalRuntimeRef, FailureCode, Observation, ObservationKind,
+    OperationState, PayloadContentType, PayloadEnvelope, RuntimeDeliveryAcknowledgementEvidence,
+    RuntimeGenerationRef, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use prost::Message;
 
 use crate::{
-    acceptance::{Clock, CommandIndex},
+    acceptance::{
+        fence_runtime_candidate, Clock, CommandIndex, FencedRuntimeEvidence,
+        RuntimeEvidenceCandidate, RuntimeGenerationFence,
+    },
     resource::{ResourceIdentity, ResourceRegistry},
     storage::{validate_next_replay_event, RecordedEvent, Storage},
     target::target_adapter_id,
@@ -493,6 +496,37 @@ pub fn is_delivery_acknowledgement(observation: &Observation) -> bool {
         .payload
         .as_ref()
         .is_some_and(|payload| payload.schema_ref == DELIVERY_ACKNOWLEDGEMENT_SCHEMA)
+}
+
+/// Classify one runtime-targeted delivery acknowledgement through the shared
+/// generation fence before command-state validation or durable transition.
+pub fn fence_delivery_acknowledgement<F: RuntimeGenerationFence>(
+    fence: &F,
+    authority_domain_id: &AuthorityDomainId,
+    observation: &Observation,
+) -> Result<FencedRuntimeEvidence, crate::session::SessionError> {
+    let command_id = correlated_command_id(observation)
+        .map_err(|error| crate::session::SessionError::CorruptRecord(error.to_string()))?;
+    let scope = observation.target_scope.as_ref().ok_or_else(|| {
+        crate::session::SessionError::CorruptRecord(
+            "delivery acknowledgement is missing its runtime target".to_owned(),
+        )
+    })?;
+    let candidate =
+        RuntimeEvidenceCandidate::DeliveryAcknowledgement(RuntimeDeliveryAcknowledgementEvidence {
+            command_id: Some(command_id),
+            target: Some(RuntimeGenerationRef {
+                logical_target_id: None,
+                external_runtime: Some(ExternalRuntimeRef {
+                    adapter_id: scope.adapter_id.clone(),
+                    deployment_scope: scope.deployment_scope.clone(),
+                    runtime_session_id: scope.runtime_session_id.clone(),
+                    generation: scope.session_generation,
+                }),
+            }),
+            observed_at: observation.observed_at,
+        });
+    fence_runtime_candidate(fence, authority_domain_id, candidate)
 }
 
 /// Terminalize commands whose execution outcome became unknowable when an adapter disconnected.

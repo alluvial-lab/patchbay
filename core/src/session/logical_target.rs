@@ -1,17 +1,26 @@
 //! Stable logical-target identity and exact external-runtime ownership.
 //!
-//! This projection is deliberately limited to identity. It has no Operation,
-//! claim, evidence, target-resolution, or authority dependency. Session event
+//! The mutable projection is deliberately limited to identity. Session event
 //! replay and checkpoint recovery call the same transition methods used by the
-//! hot fold, so the reverse ownership index cannot weaken after restart.
+//! hot fold, so the reverse ownership index cannot weaken after restart. The
+//! read-only reconciled fence adapter at this boundary composes sibling
+//! projections but does not add claim or authority state to this registry.
 
 use std::collections::{BTreeMap, HashMap};
 
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, ExternalRuntimeRef, LogicalTargetId,
-    LogicalTargetProjectionRecord, LogicalTargetTombstone as WireLogicalTargetTombstone, Lsn,
-    RuntimeGenerationRef,
+    quarantined_runtime_evidence, AdapterId, AuthorityDomainId, ExternalRuntimeRef,
+    LogicalTargetId, LogicalTargetProjectionRecord,
+    LogicalTargetTombstone as WireLogicalTargetTombstone, Lsn, RuntimeEvidenceSourceAttachment,
+    RuntimeGenerationDisposition, RuntimeGenerationRef,
 };
+
+use crate::{
+    acceptance::{RuntimeEvidenceCandidate, RuntimeGenerationFence},
+    adapter::AdapterRegistry,
+};
+
+use super::{SessionError, SessionRegistry, SpawnClaimRegistry};
 
 const MAX_DEPLOYMENT_SCOPE_BYTES: usize = 256;
 
@@ -41,6 +50,72 @@ pub struct LogicalTargetRecord {
     pub current: Option<RuntimeGenerationRef>,
     pub reserved_candidate: Option<ExternalRuntimeRef>,
     pub tombstones: BTreeMap<ExternalRuntimeKey, LogicalTargetTombstone>,
+}
+
+/// Reconciled production adapter for the consumer-owned generation-fence port.
+///
+/// All fields are read-only projections caught up under the composition-root
+/// decision gate. The adapter delegates to the existing concrete
+/// SessionReport/runtime-target classifiers instead of introducing a parallel
+/// ingress-specific implementation.
+pub struct ReconciledRuntimeGenerationFence<'a> {
+    source: &'a RuntimeEvidenceSourceAttachment,
+    adapters: &'a AdapterRegistry,
+    claims: &'a SpawnClaimRegistry,
+    sessions: &'a SessionRegistry,
+}
+
+impl<'a> ReconciledRuntimeGenerationFence<'a> {
+    #[must_use]
+    pub const fn new(
+        source: &'a RuntimeEvidenceSourceAttachment,
+        adapters: &'a AdapterRegistry,
+        claims: &'a SpawnClaimRegistry,
+        sessions: &'a SessionRegistry,
+    ) -> Self {
+        Self {
+            source,
+            adapters,
+            claims,
+            sessions,
+        }
+    }
+}
+
+impl RuntimeGenerationFence for ReconciledRuntimeGenerationFence<'_> {
+    fn classify(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        candidate: &RuntimeEvidenceCandidate,
+    ) -> Result<RuntimeGenerationDisposition, SessionError> {
+        let disposition = match candidate {
+            quarantined_runtime_evidence::Candidate::SessionReport(report) => {
+                super::runtime_evidence::classify_session_report(
+                    authority_domain_id,
+                    report,
+                    self.source,
+                    self.adapters,
+                    self.claims,
+                    self.sessions,
+                )
+            }
+            _ => {
+                let external = super::runtime_evidence::runtime_evidence_candidate_target(
+                    authority_domain_id,
+                    candidate,
+                )
+                .map_err(|error| SessionError::CorruptRecord(error.to_string()))?;
+                super::runtime_evidence::classify_runtime_target(
+                    authority_domain_id,
+                    &external,
+                    self.source,
+                    self.adapters,
+                    self.sessions,
+                )
+            }
+        };
+        Ok(disposition)
+    }
 }
 
 /// Read-only external-runtime ownership lookup.

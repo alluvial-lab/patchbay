@@ -421,19 +421,19 @@ struct CommandProjection {
     cursor: u64,
 }
 
-async fn append_quarantined_session_report<S: Storage>(
+async fn append_quarantined_runtime_candidate<S: Storage>(
     storage: &S,
     domain: &AuthorityDomainId,
-    report: patchbay_contracts::patchbay::SessionReport,
+    candidate: acceptance::RuntimeEvidenceCandidate,
     disposition: patchbay_contracts::patchbay::RuntimeGenerationDisposition,
     reason: patchbay_contracts::patchbay::RuntimeEvidenceQuarantineReason,
     source_attachment: RuntimeEvidenceSourceAttachment,
     projections: (&SessionRegistry, &session::SpawnClaimRegistry),
 ) -> Result<EventId, Status> {
     let (sessions, claims) = projections;
-    let quarantined = session::quarantined_session_report(
+    let quarantined = session::quarantined_runtime_candidate(
         domain,
-        report,
+        candidate,
         disposition,
         reason,
         source_attachment,
@@ -451,11 +451,54 @@ async fn append_quarantined_session_report<S: Storage>(
         session::quarantined_candidate_scope(&quarantined)
             .map_err(|error| Status::failed_precondition(error.to_string()))?,
     );
+    audit.command_id = match quarantined.candidate.as_ref() {
+        Some(acceptance::RuntimeEvidenceCandidate::Observation(observation)) => {
+            acceptance::exact_command_correlation(&observation.correlations)
+        }
+        Some(acceptance::RuntimeEvidenceCandidate::SessionReport(report)) => {
+            session_report_claim_operation(report).cloned()
+        }
+        Some(acceptance::RuntimeEvidenceCandidate::DeliveryAcknowledgement(acknowledgement)) => {
+            acknowledgement.command_id.clone()
+        }
+        Some(acceptance::RuntimeEvidenceCandidate::TranscriptStatus(evidence)) => {
+            evidence.observation.as_ref().and_then(|observation| {
+                acceptance::exact_command_correlation(&observation.correlations)
+            })
+        }
+        Some(acceptance::RuntimeEvidenceCandidate::ElicitationMutation(evidence)) => {
+            evidence.elicitation.as_ref().and_then(|elicitation| {
+                acceptance::exact_command_correlation(&elicitation.correlations)
+            })
+        }
+        None => None,
+    };
     storage
         .append_quarantined_runtime_evidence_audited(domain, quarantined, audit)
         .await
         .map(|committed| committed.source_event_id)
         .map_err(map_storage_error_to_status)
+}
+
+async fn append_quarantined_session_report<S: Storage>(
+    storage: &S,
+    domain: &AuthorityDomainId,
+    report: patchbay_contracts::patchbay::SessionReport,
+    disposition: patchbay_contracts::patchbay::RuntimeGenerationDisposition,
+    reason: patchbay_contracts::patchbay::RuntimeEvidenceQuarantineReason,
+    source_attachment: RuntimeEvidenceSourceAttachment,
+    projections: (&SessionRegistry, &session::SpawnClaimRegistry),
+) -> Result<EventId, Status> {
+    append_quarantined_runtime_candidate(
+        storage,
+        domain,
+        acceptance::RuntimeEvidenceCandidate::SessionReport(report),
+        disposition,
+        reason,
+        source_attachment,
+        projections,
+    )
+    .await
 }
 
 async fn existing_staged_successor_retry<S: Storage>(
@@ -1566,14 +1609,19 @@ where
                 let claims = session::rebuild_spawn_claims_from_log(&self.storage, &domain)
                     .await
                     .map_err(map_spawn_claim_error)?;
-                let disposition = session::classify_session_report(
-                    &domain,
-                    &report,
+                let fence = session::ReconciledRuntimeGenerationFence::new(
                     &source_attachment,
                     &adapter_projection,
                     &claims,
                     &rebuilt,
                 );
+                let disposition = acceptance::fence_runtime_candidate(
+                    &fence,
+                    &domain,
+                    acceptance::RuntimeEvidenceCandidate::SessionReport(report.clone()),
+                )
+                .map_err(map_session_error)?
+                .disposition;
 
                 if reported_adapter_generation != current_adapter_generation {
                     let event_id = append_quarantined_session_report(
@@ -1650,8 +1698,6 @@ where
                         unreachable!("claimed successor was handled by idempotent staging")
                     }
                     Some(runtime_generation_disposition::Disposition::Current(_)) => {}
-                    Some(runtime_generation_disposition::Disposition::Unknown(_))
-                        if report.spawn_origin.is_none() => {}
                     _ => {
                         let reason = session::quarantine_reason_for(&disposition);
                         let event_id = append_quarantined_session_report(
@@ -1916,6 +1962,23 @@ where
                 catch_up_command_projection(&self.storage, &domain, &mut commands)
                     .await
                     .map_err(map_acceptance_error_to_status)?;
+                let mut elicitation_slots =
+                    if acceptance::is_runtime_elicitation_observation(&observation) {
+                        Some(
+                            acceptance::rebuild_slots_from_log(&self.storage, &domain)
+                                .await
+                                .map_err(map_acceptance_error_to_status)?,
+                        )
+                    } else {
+                        None
+                    };
+                let prepared_elicitation = elicitation_slots
+                    .as_ref()
+                    .map(|slots| {
+                        acceptance::prepare_runtime_elicitation_mutation(slots, &observation)
+                    })
+                    .transpose()
+                    .map_err(map_acceptance_error_to_status)?;
 
                 let runtime_target = observation.target_scope.as_ref().and_then(|scope| {
                     (TargetScopeKind::try_from(scope.kind).ok()
@@ -1927,7 +1990,7 @@ where
                         generation: scope.session_generation,
                     })
                 });
-                if let Some(runtime_target) = runtime_target {
+                if runtime_target.is_some() {
                     let sessions =
                         recover_session_registry(&self.storage, &domain, &self.core_generation)
                             .await
@@ -1936,13 +1999,24 @@ where
                     let claims = session::rebuild_spawn_claims_from_log(&self.storage, &domain)
                         .await
                         .map_err(map_spawn_claim_error)?;
-                    let disposition = session::classify_runtime_target(
-                        &domain,
-                        &runtime_target,
+                    let fence = session::ReconciledRuntimeGenerationFence::new(
                         &source_attachment,
                         &adapter_projection,
+                        &claims,
                         &sessions,
                     );
+                    let fenced = if adapter::is_delivery_acknowledgement(&observation) {
+                        adapter::fence_delivery_acknowledgement(&fence, &domain, &observation)
+                    } else if let Some(prepared) = prepared_elicitation.as_ref() {
+                        acceptance::fence_runtime_elicitation_mutation(&fence, &domain, prepared)
+                    } else {
+                        acceptance::fence_runtime_observation(&fence, &domain, observation.clone())
+                    }
+                    .map_err(map_session_error)?;
+                    let acceptance::FencedRuntimeEvidence {
+                        candidate,
+                        disposition,
+                    } = fenced;
                     let late_terminal =
                         acceptance::exact_command_correlation(&observation.correlations)
                             .and_then(|command_id| commands.index.get_command(&command_id))
@@ -1969,49 +2043,18 @@ where
                         } else {
                             session::quarantine_reason_for(&disposition)
                         };
-                        let quarantined = session::quarantined_observation(
+                        let event_id = append_quarantined_runtime_candidate(
+                            &self.storage,
                             &domain,
-                            observation,
+                            candidate,
                             disposition,
                             reason,
                             source_attachment,
-                            &sessions,
-                            &claims,
+                            (&sessions, &claims),
                         )
-                        .map_err(|error| Status::failed_precondition(error.to_string()))?;
-                        let mut audit = AuditRecordDraft::new(
-                            crate::identity::now_timestamp()
-                                .map_err(|error| Status::internal(error.to_string()))?,
-                            patchbay_contracts::patchbay::AuditEventKind::StaleEventIgnored,
-                        );
-                        audit.failure_code = Some(FailureCode::StaleEvent);
-                        audit.reason_code = session::quarantine_reason_code(reason).to_owned();
-                        audit.target_scope = Some(
-                            session::quarantined_candidate_scope(&quarantined)
-                                .map_err(|error| Status::failed_precondition(error.to_string()))?,
-                        );
-                        audit.command_id = match quarantined.candidate.as_ref() {
-                            Some(
-                                patchbay_contracts::patchbay::quarantined_runtime_evidence::Candidate::Observation(
-                                    nested,
-                                ),
-                            ) => acceptance::exact_command_correlation(&nested.correlations),
-                            _ => None,
-                        };
-                        let committed = self
-                            .storage
-                            .append_quarantined_runtime_evidence_audited(
-                                &domain,
-                                quarantined,
-                                audit,
-                            )
-                            .await
-                            .map_err(map_storage_error_to_status)?;
-                        catch_up_command_projection(&self.storage, &domain, &mut commands)
-                            .await
-                            .map_err(map_acceptance_error_to_status)?;
+                        .await?;
                         return Ok(Response::new(ObservationResult {
-                            event_id: Some(committed.source_event_id),
+                            event_id: Some(event_id),
                         }));
                     }
                 }
@@ -2027,7 +2070,17 @@ where
                 catch_up_command_projection(&self.storage, &domain, &mut commands)
                     .await
                     .map_err(map_acceptance_error_to_status)?;
-                let event_id = if adapter::is_delivery_acknowledgement(&observation) {
+                let event_id = if let Some(prepared) = prepared_elicitation {
+                    acceptance::ingest_runtime_elicitation(
+                        &self.storage,
+                        elicitation_slots
+                            .as_mut()
+                            .expect("prepared Elicitation has its projection"),
+                        prepared,
+                    )
+                    .await
+                    .map_err(map_acceptance_error_to_status)?
+                } else if adapter::is_delivery_acknowledgement(&observation) {
                     adapter::ingest_delivery_acknowledgement(
                         &self.storage,
                         &commands.index,

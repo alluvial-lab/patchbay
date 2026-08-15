@@ -7,14 +7,49 @@
 
 use patchbay_contracts::patchbay::{
     typed_correlation, AuthorityDomainId, CommandId, CommandTransition, EventId, FailureCode,
-    Observation, ObservationKind, OperationKind, OperationState, StoredEventKind,
-    StoredEventPayload, TargetScope, TypedCorrelation,
+    Observation, ObservationKind, OperationKind, OperationState, RuntimeTranscriptStatusEvidence,
+    StoredEventKind, StoredEventPayload, TargetScope, TypedCorrelation,
 };
 use prost::Message;
 
 use crate::{acceptance::Clock, resource::ResourceIdentity, storage::Storage};
 
-use super::{allowed_transition, AcceptanceError, OperationStateExt};
+use super::{
+    allowed_transition, fence_runtime_candidate, AcceptanceError, FencedRuntimeEvidence,
+    OperationStateExt, RuntimeEvidenceCandidate, RuntimeGenerationFence,
+};
+
+/// Classify one runtime-targeted Observation through the shared consumer port.
+///
+/// Results retain the exact Observation candidate used by command lifecycle
+/// reconciliation. Event/status/delta evidence uses the typed transcript/status
+/// family so quarantine replay cannot accidentally redispatch it as a normal
+/// transcript or status Observation.
+pub fn fence_runtime_observation<F: RuntimeGenerationFence>(
+    fence: &F,
+    authority_domain_id: &AuthorityDomainId,
+    observation: Observation,
+) -> Result<FencedRuntimeEvidence, crate::session::SessionError> {
+    let kind = ObservationKind::try_from(observation.kind).map_err(|_| {
+        crate::session::SessionError::CorruptRecord(
+            "runtime-targeted Observation has an unknown kind".to_owned(),
+        )
+    })?;
+    let candidate = match kind {
+        ObservationKind::Result => RuntimeEvidenceCandidate::Observation(observation),
+        ObservationKind::Event | ObservationKind::Status | ObservationKind::Delta => {
+            RuntimeEvidenceCandidate::TranscriptStatus(RuntimeTranscriptStatusEvidence {
+                observation: Some(observation),
+            })
+        }
+        ObservationKind::Unspecified => {
+            return Err(crate::session::SessionError::CorruptRecord(
+                "runtime-targeted Observation kind is unspecified".to_owned(),
+            ))
+        }
+    };
+    fence_runtime_candidate(fence, authority_domain_id, candidate)
+}
 
 /// Read access to the live command-state projection.
 ///

@@ -16,21 +16,27 @@ pub mod spawn;
 pub mod state;
 pub mod transitions;
 
-pub use elicitation::{rebuild_slots_from_log, ElicitationRecord, ElicitationSlotLayer};
+pub use elicitation::{
+    fence_runtime_elicitation_mutation, ingest_runtime_elicitation,
+    is_runtime_elicitation_observation, prepare_runtime_elicitation_mutation,
+    rebuild_slots_from_log, ElicitationRecord, ElicitationSlotLayer,
+    PreparedRuntimeElicitationMutation, ELICITATION_SCHEMA,
+};
 pub use elicitation_response::{validate_response_payload, validate_response_responder};
 pub use index::{CommandIndex, MANAGED_SPAWN_OFFERED_REASON};
 pub use observation::{
-    derive_transition, exact_command_correlation, ingest_observation, CommandSnapshot,
-    CommandStateLookup, IngestResult, TransitionCandidate,
+    derive_transition, exact_command_correlation, fence_runtime_observation, ingest_observation,
+    CommandSnapshot, CommandStateLookup, IngestResult, TransitionCandidate,
 };
 pub use pipeline::{
     submit, submit_with_clock, submit_with_clock_and_posture, target_key_for,
     validate_operation_boundary, COMMITTED_OPERATION_KINDS,
 };
 pub use ports::{
-    ActiveElicitation, AllowOperations, Authorized, Clock, ElicitationContractLookup, GrantCheck,
-    GrantDenied, OperationPosture, OperationPostureDenied, ResolvedGrantCheck, SystemClock,
-    TargetBinding, TargetNotFound, TargetResolver,
+    fence_runtime_candidate, ActiveElicitation, AllowOperations, Authorized, Clock,
+    ElicitationContractLookup, FencedRuntimeEvidence, GrantCheck, GrantDenied, OperationPosture,
+    OperationPostureDenied, ResolvedGrantCheck, RuntimeEvidenceCandidate, RuntimeGenerationFence,
+    SystemClock, TargetBinding, TargetNotFound, TargetResolver,
 };
 pub use replay::rebuild_from_log;
 pub use spawn::{

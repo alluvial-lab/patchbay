@@ -1,6 +1,9 @@
-use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc,
+use std::{
+    collections::BTreeSet,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
 };
 
 use patchbay_contracts::patchbay::{
@@ -9,19 +12,20 @@ use patchbay_contracts::patchbay::{
     ActorId, AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport,
     AdapterDiagnosticSeverity, AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory,
     AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition,
-    ContinuationAuthorityProvenance, EndpointId, ExternalEffectDisposition, ExternalRuntimeRef,
-    FailureCode, FreshSpawn, Generation, GrantId, IdempotencyKey, LogicalTargetCreated,
-    LogicalTargetId, LogicalTargetInitialCurrentAssigned, Lsn, Observation, ObservationKind,
-    Operation, OperationKind, PayloadContentType, PayloadEnvelope, ReceiveRequest,
-    ResourceCapability, ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind,
-    ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshotReport,
-    ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport, RuntimeGenerationRef,
-    RuntimeSessionId, SchemaDescriptor, SecurityLockdownEntered, SessionActivityState,
-    SessionConnectivityState, SessionReportSourceCursor, SessionStateEvent, SpawnClaimAccepted,
-    SpawnClaimDisposition, SpawnClaimEvent, SpawnContinuation, SpawnExecutionEvidence,
-    SpawnExecutionEvidenceProducer, SpawnExecutionPhase, SpawnGenerationClaim,
-    SpawnPendingReplacementFence, SpawnRequest, SpawnTargetSpec, StoredEventKind,
-    StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
+    ContinuationAuthorityProvenance, Elicitation, ElicitationId, ElicitationState, EndpointId,
+    ExternalEffectDisposition, ExternalRuntimeRef, FailureCode, FreshSpawn, Generation, GrantId,
+    IdempotencyKey, LogicalTargetCreated, LogicalTargetId, LogicalTargetInitialCurrentAssigned,
+    Lsn, Observation, ObservationKind, Operation, OperationKind, PayloadContentType,
+    PayloadEnvelope, ReceiveRequest, ResourceCapability, ResourceFreshnessState, ResourceId,
+    ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
+    ResourceReportMutation, ResourceSnapshotReport, ResourceStateUnknown, ResourceStateUpsert,
+    ResourceViewReport, RuntimeGenerationRef, RuntimeSessionId, SchemaDescriptor,
+    SecurityLockdownEntered, SessionActivityState, SessionConnectivityState,
+    SessionReportSourceCursor, SessionStateEvent, SpawnClaimAccepted, SpawnClaimDisposition,
+    SpawnClaimEvent, SpawnContinuation, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer,
+    SpawnExecutionPhase, SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnRequest,
+    SpawnTargetSpec, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+    TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
@@ -431,6 +435,69 @@ impl Storage for FailPostCommitRegistrationFoldStorage {
         }
         Ok(committed)
     }
+}
+
+fn generated_oneof_fields(proto: &str, message: &str, oneof: &str) -> BTreeSet<String> {
+    let message = proto
+        .split_once(&format!("message {message} {{"))
+        .expect("generated message exists")
+        .1;
+    let oneof = message
+        .split_once(&format!("oneof {oneof} {{"))
+        .expect("generated oneof exists")
+        .1
+        .split_once("\n  }")
+        .expect("generated oneof closes")
+        .0;
+    oneof
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            words.next()?;
+            words.next().map(str::to_owned)
+        })
+        .collect()
+}
+
+fn generated_enum_values(proto: &str, enumeration: &str) -> BTreeSet<String> {
+    proto
+        .split_once(&format!("enum {enumeration} {{"))
+        .expect("generated enum exists")
+        .1
+        .split_once("\n}")
+        .expect("generated enum closes")
+        .0
+        .lines()
+        .filter_map(|line| line.split_once('=').map(|(name, _)| name.trim().to_owned()))
+        .collect()
+}
+
+#[test]
+fn runtime_ingress_inventory_enumerates_generated_rpc_and_observation_families() {
+    let adapter_proto = include_str!("../../../contracts/proto/patchbay/adapter_control.proto");
+    assert_eq!(
+        generated_oneof_fields(adapter_proto, "ObservationRequest", "observation"),
+        BTreeSet::from([
+            "event".to_owned(),
+            "resource_report".to_owned(),
+            "session_report".to_owned(),
+            "spawn_execution_evidence".to_owned(),
+        ]),
+        "a new adapter ingress arm must be explicitly classified as runtime-generation, resource-generation, or exact-claim fenced"
+    );
+
+    let observations_proto = include_str!("../../../contracts/proto/patchbay/observations.proto");
+    assert_eq!(
+        generated_enum_values(observations_proto, "ObservationKind"),
+        BTreeSet::from([
+            "OBSERVATION_KIND_DELTA".to_owned(),
+            "OBSERVATION_KIND_EVENT".to_owned(),
+            "OBSERVATION_KIND_RESULT".to_owned(),
+            "OBSERVATION_KIND_STATUS".to_owned(),
+            "OBSERVATION_KIND_UNSPECIFIED".to_owned(),
+        ]),
+        "a new Observation kind must be assigned an explicit runtime fence and quarantine family"
+    );
 }
 
 #[test]
@@ -2726,6 +2793,340 @@ async fn authenticated_session_ingress_fences_delayed_and_old_generation_cursors
 }
 
 #[tokio::test]
+async fn every_runtime_ingress_family_uses_one_fence_and_only_outer_quarantine() {
+    use patchbay_contracts::patchbay::quarantined_runtime_evidence::Candidate;
+
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    session_report(SessionConnectivityState::Live),
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("generation one registers");
+
+    let runtime_scope = targeted_operation(domain.clone(), "scope-probe")
+        .target_scope
+        .expect("runtime scope");
+    let opener = ActorEndpointRef {
+        actor_id: Some(ActorId {
+            value: adapter_id().value,
+        }),
+        endpoint_id: Some(EndpointId {
+            value: "pi-adapter-endpoint".into(),
+        }),
+        ..ActorEndpointRef::default()
+    };
+    let elicitation_id = ElicitationId {
+        value: "runtime-question".into(),
+    };
+    let elicitation = Elicitation {
+        elicitation_id: Some(elicitation_id.clone()),
+        authority_domain_id: Some(domain.clone()),
+        opener: Some(opener),
+        target_context: Some(runtime_scope.clone()),
+        state: ElicitationState::Opened as i32,
+        ..Elicitation::default()
+    };
+    let elicitation_open = service
+        .ingest_observation(authenticated_with_attachment_token(
+            runtime_elicitation_request(domain.clone(), elicitation.clone()),
+            &attachment_token,
+        ))
+        .await
+        .expect("Current Elicitation still passes ordinary lifecycle validation")
+        .into_inner()
+        .event_id
+        .expect("Elicitation event id");
+    let opening_event = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|event| event.event_id == elicitation_open)
+        .expect("opening event is durable");
+    assert_eq!(
+        opening_event.payload.kind,
+        StoredEventKind::Elicitation as i32
+    );
+
+    let ack_operation = targeted_operation(domain.clone(), "stale-ack");
+    let result_operation = targeted_operation(domain.clone(), "stale-result");
+    for operation in [&ack_operation, &result_operation] {
+        storage
+            .append(
+                &domain,
+                StoredEventPayload {
+                    kind: StoredEventKind::Operation as i32,
+                    payload: accepted_operation_bytes(operation),
+                },
+            )
+            .await
+            .expect("generation-one command appends");
+    }
+
+    let mut generation_two = session_report(SessionConnectivityState::Live);
+    generation_two.session_generation = Some(Generation { value: 2 });
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    generation_two,
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("generation two supersedes generation one");
+
+    let transcript = runtime_fact_request(
+        domain.clone(),
+        runtime_scope.clone(),
+        ObservationKind::Event,
+        "patchbay.pi.TranscriptEvent.v1",
+    );
+    let status = runtime_fact_request(
+        domain.clone(),
+        runtime_scope.clone(),
+        ObservationKind::Status,
+        "patchbay.pi.DeliveryStatus.v1",
+    );
+    let delta = runtime_fact_request(
+        domain.clone(),
+        runtime_scope.clone(),
+        ObservationKind::Delta,
+        "patchbay.pi.TranscriptDelta.v1",
+    );
+    let result = lifecycle_observation(
+        domain.clone(),
+        &result_operation,
+        ObservationKind::Result,
+        FailureCode::Unspecified,
+    );
+    let mut withdrawn = elicitation;
+    withdrawn.state = ElicitationState::Withdrawn as i32;
+    let elicitation_mutation = runtime_elicitation_request(domain.clone(), withdrawn);
+    let mut stale_report = session_report(SessionConnectivityState::Live);
+    stale_report.source_cursor.as_mut().unwrap().revision = 2;
+
+    let cases = vec![
+        (
+            "delivery_acknowledgement",
+            delivery_acknowledgement(domain.clone(), &ack_operation),
+        ),
+        ("observation", result),
+        ("transcript_event", transcript),
+        ("status", status),
+        ("delta", delta),
+        ("elicitation_mutation", elicitation_mutation),
+        (
+            "session_report",
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    stale_report,
+                )),
+            },
+        ),
+    ];
+
+    let mut observed_families = Vec::new();
+    for (expected_family, request) in cases {
+        let event_id = service
+            .ingest_observation(authenticated_with_attachment_token(
+                request,
+                &attachment_token,
+            ))
+            .await
+            .unwrap_or_else(|error| panic!("{expected_family} stale ingress failed: {error}"))
+            .into_inner()
+            .event_id
+            .expect("quarantine event id");
+        let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
+        let source_index = events
+            .iter()
+            .position(|event| event.event_id == event_id)
+            .expect("returned event exists");
+        let event = &events[source_index];
+        assert_eq!(
+            event.payload.kind,
+            StoredEventKind::QuarantinedRuntimeEvidence as i32,
+            "{expected_family} must persist only the outer quarantine kind"
+        );
+        let quarantine = patchbay_contracts::patchbay::QuarantinedRuntimeEvidence::decode(
+            event.payload.payload.as_slice(),
+        )
+        .expect("quarantine decodes");
+        let audit_event = events
+            .get(source_index + 1)
+            .expect("atomic quarantine append includes its audit");
+        assert_eq!(
+            audit_event.payload.kind,
+            StoredEventKind::AuditRecord as i32
+        );
+        let audit = patchbay_contracts::patchbay::AuditRecord::decode(
+            audit_event.payload.payload.as_slice(),
+        )
+        .expect("stale audit decodes");
+        assert_eq!(audit.source_event_id.as_ref(), Some(&event.event_id));
+        assert_eq!(audit.kind, AuditEventKind::StaleEventIgnored as i32);
+        let actual_family = match quarantine.candidate.expect("typed candidate") {
+            Candidate::Observation(_) => "observation",
+            Candidate::SessionReport(_) => "session_report",
+            Candidate::DeliveryAcknowledgement(_) => "delivery_acknowledgement",
+            Candidate::TranscriptStatus(_) => match expected_family {
+                "transcript_event" | "status" | "delta" => expected_family,
+                _ => "unexpected_transcript_status",
+            },
+            Candidate::ElicitationMutation(_) => "elicitation_mutation",
+        };
+        assert_eq!(actual_family, expected_family);
+        observed_families.push(actual_family);
+    }
+    assert_eq!(
+        observed_families,
+        [
+            "delivery_acknowledgement",
+            "observation",
+            "transcript_event",
+            "status",
+            "delta",
+            "elicitation_mutation",
+            "session_report",
+        ]
+    );
+
+    let replayed_sessions = session::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("all-family quarantine prefix replays");
+    assert!(replayed_sessions
+        .get_tombstone(
+            &adapter_id(),
+            "machine-a",
+            &runtime_session_id(),
+            &Generation { value: 1 },
+        )
+        .is_some());
+    assert_eq!(
+        replayed_sessions
+            .get_live_session(&adapter_id(), "machine-a", &runtime_session_id())
+            .expect("generation two remains current")
+            .identity
+            .session_generation
+            .value,
+        2
+    );
+    let replayed_commands = acceptance::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("quarantine cannot mutate command state");
+    assert_eq!(
+        replayed_commands
+            .get_command(ack_operation.command_id.as_ref().unwrap())
+            .unwrap()
+            .state,
+        OperationState::Accepted
+    );
+    assert_eq!(
+        replayed_commands
+            .get_command(result_operation.command_id.as_ref().unwrap())
+            .unwrap()
+            .state,
+        OperationState::Accepted
+    );
+    let replayed_elicitations = acceptance::rebuild_slots_from_log(&storage, &domain)
+        .await
+        .expect("quarantine cannot mutate Elicitation state");
+    assert_eq!(
+        replayed_elicitations
+            .get_slot(&elicitation_id)
+            .expect("opened Elicitation remains")
+            .state,
+        ElicitationState::Opened
+    );
+}
+
+#[tokio::test]
+async fn attachment_epoch_and_runtime_generation_are_independent_ingress_fences() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
+    let old_token = attach_generation(&service, domain.clone(), 1).await;
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    session_report(SessionConnectivityState::Live),
+                )),
+            },
+            &old_token,
+        ))
+        .await
+        .expect("generation one reports");
+    let current_token = attach_generation(&service, domain.clone(), 2).await;
+    let current_scope = targeted_operation(domain.clone(), "epoch-probe")
+        .target_scope
+        .expect("runtime scope");
+    let current_event = runtime_fact_request(
+        domain.clone(),
+        current_scope,
+        ObservationKind::Event,
+        "patchbay.pi.TranscriptEvent.v1",
+    );
+    let before = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
+    let stale_token = service
+        .ingest_observation(authenticated_with_attachment_token(
+            current_event.clone(),
+            &old_token,
+        ))
+        .await
+        .expect_err("replaced attachment token is fenced before evidence classification");
+    assert_eq!(stale_token.code(), tonic::Code::Unauthenticated);
+    assert_eq!(
+        storage.read_after(&domain, Lsn { value: 0 }).await.unwrap(),
+        before,
+        "a replaced token appends neither normal evidence nor quarantine"
+    );
+
+    let accepted = service
+        .ingest_observation(authenticated_with_attachment_token(
+            current_event,
+            &current_token,
+        ))
+        .await
+        .expect("same runtime generation from the current attachment is admitted")
+        .into_inner()
+        .event_id
+        .expect("normal Observation id");
+    let accepted_event = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|event| event.event_id == accepted)
+        .expect("accepted event exists");
+    assert_eq!(
+        accepted_event.payload.kind,
+        StoredEventKind::Observation as i32
+    );
+}
+
+#[tokio::test]
 async fn adapter_attachment_evidence_cannot_cross_adapter_identity() {
     const VICTIM_EVIDENCE: &str = "token-commune-test-secret";
 
@@ -4602,6 +5003,50 @@ fn lifecycle_observation(
                 )),
             }],
             ..Default::default()
+        })),
+    }
+}
+
+fn runtime_fact_request(
+    domain: AuthorityDomainId,
+    target_scope: TargetScope,
+    kind: ObservationKind,
+    schema_ref: &str,
+) -> ObservationRequest {
+    ObservationRequest {
+        authority_domain_id: Some(domain.clone()),
+        observation: Some(observation_request::Observation::Event(Observation {
+            authority_domain_id: Some(domain),
+            kind: kind as i32,
+            target_scope: Some(target_scope),
+            payload: Some(PayloadEnvelope {
+                schema_ref: schema_ref.to_owned(),
+                ..PayloadEnvelope::default()
+            }),
+            failure_code: FailureCode::Unspecified as i32,
+            ..Observation::default()
+        })),
+    }
+}
+
+fn runtime_elicitation_request(
+    domain: AuthorityDomainId,
+    elicitation: Elicitation,
+) -> ObservationRequest {
+    ObservationRequest {
+        authority_domain_id: Some(domain.clone()),
+        observation: Some(observation_request::Observation::Event(Observation {
+            authority_domain_id: Some(domain),
+            sender: elicitation.opener.clone(),
+            kind: ObservationKind::Event as i32,
+            target_scope: elicitation.target_context.clone(),
+            payload: Some(PayloadEnvelope {
+                payload: elicitation.encode_to_vec(),
+                content_type: PayloadContentType::Protobuf as i32,
+                schema_ref: acceptance::ELICITATION_SCHEMA.to_owned(),
+            }),
+            failure_code: FailureCode::Unspecified as i32,
+            ..Observation::default()
         })),
     }
 }

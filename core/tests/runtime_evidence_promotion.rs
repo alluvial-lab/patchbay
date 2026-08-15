@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use patchbay_contracts::patchbay::{
     quarantined_runtime_evidence, runtime_generation_disposition, spawn_claim_event, spawn_request,
     typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
@@ -23,7 +25,10 @@ use patchbay_contracts::patchbay::{
     StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
-    acceptance::{CommandIndex, ElicitationSlotLayer},
+    acceptance::{
+        fence_runtime_candidate, CommandIndex, ElicitationSlotLayer, RuntimeEvidenceCandidate,
+        RuntimeGenerationFence,
+    },
     adapter::AdapterRegistry,
     authority::{AuthorityRegistry, DESCENDANT_GRANT_ALLOWED_KINDS},
     diagnostics::DiagnosticsProjection,
@@ -2601,6 +2606,83 @@ fn duplicate_staged_runtime_rejection_is_atomic_for_a_fresh_hot_fold() {
     assert!(sessions.logical_targets().get(&duplicate_target).is_none());
 }
 
+fn quarantine_candidate_wire_field(candidate: &RuntimeEvidenceCandidate) -> &'static str {
+    match candidate {
+        RuntimeEvidenceCandidate::Observation(_) => "observation",
+        RuntimeEvidenceCandidate::SessionReport(_) => "session_report",
+        RuntimeEvidenceCandidate::DeliveryAcknowledgement(_) => "delivery_acknowledgement",
+        RuntimeEvidenceCandidate::TranscriptStatus(_) => "transcript_status",
+        RuntimeEvidenceCandidate::ElicitationMutation(_) => "elicitation_mutation",
+    }
+}
+
+fn generated_quarantine_candidate_fields() -> BTreeSet<String> {
+    let proto = include_str!("../../contracts/proto/patchbay/observations.proto");
+    let message = proto
+        .split_once("message QuarantinedRuntimeEvidence {")
+        .expect("quarantine message exists")
+        .1;
+    let oneof = message
+        .split_once("oneof candidate {")
+        .expect("candidate oneof exists")
+        .1
+        .split_once("\n  }")
+        .expect("candidate oneof closes")
+        .0;
+    oneof
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            words.next()?;
+            words.next().map(str::to_owned)
+        })
+        .collect()
+}
+
+struct ClaimedSuccessorForEveryCandidate;
+
+impl RuntimeGenerationFence for ClaimedSuccessorForEveryCandidate {
+    fn classify(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _candidate: &RuntimeEvidenceCandidate,
+    ) -> Result<RuntimeGenerationDisposition, patchbay_core::session::SessionError> {
+        Ok(RuntimeGenerationDisposition {
+            disposition: Some(
+                runtime_generation_disposition::Disposition::ClaimedSuccessor(
+                    patchbay_contracts::patchbay::RuntimeGenerationClaimedSuccessor {
+                        claim_operation_id: Some(command()),
+                        expected_prior: None,
+                        claimed_generation: Some(Generation { value: 1 }),
+                    },
+                ),
+            ),
+        })
+    }
+}
+
+#[test]
+fn claimed_successor_can_never_stage_a_non_session_report_family() {
+    let candidates = [
+        RuntimeEvidenceCandidate::Observation(Observation::default()),
+        RuntimeEvidenceCandidate::DeliveryAcknowledgement(
+            RuntimeDeliveryAcknowledgementEvidence::default(),
+        ),
+        RuntimeEvidenceCandidate::TranscriptStatus(RuntimeTranscriptStatusEvidence::default()),
+        RuntimeEvidenceCandidate::ElicitationMutation(RuntimeElicitationMutationEvidence::default()),
+    ];
+    for candidate in candidates {
+        let error =
+            fence_runtime_candidate(&ClaimedSuccessorForEveryCandidate, &domain(), candidate)
+                .expect_err("non-report ClaimedSuccessor must fail closed");
+        assert!(matches!(
+            error,
+            patchbay_core::session::SessionError::CorruptRecord(message)
+                if message.contains("only for an exact managed SessionReport")
+        ));
+    }
+}
+
 #[test]
 fn every_quarantine_family_is_outer_only_across_all_normal_hot_and_replay_folds() {
     let runtime_scope = TargetScope {
@@ -2678,6 +2760,16 @@ fn every_quarantine_family_is_outer_only_across_all_normal_hot_and_replay_folds(
             ),
         ),
     ];
+
+    let fixture_fields = candidates
+        .iter()
+        .map(|(_, candidate)| quarantine_candidate_wire_field(candidate).to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        fixture_fields,
+        generated_quarantine_candidate_fields(),
+        "the outer-only oracle must enumerate every generated quarantine candidate arm"
+    );
 
     for (family, candidate) in candidates {
         let mut envelope = quarantined(nested_observation.clone());

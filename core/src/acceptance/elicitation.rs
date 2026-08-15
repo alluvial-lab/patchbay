@@ -10,14 +10,172 @@ use std::collections::HashMap;
 use patchbay_contracts::patchbay::{
     typed_correlation, AcceptedOperation, ActorId, ApprovalDecision, ApprovalResponsePayload,
     AuthorityDomainId, CommandId, CommandTransition, Elicitation, ElicitationId, ElicitationState,
-    Lsn, Operation, OperationKind, OperationState, PayloadContentType, ResponseContract,
-    StoredEventKind, TypedCorrelation,
+    EventId, Lsn, Observation, ObservationKind, Operation, OperationKind, OperationState,
+    PayloadContentType, ResponseContract, RuntimeElicitationMutationEvidence, StoredEventKind,
+    StoredEventPayload, TypedCorrelation,
 };
 use prost::Message;
 
 use crate::storage::{validate_next_replay_event, RecordedEvent, Storage};
 
-use super::AcceptanceError;
+use super::{
+    fence_runtime_candidate, AcceptanceError, FencedRuntimeEvidence, RuntimeEvidenceCandidate,
+    RuntimeGenerationFence,
+};
+
+pub const ELICITATION_SCHEMA: &str = "patchbay.Elicitation";
+
+/// A validated adapter Elicitation mutation and its typed runtime-fence shape.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedRuntimeElicitationMutation {
+    pub elicitation: Elicitation,
+    pub evidence: RuntimeElicitationMutationEvidence,
+}
+
+#[must_use]
+pub fn is_runtime_elicitation_observation(observation: &Observation) -> bool {
+    observation
+        .payload
+        .as_ref()
+        .is_some_and(|payload| payload.schema_ref == ELICITATION_SCHEMA)
+}
+
+/// Decode and validate the Elicitation carried by authenticated adapter Event
+/// ingress. The transport Observation supplies source attribution; the durable
+/// normal event remains the generated Elicitation itself.
+pub fn prepare_runtime_elicitation_mutation(
+    slots: &ElicitationSlotLayer,
+    observation: &Observation,
+) -> Result<PreparedRuntimeElicitationMutation, AcceptanceError> {
+    if ObservationKind::try_from(observation.kind).ok() != Some(ObservationKind::Event) {
+        return Err(AcceptanceError::CorruptRecord(
+            "runtime Elicitation ingress must use an Event Observation".to_owned(),
+        ));
+    }
+    let payload = observation.payload.as_ref().ok_or_else(|| {
+        AcceptanceError::CorruptRecord("runtime Elicitation ingress has no payload".to_owned())
+    })?;
+    if payload.schema_ref != ELICITATION_SCHEMA
+        || payload.content_type != PayloadContentType::Protobuf as i32
+    {
+        return Err(AcceptanceError::CorruptRecord(
+            "runtime Elicitation ingress requires the canonical protobuf schema".to_owned(),
+        ));
+    }
+    let mut elicitation = Elicitation::decode(payload.payload.as_slice()).map_err(|error| {
+        AcceptanceError::CorruptRecord(format!(
+            "cannot decode runtime Elicitation payload: {error}"
+        ))
+    })?;
+    if elicitation.authority_domain_id != observation.authority_domain_id
+        || elicitation.target_context != observation.target_scope
+        || elicitation.opener != observation.sender
+    {
+        return Err(AcceptanceError::CorruptRecord(
+            "runtime Elicitation domain, target, or opener differs from authenticated transport"
+                .to_owned(),
+        ));
+    }
+    if elicitation.recorded_lsn.is_some() {
+        return Err(AcceptanceError::CorruptRecord(
+            "adapter Elicitation cannot assign its durable LSN".to_owned(),
+        ));
+    }
+    let to_state = ElicitationState::try_from(elicitation.state).map_err(|_| {
+        AcceptanceError::CorruptRecord("runtime Elicitation has an unknown state".to_owned())
+    })?;
+    if to_state == ElicitationState::Unspecified {
+        return Err(AcceptanceError::CorruptRecord(
+            "runtime Elicitation has unspecified state".to_owned(),
+        ));
+    }
+    let elicitation_id = elicitation.elicitation_id.as_ref().ok_or_else(|| {
+        AcceptanceError::CorruptRecord("runtime Elicitation has no elicitation_id".to_owned())
+    })?;
+    if elicitation_id.value.is_empty() {
+        return Err(AcceptanceError::CorruptRecord(
+            "runtime Elicitation has an empty elicitation_id".to_owned(),
+        ));
+    }
+    let from_state = slots
+        .get_slot(elicitation_id)
+        .map_or(ElicitationState::Unspecified, |slot| slot.state);
+    if from_state == to_state {
+        return Err(AcceptanceError::CorruptRecord(
+            "runtime Elicitation mutation does not change state".to_owned(),
+        ));
+    }
+    validate_adapter_elicitation_transition(
+        slots.get_slot(elicitation_id),
+        &elicitation,
+        to_state,
+    )?;
+    elicitation.state = to_state as i32;
+    Ok(PreparedRuntimeElicitationMutation {
+        evidence: RuntimeElicitationMutationEvidence {
+            elicitation: Some(elicitation.clone()),
+            from_state: from_state as i32,
+            to_state: to_state as i32,
+        },
+        elicitation,
+    })
+}
+
+/// Classify a prepared runtime Elicitation mutation through the shared port.
+pub fn fence_runtime_elicitation_mutation<F: RuntimeGenerationFence>(
+    fence: &F,
+    authority_domain_id: &AuthorityDomainId,
+    prepared: &PreparedRuntimeElicitationMutation,
+) -> Result<FencedRuntimeEvidence, crate::session::SessionError> {
+    fence_runtime_candidate(
+        fence,
+        authority_domain_id,
+        RuntimeEvidenceCandidate::ElicitationMutation(prepared.evidence.clone()),
+    )
+}
+
+/// Persist one already-fenced Current Elicitation through its ordinary
+/// lifecycle checks. Callers must not invoke this for a quarantine disposition.
+pub async fn ingest_runtime_elicitation<S: Storage>(
+    storage: &S,
+    slots: &mut ElicitationSlotLayer,
+    prepared: PreparedRuntimeElicitationMutation,
+) -> Result<EventId, AcceptanceError> {
+    let authority_domain_id = prepared
+        .elicitation
+        .authority_domain_id
+        .as_ref()
+        .ok_or_else(|| {
+            AcceptanceError::CorruptRecord(
+                "runtime Elicitation is missing authority_domain_id".to_owned(),
+            )
+        })?
+        .clone();
+    let elicitation_id = prepared
+        .elicitation
+        .elicitation_id
+        .as_ref()
+        .expect("prepared Elicitation id");
+    let to_state =
+        ElicitationState::try_from(prepared.elicitation.state).expect("prepared Elicitation state");
+    validate_adapter_elicitation_transition(
+        slots.get_slot(elicitation_id),
+        &prepared.elicitation,
+        to_state,
+    )?;
+    let payload = StoredEventPayload {
+        kind: StoredEventKind::Elicitation as i32,
+        payload: prepared.elicitation.encode_to_vec(),
+    };
+    let event_id = storage
+        .append(&authority_domain_id, payload.clone())
+        .await?;
+    slots.observe(&crate::storage::RecordedEvent {
+        event_id: event_id.clone(),
+        payload,
+    })?;
+    Ok(event_id)
+}
 
 /// Return whether an `OperationState` is terminal in the command lifecycle
 /// registry (`docs/PROTOCOL.md` § Command lifecycle state). This mirrors
@@ -44,6 +202,8 @@ const fn operation_state_is_terminal(state: OperationState) -> bool {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ElicitationRecord {
     pub elicitation_id: ElicitationId,
+    /// Immutable opening envelope plus the currently projected state.
+    pub elicitation: Elicitation,
     pub state: ElicitationState,
     /// The LSN of the first transition that terminalized the slot.
     pub terminal_lsn: Option<u64>,
@@ -134,7 +294,7 @@ impl ElicitationSlotLayer {
                 ))
             })?;
 
-        let elicitation_id = elicitation.elicitation_id.ok_or_else(|| {
+        let elicitation_id = elicitation.elicitation_id.clone().ok_or_else(|| {
             AcceptanceError::CorruptRecord(format!(
                 "elicitation at LSN {event_lsn} is missing elicitation_id"
             ))
@@ -180,10 +340,18 @@ impl ElicitationSlotLayer {
             )));
         }
 
-        // An event may be delivered again after later events have already
-        // advanced the slot. Treat any already-known opening as a replayed
-        // source event; it must never reset a terminal projection.
-        if self.slots.contains_key(&elicitation_id) {
+        if let Some(existing) = self.slots.get_mut(&elicitation_id) {
+            validate_adapter_elicitation_transition(Some(existing), &elicitation, state)?;
+            if state == existing.state
+                || (state == ElicitationState::Opened && existing.state != ElicitationState::Opened)
+            {
+                return Ok(());
+            }
+            existing.state = state;
+            existing.elicitation.state = state as i32;
+            if is_terminal_state(state) {
+                existing.terminal_lsn = Some(event_lsn);
+            }
             return Ok(());
         }
 
@@ -191,6 +359,7 @@ impl ElicitationSlotLayer {
             elicitation_id.clone(),
             ElicitationRecord {
                 elicitation_id,
+                elicitation: elicitation.clone(),
                 state,
                 terminal_lsn: is_terminal_state(state).then_some(event_lsn),
                 contract: elicitation.response_contract,
@@ -337,6 +506,7 @@ impl ElicitationSlotLayer {
             } else {
                 ElicitationState::Answered
             };
+            slot.elicitation.state = slot.state as i32;
             slot.terminal_lsn = Some(event_lsn);
             slot.winning_response = Some(response_operation);
         }
@@ -369,6 +539,59 @@ fn decode_approval_decision(operation: &Operation) -> Result<ApprovalDecision, A
             payload.decision
         ))
     })
+}
+
+fn validate_adapter_elicitation_transition(
+    existing: Option<&ElicitationRecord>,
+    incoming: &Elicitation,
+    to_state: ElicitationState,
+) -> Result<(), AcceptanceError> {
+    let Some(existing) = existing else {
+        return if to_state == ElicitationState::Opened {
+            Ok(())
+        } else {
+            Err(AcceptanceError::CorruptRecord(
+                "first runtime Elicitation mutation must open the slot".to_owned(),
+            ))
+        };
+    };
+
+    let mut projected = existing.elicitation.clone();
+    let mut candidate = incoming.clone();
+    projected.state = ElicitationState::Unspecified as i32;
+    candidate.state = ElicitationState::Unspecified as i32;
+    projected.recorded_lsn = None;
+    candidate.recorded_lsn = None;
+    if projected != candidate {
+        return Err(AcceptanceError::CorruptRecord(
+            "runtime Elicitation mutation changes immutable opening context".to_owned(),
+        ));
+    }
+    // Exact state redelivery is replay-idempotent. Re-observing the original
+    // opening event after later progress must likewise never reset the slot.
+    if to_state == existing.state || to_state == ElicitationState::Opened {
+        return Ok(());
+    }
+    if is_terminal_state(existing.state) {
+        return Err(AcceptanceError::CorruptRecord(
+            "runtime Elicitation is already terminal".to_owned(),
+        ));
+    }
+    let allowed = match existing.state {
+        ElicitationState::Opened => {
+            to_state == ElicitationState::Pending || is_terminal_state(to_state)
+        }
+        ElicitationState::Pending => is_terminal_state(to_state),
+        _ => false,
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err(AcceptanceError::CorruptRecord(format!(
+            "invalid runtime Elicitation transition {:?} -> {:?}",
+            existing.state, to_state
+        )))
+    }
 }
 
 /// Rebuild an Elicitation-slot projection by replaying one authority domain.
@@ -454,7 +677,12 @@ mod tests {
             slots: HashMap::from([(
                 id.clone(),
                 ElicitationRecord {
-                    elicitation_id: id,
+                    elicitation_id: id.clone(),
+                    elicitation: Elicitation {
+                        elicitation_id: Some(id),
+                        state: ElicitationState::Opened as i32,
+                        ..Elicitation::default()
+                    },
                     state: ElicitationState::Opened,
                     terminal_lsn: None,
                     contract: None,

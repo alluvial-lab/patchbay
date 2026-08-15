@@ -5,8 +5,9 @@
 //! from depending on either sibling feature's implementation.
 
 use patchbay_contracts::patchbay::{
-    ActorId, AdapterId, AuthorityDomainId, CommandId, ContinuationAuthorityProvenance,
-    ElicitationId, EventId, Generation, GrantId, Operation, OperationKind, ResponseContract,
+    quarantined_runtime_evidence, runtime_generation_disposition, ActorId, AdapterId,
+    AuthorityDomainId, CommandId, ContinuationAuthorityProvenance, ElicitationId, EventId,
+    Generation, GrantId, Operation, OperationKind, ResponseContract, RuntimeGenerationDisposition,
     RuntimeSessionId, SpawnGenerationClaim, SpawnRequest, TargetScope,
 };
 use prost_types::Timestamp;
@@ -14,6 +15,57 @@ use prost_types::Timestamp;
 use crate::{authority::IssuerContext, resource::ResourceIdentity};
 
 pub use crate::time::{Clock, SystemClock, TestClock};
+
+/// The generated, closed runtime-evidence family registry used at every
+/// runtime-targeted consumer boundary. Keeping this as an alias to the
+/// quarantine `oneof` makes the wire contract the single source of truth.
+pub type RuntimeEvidenceCandidate = quarantined_runtime_evidence::Candidate;
+
+/// Consumer-owned runtime-generation classification port.
+///
+/// The production adapter is backed by the reconciled adapter, claim, logical-
+/// target, and session projections. Consumers depend only on this decision and
+/// cannot reach around it to classify one ingress family differently.
+pub trait RuntimeGenerationFence: Send + Sync {
+    fn classify(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        candidate: &RuntimeEvidenceCandidate,
+    ) -> Result<RuntimeGenerationDisposition, crate::session::SessionError>;
+}
+
+/// One candidate paired with the disposition produced by the shared fence.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FencedRuntimeEvidence {
+    pub candidate: RuntimeEvidenceCandidate,
+    pub disposition: RuntimeGenerationDisposition,
+}
+
+/// Invoke the shared fence and enforce the only staging-capable family.
+///
+/// `ClaimedSuccessor` is a disposition, not a SessionReport bypass. Even a
+/// faulty or test fence cannot grant staging authority to another generated
+/// candidate family through this consumer boundary.
+pub fn fence_runtime_candidate<F: RuntimeGenerationFence>(
+    fence: &F,
+    authority_domain_id: &AuthorityDomainId,
+    candidate: RuntimeEvidenceCandidate,
+) -> Result<FencedRuntimeEvidence, crate::session::SessionError> {
+    let disposition = fence.classify(authority_domain_id, &candidate)?;
+    if matches!(
+        disposition.disposition.as_ref(),
+        Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_))
+    ) && !matches!(candidate, RuntimeEvidenceCandidate::SessionReport(_))
+    {
+        return Err(crate::session::SessionError::CorruptRecord(
+            "ClaimedSuccessor is valid only for an exact managed SessionReport".to_owned(),
+        ));
+    }
+    Ok(FencedRuntimeEvidence {
+        candidate,
+        disposition,
+    })
+}
 
 /// The authority seam used before an operation can become durable command
 /// state.
