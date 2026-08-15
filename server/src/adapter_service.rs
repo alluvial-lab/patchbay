@@ -18,7 +18,7 @@ use patchbay_contracts::patchbay::{
 };
 use patchbay_core::{
     acceptance::{self, CommandIndex, OperationStateExt},
-    adapter::{self, AdapterRegistry},
+    adapter::{self, AdapterRecord, AdapterRegistry},
     audit::{AuditSink, DurableAuditSink, RequiredAuditFanout, StderrAuditSink},
     authority::hash_principal_credential,
     diagnostics::{ingest_adapter_diagnostic, validate_adapter_diagnostic_report},
@@ -372,6 +372,33 @@ const DELIVERY_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 
 type DeliveryStream = Pin<Box<dyn Stream<Item = Result<Delivery, Status>> + Send + 'static>>;
 type DisconnectCallback = Box<dyn FnOnce() + Send + 'static>;
+
+/// Deferred single-adapter materialization handle.
+///
+/// Holds only the shared registry `Arc` (O(1) clone) so gate-held retry
+/// reconciliation never pays for whole-registry copying; the full record is
+/// cloned lazily per adapter, only after an indexed retry miss.
+#[derive(Clone)]
+struct AdapterRegistryLookup {
+    adapters: Arc<Mutex<AdapterRegistry>>,
+    adapter_id: AdapterId,
+}
+
+impl AdapterRegistryLookup {
+    async fn point_record(&self) -> Option<AdapterRecord> {
+        #[cfg(test)]
+        ADAPTER_PROJECTION_MATERIALIZATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let adapters = self.adapters.lock().await;
+        adapters.get(&self.adapter_id).cloned()
+    }
+}
+
+/// Test seam: counts single-adapter projection materializations through the
+/// deferred lookup. Exact staged retries must return before ANY materialization
+/// (delta 0); only a fresh classification after an indexed miss pays for it.
+#[cfg(test)]
+pub(crate) static ADAPTER_PROJECTION_MATERIALIZATIONS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 #[derive(Debug, Clone, PartialEq)]
 struct CommandProjection {
@@ -1063,7 +1090,13 @@ where
                             "session report source_cursor is missing adapter_generation",
                         )
                     })?;
-                let (current_adapter_generation, source_attachment, adapter_projection) = {
+                // Extract only the bounded point-lookup fields under the
+                // attachment lock: the indexed exact-retry reconciliation below
+                // needs just the current generation + attachment evidence, so
+                // cloning the whole registry (O(adapters x manifest)) here would
+                // serialize unrelated decisions behind unbounded work. The full
+                // adapter projection is materialized only after an indexed miss.
+                let (current_adapter_generation, source_attachment, adapter_lookup) = {
                     let adapters = self.adapters.lock().await;
                     let record = adapters.get(&authenticated_adapter).ok_or_else(|| {
                         Status::unauthenticated(
@@ -1081,7 +1114,10 @@ where
                             adapter_generation: Some(generation),
                             attachment_event_id: Some(record.attach_event_id.clone()),
                         },
-                        adapters.clone(),
+                        AdapterRegistryLookup {
+                            adapters: self.adapters.clone(),
+                            adapter_id: authenticated_adapter.clone(),
+                        },
                     )
                 };
                 // Replace producer identity with the authenticated adapter. The
@@ -1115,6 +1151,23 @@ where
                         }));
                     }
                 }
+
+                // Indexed miss: this is a fresh classification decision, so the
+                // full adapter projection (single-adapter point materialization,
+                // never a whole-registry clone) is fetched only now. The
+                // classifier receives a single-entry registry view of exactly
+                // this authenticated adapter (it only ever reads that record).
+                let adapter_projection = AdapterRegistry::from_single(
+                    authenticated_adapter.clone(),
+                    adapter_lookup
+                        .point_record()
+                        .await
+                        .ok_or_else(|| {
+                            Status::unauthenticated(
+                                "adapter attachment is not current; reattach required",
+                            )
+                        })?,
+                );
 
                 // The adapter owns an independent session projection. Rebuild
                 // it at the gate boundary before deriving the next report

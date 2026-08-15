@@ -50,6 +50,16 @@ impl AdapterRegistry {
         Self::default()
     }
 
+    /// Single-adapter registry view. Used by gate-held ingress paths that have
+    /// already authenticated one adapter and must not pay whole-registry
+    /// materialization; classification only reads the authenticated record.
+    #[must_use]
+    pub fn from_single(adapter_id: AdapterId, record: AdapterRecord) -> Self {
+        Self {
+            records: HashMap::from([(adapter_id, record)]),
+        }
+    }
+
     #[must_use]
     pub fn get(&self, adapter_id: &AdapterId) -> Option<&AdapterRecord> {
         self.records.get(adapter_id)

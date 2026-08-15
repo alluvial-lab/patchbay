@@ -2165,6 +2165,8 @@ async fn exact_late_staged_retry_exits_before_any_full_rebuild_under_the_decisio
         .into_inner();
 
     storage.reject_full_scans();
+    let materializations_before_retry =
+        ADAPTER_PROJECTION_MATERIALIZATIONS.load(Ordering::SeqCst);
     let unauthenticated = service
         .ingest_observation(authenticated_with_attachment_token(
             ObservationRequest {
@@ -2196,6 +2198,11 @@ async fn exact_late_staged_retry_exits_before_any_full_rebuild_under_the_decisio
         .expect("exact authenticated late retry stays bounded")
         .into_inner();
     assert_eq!(retry.event_id, first.event_id);
+    assert_eq!(
+        ADAPTER_PROJECTION_MATERIALIZATIONS.load(Ordering::SeqCst),
+        materializations_before_retry,
+        "exact staged retry must return before any adapter projection materialization (no whole-registry or per-record clone ahead of the indexed exit)"
+    );
     assert_eq!(
         storage.full_scan_attempts.load(Ordering::SeqCst),
         0,
