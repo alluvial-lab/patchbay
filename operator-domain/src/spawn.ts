@@ -1,6 +1,7 @@
 import { create, toBinary } from "@bufbuild/protobuf";
 import {
   AdapterIdSchema,
+  ContinuationContextStatus,
   FreshSpawnSchema,
   PayloadContentType,
   PayloadEnvelopeSchema,
@@ -25,18 +26,35 @@ export interface SpawnTargetSpecInput {
   deploymentAuthorityRef?: string;
 }
 
-/** The only generic logical-context outcomes. They never imply restoration of
- * shells, subprocesses, memory, or arbitrary process state. */
-export type ContinuationContextStatus = "resumed" | "new_context" | "unknown";
-
+/** Explain the generated adapter-reported context outcome without implying
+ * restoration of shells, subprocesses, memory, or arbitrary process state. */
 export function continuationContextExplanation(status: ContinuationContextStatus): string {
   switch (status) {
-    case "resumed":
+    case ContinuationContextStatus.RESUMED:
       return "Adapter-native logical context resumed; arbitrary process state was not restored.";
-    case "new_context":
+    case ContinuationContextStatus.NEW_CONTEXT:
       return "A new adapter-native logical context was created; prior process state was not restored.";
-    case "unknown":
+    case ContinuationContextStatus.UNKNOWN:
       return "Adapter-native logical-context continuity is unknown; no process-state continuity is claimed.";
+    case ContinuationContextStatus.UNSPECIFIED:
+      throw new Error("continuation context status is unspecified");
+    default:
+      throw new Error(`continuation context status is unknown: ${status}`);
+  }
+}
+
+export function continuationContextStatusName(status: ContinuationContextStatus): string {
+  switch (status) {
+    case ContinuationContextStatus.RESUMED:
+      return "resumed";
+    case ContinuationContextStatus.NEW_CONTEXT:
+      return "new_context";
+    case ContinuationContextStatus.UNKNOWN:
+      return "unknown";
+    case ContinuationContextStatus.UNSPECIFIED:
+      throw new Error("continuation context status is unspecified");
+    default:
+      throw new Error(`continuation context status is unknown: ${status}`);
   }
 }
 

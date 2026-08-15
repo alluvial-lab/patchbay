@@ -5,10 +5,10 @@
 //! fences it by adapter source order, and appends one schema-owned session event.
 
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, EventId, Generation, RuntimeSessionId, SessionActivityState,
-    SessionConnectivityChanged, SessionConnectivityState, SessionGenerationBumped,
-    SessionRegistered, SessionReport, SessionReportApplied, SessionReportSourceCursor,
-    SessionState,
+    AdapterId, AuthorityDomainId, ContinuationContextStatus, EventId, Generation, RuntimeSessionId,
+    SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
+    SessionGenerationBumped, SessionRegistered, SessionReport, SessionReportApplied,
+    SessionReportSourceCursor, SessionState,
 };
 
 use crate::{
@@ -123,7 +123,7 @@ where
                 .to_owned(),
         ));
     }
-    let mut validated = validate_report(&report)?;
+    let mut validated = validate_ordinary_report(&report)?;
     let live = session_lookup
         .current_session(
             authority_domain_id,
@@ -354,9 +354,27 @@ where
     Ok(event_id)
 }
 
+pub(crate) fn validate_ordinary_report(
+    report: &SessionReport,
+) -> Result<ValidatedSessionReport, SessionError> {
+    let validated = validate_report(report)?;
+    if report.continuation_context_status != ContinuationContextStatus::Unspecified as i32 {
+        return Err(SessionError::CorruptRecord(
+            "ordinary session report carries continuation-only context status".to_owned(),
+        ));
+    }
+    Ok(validated)
+}
+
 pub(crate) fn validate_report(
     report: &SessionReport,
 ) -> Result<ValidatedSessionReport, SessionError> {
+    ContinuationContextStatus::try_from(report.continuation_context_status).map_err(|_| {
+        SessionError::CorruptRecord(format!(
+            "session report has unknown continuation context status {}",
+            report.continuation_context_status
+        ))
+    })?;
     let adapter_id = report.adapter_id.clone().ok_or_else(|| {
         SessionError::CorruptRecord("session report is missing adapter_id".to_owned())
     })?;

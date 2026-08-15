@@ -1,5 +1,8 @@
 import { fromBinary } from "@bufbuild/protobuf";
-import { continuationContextExplanation } from "@patchbay/operator-domain";
+import {
+  continuationContextExplanation,
+  continuationContextStatusName,
+} from "@patchbay/operator-domain";
 import {
   AdapterDiagnosticSeverity,
   FailureCode,
@@ -428,11 +431,14 @@ export function renderInstructionCard(
   delivery.append(renderOperationDelivery(document, command, actions, lockdownActive));
   card.append(header, body, meta);
   if (isSpawnContinuation(command)) {
+    const context = command.continuationContextStatus;
     card.append(textElement(
       document,
       "p",
       "instruction-card__meta continuation-context",
-      `Context: unknown — ${continuationContextExplanation("unknown")}`,
+      context === undefined
+        ? "Context: pending adapter report"
+        : `Context: ${continuationContextStatusName(context)} — ${continuationContextExplanation(context)}`,
     ));
   }
   card.append(delivery);

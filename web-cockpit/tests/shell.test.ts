@@ -9,10 +9,13 @@ import {
   AdapterStatusSchema,
   AuthorityDomainIdSchema,
   CommandIdSchema,
+  ContinuationContextStatus,
   ElicitationState,
+  ExternalRuntimeRefSchema,
   FailureCode,
   GenerationSchema,
   LocalSubmissionState,
+  LogicalTargetIdSchema,
   OperationKind,
   OperationSchema,
   OperationState,
@@ -21,6 +24,7 @@ import {
   QuestionContractSchema,
   ResourceFreshnessState,
   ResponseContractKind,
+  RuntimeGenerationRefSchema,
   ResponseContractSchema,
   ResponseOptionSchema,
   RuntimeSessionIdSchema,
@@ -31,6 +35,7 @@ import {
   TargetScopeKind,
   TargetScopeSchema,
 } from "@patchbay/contracts";
+import { continuationSpawnPayload } from "@patchbay/operator-domain";
 import axe from "axe-core";
 import fc from "fast-check";
 import { JSDOM } from "jsdom";
@@ -56,7 +61,7 @@ import {
   operationStateName,
   renderOperationDelivery,
 } from "../src/ui/operation-delivery.js";
-import { renderSessionDetail } from "../src/ui/session-detail.js";
+import { renderInstructionCard, renderSessionDetail } from "../src/ui/session-detail.js";
 import { renderSessionRow } from "../src/ui/session-list.js";
 import { createCockpitShell } from "../src/ui/shell.js";
 
@@ -199,6 +204,29 @@ test("desktop shell is two-pane and rows lead with identity before label metadat
   assert.match(shell.detail.header.textContent!, /provider\/model-1/);
   assert.equal(shell.detail.element.dataset.sessionKey, sessionKey(first.identity));
   assert.equal(shell.element.querySelectorAll(".session-detail").length, 1);
+});
+
+test("session-list spawn action is inert while lockdown is pending or active", () => {
+  for (const lockdown of [
+    { active: true, submitting: false },
+    { active: false, submitting: true },
+  ]) {
+    const dom = new JSDOM();
+    const model = withAdapterCapabilities(withSessions(session("session-1")));
+    model.lockdown = lockdown;
+    let spawnCalls = 0;
+    const shell = createCockpitShell(dom.window.document, model, {
+      markdown: createMarkdownRenderer(dom.window as unknown as Window),
+      actions: {
+        spawn: () => { spawnCalls += 1; },
+      },
+    });
+    const spawn = shell.element.querySelector<HTMLButtonElement>(".sidebar__actions button")!;
+    assert.equal(spawn.disabled, true);
+    assert.match(spawn.title, /Disabled during lockdown or while a lockdown decision is pending/);
+    spawn.click();
+    assert.equal(spawnCalls, 0);
+  }
 });
 
 test("destination rail uses the signed-off punch-out shell and persists panel collapse", () => {
@@ -762,6 +790,39 @@ test("detail integrates markdown, current plus last delivery, failures, contextu
   contextual[1]!.click();
   assert.equal(cancelled, 1);
   assert.equal(interrupted, 1);
+});
+
+test("continuation cards render only generated adapter-reported context evidence", () => {
+  const dom = new JSDOM();
+  const view = session("session-1");
+  const command = runningCommand(view.identity, "spawn-continuation");
+  command.operation.kind = OperationKind.SPAWN;
+  command.operation.payload = continuationSpawnPayload(
+    create(RuntimeGenerationRefSchema, {
+      logicalTargetId: create(LogicalTargetIdSchema, { value: "logical-1" }),
+      externalRuntime: create(ExternalRuntimeRefSchema, {
+        adapterId: create(AdapterIdSchema, { value: view.identity.adapterId }),
+        deploymentScope: view.identity.deploymentScope,
+        runtimeSessionId: create(RuntimeSessionIdSchema, {
+          value: view.identity.runtimeSessionId,
+        }),
+        generation: create(GenerationSchema, { value: view.identity.generation }),
+      }),
+    }),
+    { shape: "session" },
+  );
+  command.continuationContextStatus = ContinuationContextStatus.RESUMED;
+
+  const promoted = renderInstructionCard(dom.window.document, command);
+  assert.match(promoted.querySelector(".continuation-context")!.textContent!, /Context: resumed/);
+  assert.doesNotMatch(promoted.querySelector(".continuation-context")!.textContent!, /unknown/);
+
+  delete command.continuationContextStatus;
+  const pending = renderInstructionCard(dom.window.document, command);
+  assert.equal(
+    pending.querySelector(".continuation-context")!.textContent,
+    "Context: pending adapter report",
+  );
 });
 
 test("session delivery actions require adapter-declared support and lockdown keeps supported actions inert", () => {

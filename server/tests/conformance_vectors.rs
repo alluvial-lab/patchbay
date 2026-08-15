@@ -2088,6 +2088,7 @@ fn session_report_request(
                     }),
                     revision: values.revision,
                 }),
+                continuation_context_status: 0,
             },
         )),
     }

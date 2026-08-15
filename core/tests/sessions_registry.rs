@@ -1,10 +1,10 @@
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, EventId, Generation, Lsn, Operation, OperationKind,
-    RuntimeSessionId, SecurityLockdownEntered, SecurityLockdownEvent, SecurityLockdownExited,
-    SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
-    SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
-    SessionRelabeled, SessionReport, SessionReportApplied, SessionReportSourceCursor, SessionState,
-    StoredEventKind, StoredEventPayload, TargetScope,
+    AdapterId, AuthorityDomainId, ContinuationContextStatus, EventId, Generation, Lsn, Operation,
+    OperationKind, RuntimeSessionId, SecurityLockdownEntered, SecurityLockdownEvent,
+    SecurityLockdownExited, SessionActivityChanged, SessionActivityState,
+    SessionConnectivityChanged, SessionConnectivityState, SessionGenerationBumped,
+    SessionModelChanged, SessionRegistered, SessionRelabeled, SessionReport, SessionReportApplied,
+    SessionReportSourceCursor, SessionState, StoredEventKind, StoredEventPayload, TargetScope,
 };
 use prost::Message;
 
@@ -123,6 +123,7 @@ fn report(revision: u64, model: &str) -> SessionReport {
         model: model.to_owned(),
         spawn_origin: None,
         source_cursor: Some(source_cursor(1, revision)),
+        continuation_context_status: 0,
     }
 }
 
@@ -384,6 +385,24 @@ fn report_application_validates_the_complete_prestate_before_mutation() {
         Err(SessionError::CorruptRecord(_))
     ));
     assert_eq!(candidate, baseline);
+
+    for context_status in [i32::MAX, ContinuationContextStatus::NewContext as i32] {
+        let mut context_report = report(4, "provider/context");
+        context_report.continuation_context_status = context_status;
+        let context_event = events::report_applied(
+            domain(),
+            SessionReportApplied {
+                report: Some(context_report),
+                previous_source_cursor: Some(source_cursor(1, 3)),
+            },
+        );
+        let mut candidate = baseline.clone();
+        assert!(matches!(
+            candidate.observe(&recorded(3, &context_event)),
+            Err(SessionError::CorruptRecord(_))
+        ));
+        assert_eq!(candidate, baseline);
+    }
 
     let corrected = events::report_applied(
         domain(),

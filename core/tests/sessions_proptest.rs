@@ -94,6 +94,7 @@ fn any_session_report(
                         adapter_generation: Some(Generation { value: 1 }),
                         revision: 1,
                     }),
+                    continuation_context_status: 0,
                 }
             },
         )
@@ -172,6 +173,7 @@ fn report_for_key(key: &OracleSessionKey, generation: u64) -> SessionReport {
             adapter_generation: Some(Generation { value: 1 }),
             revision: 1,
         }),
+        continuation_context_status: 0,
     }
 }
 
@@ -225,6 +227,7 @@ fn report_at(
             adapter_generation: Some(Generation { value: 1 }),
             revision: 1,
         }),
+        continuation_context_status: 0,
     }
 }
 

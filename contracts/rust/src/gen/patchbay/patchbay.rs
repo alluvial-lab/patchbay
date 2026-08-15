@@ -1811,6 +1811,10 @@ pub struct SessionReport {
     pub model: ::prost::alloc::string::String,
     #[prost(message, optional, tag="12")]
     pub source_cursor: ::core::option::Option<SessionReportSourceCursor>,
+    /// Set only for an exact managed continuation successor. The adapter chooses
+    /// the value; the core validates and carries it without defaulting.
+    #[prost(enumeration="ContinuationContextStatus", tag="13")]
+    pub continuation_context_status: i32,
 }
 /// Shared runtime-generation fence result. ClaimedSuccessor is deliberately a
 /// typed variant rather than a SessionReport exception: every ingress family
@@ -1888,6 +1892,10 @@ pub struct SpawnSuccessorEvidenceStaged {
     pub source_attachment: ::core::option::Option<RuntimeEvidenceSourceAttachment>,
     #[prost(message, optional, tag="7")]
     pub external_runtime_reservation: ::core::option::Option<ExternalRuntimeRef>,
+    /// Copied from the exact adapter report. Promotion and operator projections
+    /// derive this evidence; core orchestration never invents a value.
+    #[prost(enumeration="ContinuationContextStatus", tag="8")]
+    pub continuation_context_status: i32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SpawnPromotionLifecycleEvidence {
@@ -2451,6 +2459,40 @@ impl SessionActivityState {
             "SESSION_ACTIVITY_STATE_IDLE" => Some(Self::Idle),
             "SESSION_ACTIVITY_STATE_WORKING" => Some(Self::Working),
             "SESSION_ACTIVITY_STATE_UNKNOWN" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+/// Adapter-reported outcome for a spawn continuation's native logical context.
+/// This is evidence only and never claims arbitrary process-state restoration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ContinuationContextStatus {
+    Unspecified = 0,
+    Resumed = 1,
+    NewContext = 2,
+    Unknown = 3,
+}
+impl ContinuationContextStatus {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "CONTINUATION_CONTEXT_STATUS_UNSPECIFIED",
+            Self::Resumed => "CONTINUATION_CONTEXT_STATUS_RESUMED",
+            Self::NewContext => "CONTINUATION_CONTEXT_STATUS_NEW_CONTEXT",
+            Self::Unknown => "CONTINUATION_CONTEXT_STATUS_UNKNOWN",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "CONTINUATION_CONTEXT_STATUS_UNSPECIFIED" => Some(Self::Unspecified),
+            "CONTINUATION_CONTEXT_STATUS_RESUMED" => Some(Self::Resumed),
+            "CONTINUATION_CONTEXT_STATUS_NEW_CONTEXT" => Some(Self::NewContext),
+            "CONTINUATION_CONTEXT_STATUS_UNKNOWN" => Some(Self::Unknown),
             _ => None,
         }
     }

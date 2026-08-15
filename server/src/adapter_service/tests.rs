@@ -12,15 +12,15 @@ use patchbay_contracts::patchbay::{
     ActorId, AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport,
     AdapterDiagnosticSeverity, AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory,
     AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition,
-    ContinuationAuthorityProvenance, Elicitation, ElicitationId, ElicitationState, EndpointId,
-    ExternalEffectDisposition, ExternalRuntimeRef, FailureCode, FreshSpawn, Generation, GrantId,
-    IdempotencyKey, LogicalTargetCreated, LogicalTargetId, LogicalTargetInitialCurrentAssigned,
-    Lsn, Observation, ObservationKind, Operation, OperationKind, PayloadContentType,
-    PayloadEnvelope, ReceiveRequest, ResourceCapability, ResourceFreshnessState, ResourceId,
-    ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
-    ResourceReportMutation, ResourceSnapshotReport, ResourceStateUnknown, ResourceStateUpsert,
-    ResourceViewReport, RuntimeGenerationRef, RuntimeSessionId, SchemaDescriptor,
-    SecurityLockdownEntered, SessionActivityState, SessionConnectivityState,
+    ContinuationAuthorityProvenance, ContinuationContextStatus, Elicitation, ElicitationId,
+    ElicitationState, EndpointId, ExternalEffectDisposition, ExternalRuntimeRef, FailureCode,
+    FreshSpawn, Generation, GrantId, IdempotencyKey, LogicalTargetCreated, LogicalTargetId,
+    LogicalTargetInitialCurrentAssigned, Lsn, Observation, ObservationKind, Operation,
+    OperationKind, PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability,
+    ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind, ResourceProjectionContract,
+    ResourceReport, ResourceReportMutation, ResourceSnapshotReport, ResourceStateUnknown,
+    ResourceStateUpsert, ResourceViewReport, RuntimeGenerationRef, RuntimeSessionId,
+    SchemaDescriptor, SecurityLockdownEntered, SessionActivityState, SessionConnectivityState,
     SessionReportSourceCursor, SessionStateEvent, SpawnClaimAccepted, SpawnClaimDisposition,
     SpawnClaimEvent, SpawnContinuation, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer,
     SpawnExecutionPhase, SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnRequest,
@@ -284,6 +284,33 @@ impl Storage for FullScanRejectingStorage {
     ) -> Result<AuditedBatchAppend, StorageError> {
         self.inner
             .append_batch_audited(authority_domain_id, sources, audit)
+            .await
+    }
+
+    async fn append_observation_transition_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        observation: Observation,
+        transition: CommandTransition,
+        audit: AuditRecordDraft,
+    ) -> Result<patchbay_core::storage::ObservationTransitionAppend, StorageError> {
+        self.inner
+            .append_observation_transition_audited(
+                authority_domain_id,
+                observation,
+                transition,
+                audit,
+            )
+            .await
+    }
+
+    async fn append_spawn_execution_evidence_reconciled(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        evidence: SpawnExecutionEvidence,
+    ) -> Result<patchbay_core::storage::SpawnExecutionEvidenceAppend, StorageError> {
+        self.inner
+            .append_spawn_execution_evidence_reconciled(authority_domain_id, evidence)
             .await
     }
 
@@ -2318,6 +2345,9 @@ async fn managed_spawn_report_stages_exclusively_and_never_registers_current_ses
         .sessions()
         .next()
         .is_none());
+    establish_fresh_staging_prefix(&service, &attachment_token, &domain, &accepted_claim)
+        .await
+        .expect("delivery and ordered fresh-runtime evidence commit");
 
     let mut report = session_report(SessionConnectivityState::Live);
     report.spawn_origin = Some(TypedCorrelation {
@@ -2462,6 +2492,9 @@ async fn exact_late_staged_retry_exits_before_any_full_rebuild_under_the_decisio
         },
     )
     .await;
+    establish_fresh_staging_prefix(&service, &attachment_token, &domain, &accepted_claim)
+        .await
+        .expect("delivery and ordered fresh-runtime evidence commit");
 
     let unrelated = vec![
         StoredEventPayload {
@@ -2637,13 +2670,89 @@ async fn exact_continuation_report_stages_n_plus_one_without_publishing_it() {
         .as_ref()
         .and_then(|claim| claim.claim_operation_id.clone())
         .expect("continuation claim has command id");
+    let operation = accepted
+        .accepted_operation
+        .as_ref()
+        .and_then(|accepted| accepted.operation.as_ref())
+        .expect("continuation has accepted Operation");
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            delivery_acknowledgement(domain.clone(), operation),
+            &attachment_token,
+        ))
+        .await
+        .expect("continuation delivery acknowledgement commits before phase evidence");
 
     let successor_runtime_id = RuntimeSessionId {
         value: "runtime-successor".to_owned(),
     };
+    let successor = RuntimeGenerationRef {
+        logical_target_id: Some(logical_target_id.clone()),
+        external_runtime: Some(ExternalRuntimeRef {
+            adapter_id: Some(adapter_id()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(successor_runtime_id.clone()),
+            generation: Some(Generation { value: 2 }),
+        }),
+    };
+    for (phase, effect, failure, external_runtime) in [
+        (
+            SpawnExecutionPhase::QuiescingPrior,
+            ExternalEffectDisposition::MayExist,
+            FailureCode::ExecutionOutcomeUnknown,
+            None,
+        ),
+        (
+            SpawnExecutionPhase::PriorTerminated,
+            ExternalEffectDisposition::MayExist,
+            FailureCode::ExecutionOutcomeUnknown,
+            None,
+        ),
+        (
+            SpawnExecutionPhase::LaunchAttempted,
+            ExternalEffectDisposition::Identified,
+            FailureCode::Unspecified,
+            Some(successor.clone()),
+        ),
+        (
+            SpawnExecutionPhase::ExternalIdentityKnown,
+            ExternalEffectDisposition::Identified,
+            FailureCode::Unspecified,
+            Some(successor.clone()),
+        ),
+        (
+            SpawnExecutionPhase::HandshakeReconciling,
+            ExternalEffectDisposition::Identified,
+            FailureCode::Unspecified,
+            Some(successor.clone()),
+        ),
+    ] {
+        service
+            .ingest_observation(authenticated_with_attachment_token(
+                ObservationRequest {
+                    authority_domain_id: Some(domain.clone()),
+                    observation: Some(observation_request::Observation::SpawnExecutionEvidence(
+                        SpawnExecutionEvidence {
+                            authority_domain_id: Some(domain.clone()),
+                            exact_claim: accepted.claim.clone(),
+                            phase: phase as i32,
+                            external_effect_disposition: effect as i32,
+                            failure_code: failure as i32,
+                            external_runtime,
+                            ..SpawnExecutionEvidence::default()
+                        },
+                    )),
+                },
+                &attachment_token,
+            ))
+            .await
+            .expect("ordered continuation phase evidence commits");
+    }
+
     let mut report = session_report(SessionConnectivityState::Live);
     report.runtime_session_id = Some(successor_runtime_id.clone());
     report.session_generation = Some(Generation { value: 2 });
+    report.continuation_context_status = ContinuationContextStatus::Resumed as i32;
     report.spawn_origin = Some(TypedCorrelation {
         r#ref: Some(typed_correlation::Ref::CommandId(command_id)),
     });
@@ -2660,14 +2769,22 @@ async fn exact_continuation_report_stages_n_plus_one_without_publishing_it() {
         .into_inner();
 
     let events = storage.read_after(&domain, Lsn { value: 0 }).await.unwrap();
+    let staged_event = events
+        .iter()
+        .find(|event| Some(&event.event_id) == result.event_id.as_ref())
+        .expect("staged event exists");
     assert_eq!(
-        events
-            .iter()
-            .find(|event| Some(&event.event_id) == result.event_id.as_ref())
-            .expect("staged event exists")
-            .payload
-            .kind,
+        staged_event.payload.kind,
         StoredEventKind::SpawnSuccessorEvidenceStaged as i32
+    );
+    let staged = patchbay_contracts::patchbay::SpawnSuccessorEvidenceStaged::decode(
+        staged_event.payload.payload.as_slice(),
+    )
+    .expect("staged continuation evidence decodes");
+    assert_eq!(
+        ContinuationContextStatus::try_from(staged.continuation_context_status),
+        Ok(ContinuationContextStatus::Resumed),
+        "the core must preserve the adapter-reported context outcome"
     );
     assert_eq!(session_publication_counts(&events), (1, 0));
 
@@ -2711,6 +2828,9 @@ async fn duplicate_external_runtime_is_reserved_by_one_logical_owner_only() {
         value: "logical-first".to_owned(),
     };
     let first = append_fresh_claim(&storage, &domain, "spawn-first", first_target.clone()).await;
+    establish_fresh_staging_prefix(&service, &attachment_token, &domain, &first)
+        .await
+        .expect("first owner reserves the identified runtime");
     let mut first_report = session_report(SessionConnectivityState::Live);
     first_report.spawn_origin = Some(TypedCorrelation {
         r#ref: Some(typed_correlation::Ref::CommandId(
@@ -2738,28 +2858,9 @@ async fn duplicate_external_runtime_is_reserved_by_one_logical_owner_only() {
         value: "logical-second".to_owned(),
     };
     let second = append_fresh_claim(&storage, &domain, "spawn-second", second_target.clone()).await;
-    let mut duplicate_report = session_report(SessionConnectivityState::Live);
-    duplicate_report.spawn_origin = Some(TypedCorrelation {
-        r#ref: Some(typed_correlation::Ref::CommandId(
-            second
-                .claim
-                .as_ref()
-                .and_then(|claim| claim.claim_operation_id.clone())
-                .unwrap(),
-        )),
-    });
-    let duplicate = service
-        .ingest_observation(authenticated_with_attachment_token(
-            ObservationRequest {
-                authority_domain_id: Some(domain.clone()),
-                observation: Some(observation_request::Observation::SessionReport(
-                    duplicate_report,
-                )),
-            },
-            &attachment_token,
-        ))
+    let duplicate = establish_fresh_staging_prefix(&service, &attachment_token, &domain, &second)
         .await
-        .expect_err("a second logical owner must fail before staging");
+        .expect_err("a second logical owner must fail when identity evidence reserves it");
     assert_eq!(duplicate.code(), tonic::Code::FailedPrecondition);
     assert!(duplicate.message().contains("duplicate-native-reference"));
 
@@ -5037,6 +5138,7 @@ fn session_report(
             adapter_generation: Some(Generation { value: 1 }),
             revision: 1,
         }),
+        continuation_context_status: 0,
     }
 }
 
@@ -5138,6 +5240,67 @@ async fn append_fresh_claim(
         .await
         .expect("fresh claim appends");
     expected
+}
+
+async fn establish_fresh_staging_prefix<S>(
+    service: &AdapterControlServiceImpl<S>,
+    attachment_token: &str,
+    domain: &AuthorityDomainId,
+    accepted: &SpawnClaimAccepted,
+) -> Result<(), tonic::Status>
+where
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
+{
+    let accepted_operation = accepted
+        .accepted_operation
+        .as_ref()
+        .and_then(|accepted| accepted.operation.as_ref())
+        .expect("test claim has an accepted Operation");
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            delivery_acknowledgement(domain.clone(), accepted_operation),
+            attachment_token,
+        ))
+        .await?;
+
+    let claim = accepted
+        .claim
+        .as_ref()
+        .expect("test claim has generation claim");
+    let successor = RuntimeGenerationRef {
+        logical_target_id: claim.logical_target_id.clone(),
+        external_runtime: Some(ExternalRuntimeRef {
+            adapter_id: Some(adapter_id()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(runtime_session_id()),
+            generation: claim.claimed_generation,
+        }),
+    };
+    for phase in [
+        SpawnExecutionPhase::ExternalIdentityKnown,
+        SpawnExecutionPhase::HandshakeReconciling,
+    ] {
+        service
+            .ingest_observation(authenticated_with_attachment_token(
+                ObservationRequest {
+                    authority_domain_id: Some(domain.clone()),
+                    observation: Some(observation_request::Observation::SpawnExecutionEvidence(
+                        SpawnExecutionEvidence {
+                            authority_domain_id: Some(domain.clone()),
+                            exact_claim: accepted.claim.clone(),
+                            phase: phase as i32,
+                            external_effect_disposition: ExternalEffectDisposition::Identified
+                                as i32,
+                            external_runtime: Some(successor.clone()),
+                            ..SpawnExecutionEvidence::default()
+                        },
+                    )),
+                },
+                attachment_token,
+            ))
+            .await?;
+    }
+    Ok(())
 }
 
 fn replacement_claim(domain: AuthorityDomainId, command_id: &str) -> SpawnClaimAccepted {

@@ -1,10 +1,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use patchbay_contracts::patchbay::{
-    session_state_event, typed_correlation, AdapterId, AuthorityDomainId, CommandId, EventId,
-    Generation, IdempotencyKey, Lsn, RuntimeSessionId, SessionActivityState,
-    SessionConnectivityState, SessionReportSourceCursor, SessionStateEvent, StoredEventKind,
-    StoredEventPayload, TypedCorrelation,
+    session_state_event, typed_correlation, AdapterId, AuthorityDomainId, CommandId,
+    ContinuationContextStatus, EventId, Generation, IdempotencyKey, Lsn, RuntimeSessionId,
+    SessionActivityState, SessionConnectivityState, SessionReportSourceCursor, SessionStateEvent,
+    StoredEventKind, StoredEventPayload, TypedCorrelation,
 };
 use patchbay_core::{
     session::{
@@ -61,6 +61,7 @@ fn report(session_generation: u64, adapter_generation: u64, revision: u64) -> Se
         model: "provider/model-1".to_owned(),
         spawn_origin: None,
         source_cursor: Some(cursor(adapter_generation, revision)),
+        continuation_context_status: 0,
     }
 }
 
@@ -418,6 +419,15 @@ async fn malformed_report_fields_fail_before_append() {
     let mut unknown_activity = report(1, 4, 1);
     unknown_activity.activity = i32::MAX;
     invalid_reports.push(("unknown activity", unknown_activity));
+
+    let mut unknown_context = report(1, 4, 1);
+    unknown_context.continuation_context_status = i32::MAX;
+    invalid_reports.push(("unknown continuation context", unknown_context));
+
+    let mut continuation_only_context = report(1, 4, 1);
+    continuation_only_context.continuation_context_status =
+        ContinuationContextStatus::Resumed as i32;
+    invalid_reports.push(("continuation-only context", continuation_only_context));
 
     let mut missing_adapter = report(1, 4, 1);
     missing_adapter.adapter_id = None;

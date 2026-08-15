@@ -22,7 +22,10 @@ use crate::storage::RecordedEvent;
 
 use super::{
     allowed_activity_transition, allowed_connectivity_transition,
-    ingest::{source_cursor_strictly_after, validate_report, validate_source_cursor},
+    ingest::{
+        source_cursor_strictly_after, validate_ordinary_report, validate_report,
+        validate_source_cursor,
+    },
     LogicalTargetRegistry, SessionError, SessionIdentity, SessionStateEvent,
 };
 
@@ -1116,7 +1119,7 @@ impl SessionRegistry {
                 "session report application at LSN {event_lsn} is missing report"
             ))
         })?;
-        let validated = validate_report(report)?;
+        let validated = validate_ordinary_report(report)?;
         let key = live_key(&validated.identity);
         let current = self.sessions.get(&key).ok_or_else(|| {
             SessionError::CorruptLog(format!(

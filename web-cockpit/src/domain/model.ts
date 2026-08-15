@@ -3,6 +3,7 @@ import {
   ApprovalDecision,
   ApprovalResponsePayloadSchema,
   CommandTransitionSchema,
+  ContinuationContextStatus,
   ElicitationResponsePayloadSchema,
   ElicitationSchema,
   ElicitationState,
@@ -137,6 +138,8 @@ export interface CommandView {
   lsn: bigint;
   failureCode?: FailureCode;
   race?: string;
+  /** Adapter-reported continuation outcome, folded only from promotion evidence. */
+  continuationContextStatus?: ContinuationContextStatus;
   pendingControlRequest?: PendingControlRequest;
   target?: OperationTargetView;
   operation: Operation;
@@ -750,6 +753,15 @@ function foldSpawnPromotion(
   if (!operation || !claim || !report || !promoted?.externalRuntime) {
     throw new Error("spawn promotion is missing accepted, staged, or promoted evidence");
   }
+  const continuationContextStatus = staged.continuationContextStatus;
+  if (claim.expectedPrior) {
+    if (continuationContextStatus === ContinuationContextStatus.UNSPECIFIED
+        || !Object.values(ContinuationContextStatus).includes(continuationContextStatus)) {
+      throw new Error("continuation promotion has invalid adapter context status");
+    }
+  } else if (continuationContextStatus !== ContinuationContextStatus.UNSPECIFIED) {
+    throw new Error("fresh promotion carries continuation-only context status");
+  }
   const commandId = required(operation.commandId?.value, "promoted spawn command id");
   if (!model.commands.has(commandId)) foldOperation(model, operation, lsn);
   const currentCommand = model.commands.get(commandId)!;
@@ -759,6 +771,7 @@ function foldSpawnPromotion(
       state: OperationState.COMPLETED,
       lsn,
       failureCode: undefined,
+      continuationContextStatus: claim.expectedPrior ? continuationContextStatus : undefined,
       pendingControlRequest: undefined,
       history: [
         ...currentCommand.history,

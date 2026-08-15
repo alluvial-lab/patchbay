@@ -60,6 +60,7 @@ fn report(gen: u64, connectivity: SessionConnectivityState) -> SessionReport {
             adapter_generation: Some(generation(1)),
             revision: 1,
         }),
+        continuation_context_status: 0,
     }
 }
 

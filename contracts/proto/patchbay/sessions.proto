@@ -49,6 +49,15 @@ enum SessionActivityState {
   SESSION_ACTIVITY_STATE_UNKNOWN = 3;
 }
 
+// Adapter-reported outcome for a spawn continuation's native logical context.
+// This is evidence only and never claims arbitrary process-state restoration.
+enum ContinuationContextStatus {
+  CONTINUATION_CONTEXT_STATUS_UNSPECIFIED = 0;
+  CONTINUATION_CONTEXT_STATUS_RESUMED = 1;
+  CONTINUATION_CONTEXT_STATUS_NEW_CONTEXT = 2;
+  CONTINUATION_CONTEXT_STATUS_UNKNOWN = 3;
+}
+
 // Adapter-side order for full session reports. Revision is positive and
 // strictly increasing within one authenticated adapter generation and runtime
 // session generation. Core LSN remains the durable arrival/commit order.
@@ -72,6 +81,9 @@ message SessionReport {
   TypedCorrelation spawn_origin = 10;
   string model = 11;
   SessionReportSourceCursor source_cursor = 12;
+  // Set only for an exact managed continuation successor. The adapter chooses
+  // the value; the core validates and carries it without defaulting.
+  ContinuationContextStatus continuation_context_status = 13;
 }
 
 // Shared runtime-generation fence result. ClaimedSuccessor is deliberately a
@@ -120,6 +132,9 @@ message SpawnSuccessorEvidenceStaged {
   RuntimeGenerationDisposition disposition = 5;
   RuntimeEvidenceSourceAttachment source_attachment = 6;
   ExternalRuntimeRef external_runtime_reservation = 7;
+  // Copied from the exact adapter report. Promotion and operator projections
+  // derive this evidence; core orchestration never invents a value.
+  ContinuationContextStatus continuation_context_status = 8;
 }
 
 message SpawnPromotionLifecycleEvidence {

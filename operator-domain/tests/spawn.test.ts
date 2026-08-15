@@ -3,6 +3,7 @@ import test from "node:test";
 import { create, fromBinary } from "@bufbuild/protobuf";
 import {
   AdapterIdSchema,
+  ContinuationContextStatus,
   ExternalRuntimeRefSchema,
   GenerationSchema,
   LogicalTargetIdSchema,
@@ -13,6 +14,7 @@ import {
 } from "@patchbay/contracts";
 import {
   continuationContextExplanation,
+  continuationContextStatusName,
   continuationSpawnPayload,
   freshSpawnPayload,
   spawnAdapterTarget,
@@ -64,9 +66,28 @@ test("continuation rejects wildcard, zero, and unadvanceable prior identity", ()
   );
 });
 
-test("context vocabulary never claims arbitrary process-state restoration", () => {
-  assert.match(continuationContextExplanation("resumed"), /logical context resumed/);
-  assert.match(continuationContextExplanation("resumed"), /process state was not restored/);
-  assert.match(continuationContextExplanation("new_context"), /new adapter-native logical context/);
-  assert.match(continuationContextExplanation("unknown"), /no process-state continuity is claimed/);
+test("generated context vocabulary never claims arbitrary process-state restoration", () => {
+  assert.equal(continuationContextStatusName(ContinuationContextStatus.RESUMED), "resumed");
+  assert.equal(continuationContextStatusName(ContinuationContextStatus.NEW_CONTEXT), "new_context");
+  assert.equal(continuationContextStatusName(ContinuationContextStatus.UNKNOWN), "unknown");
+  assert.match(
+    continuationContextExplanation(ContinuationContextStatus.RESUMED),
+    /logical context resumed/,
+  );
+  assert.match(
+    continuationContextExplanation(ContinuationContextStatus.RESUMED),
+    /process state was not restored/,
+  );
+  assert.match(
+    continuationContextExplanation(ContinuationContextStatus.NEW_CONTEXT),
+    /new adapter-native logical context/,
+  );
+  assert.match(
+    continuationContextExplanation(ContinuationContextStatus.UNKNOWN),
+    /no process-state continuity is claimed/,
+  );
+  assert.throws(
+    () => continuationContextExplanation(ContinuationContextStatus.UNSPECIFIED),
+    /unspecified/,
+  );
 });

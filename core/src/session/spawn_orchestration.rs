@@ -13,41 +13,6 @@ use patchbay_contracts::patchbay::{
 
 use super::{SessionIdentity, SessionRegistry};
 
-/// Adapter-reported logical-context outcome. This is deliberately not a
-/// process-state claim and never becomes a protocol lifecycle state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContinuationContextStatus {
-    Resumed,
-    NewContext,
-    Unknown,
-}
-
-impl ContinuationContextStatus {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Resumed => "resumed",
-            Self::NewContext => "new_context",
-            Self::Unknown => "unknown",
-        }
-    }
-}
-
-impl TryFrom<&str> for ContinuationContextStatus {
-    type Error = SpawnOrchestrationError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "resumed" => Ok(Self::Resumed),
-            "new_context" => Ok(Self::NewContext),
-            "unknown" => Ok(Self::Unknown),
-            _ => Err(SpawnOrchestrationError::UnknownContinuationContextStatus(
-                value.to_owned(),
-            )),
-        }
-    }
-}
-
 /// Prior-generation presentation required by one failure/progress cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PriorRuntimeOutcome {
@@ -93,8 +58,6 @@ pub struct SpawnPhaseOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SpawnOrchestrationError {
-    #[error("unknown continuation context status {0:?}")]
-    UnknownContinuationContextStatus(String),
     #[error("spawn phase/effect/failure combination is not in the closed orchestration table")]
     InvalidPhaseOutcome,
     #[error("continuation exact prior is malformed")]
@@ -277,9 +240,14 @@ pub fn runtime_matches_claim(runtime: &RuntimeGenerationRef, claim: &SpawnGenera
 
 /// Durable phase checkpoints retained inside the claim projection. They are
 /// evidence for ordering only; they do not publish the candidate or complete
-/// the Operation.
+/// the Operation. Continuations retain the complete delivery-to-staging spine
+/// so readiness never depends on a caller's in-memory sequencing flags.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct SpawnCompletionPhaseRecord {
+    delivered: Vec<u64>,
+    quiescing_prior: Vec<u64>,
+    prior_terminated: Vec<u64>,
+    launch_attempted: Vec<u64>,
     external_identity_known: Vec<(u64, RuntimeGenerationRef)>,
     handshake_reconciling: Vec<(u64, RuntimeGenerationRef)>,
     staged: Option<(u64, RuntimeGenerationRef)>,
@@ -287,71 +255,136 @@ pub(crate) struct SpawnCompletionPhaseRecord {
 }
 
 impl SpawnCompletionPhaseRecord {
+    pub(crate) fn observe_delivered(&mut self, lsn: u64) {
+        self.delivered.push(lsn);
+    }
+
     pub(crate) fn observe_progress(
         &mut self,
         phase: SpawnExecutionPhase,
-        runtime: RuntimeGenerationRef,
+        runtime: Option<RuntimeGenerationRef>,
+        failure: FailureCode,
         lsn: u64,
     ) {
         match phase {
-            SpawnExecutionPhase::ExternalIdentityKnown => {
-                self.external_identity_known.push((lsn, runtime));
+            SpawnExecutionPhase::QuiescingPrior => self.quiescing_prior.push(lsn),
+            SpawnExecutionPhase::PriorTerminated => self.prior_terminated.push(lsn),
+            SpawnExecutionPhase::LaunchAttempted => self.launch_attempted.push(lsn),
+            SpawnExecutionPhase::ExternalIdentityKnown if failure == FailureCode::Unspecified => {
+                if let Some(runtime) = runtime {
+                    self.external_identity_known.push((lsn, runtime));
+                }
             }
-            SpawnExecutionPhase::HandshakeReconciling => {
-                self.handshake_reconciling.push((lsn, runtime));
+            SpawnExecutionPhase::HandshakeReconciling if failure == FailureCode::Unspecified => {
+                if let Some(runtime) = runtime {
+                    self.handshake_reconciling.push((lsn, runtime));
+                }
             }
-            SpawnExecutionPhase::SuccessEvidenceReported => {
-                self.success_evidence_reported.push((lsn, runtime));
+            SpawnExecutionPhase::SuccessEvidenceReported if failure == FailureCode::Unspecified => {
+                if let Some(runtime) = runtime {
+                    self.success_evidence_reported.push((lsn, runtime));
+                }
             }
             SpawnExecutionPhase::Unspecified
             | SpawnExecutionPhase::AcceptedNotOffered
             | SpawnExecutionPhase::Offered
-            | SpawnExecutionPhase::QuiescingPrior
-            | SpawnExecutionPhase::PriorTerminated
-            | SpawnExecutionPhase::LaunchAttempted => {}
+            | SpawnExecutionPhase::ExternalIdentityKnown
+            | SpawnExecutionPhase::HandshakeReconciling
+            | SpawnExecutionPhase::SuccessEvidenceReported => {}
         }
+    }
+
+    pub(crate) fn may_stage(&self, runtime: &RuntimeGenerationRef, continuation: bool) -> bool {
+        self.has_initial_handshake_before(runtime, continuation, None)
     }
 
     pub(crate) fn observe_staged(&mut self, runtime: RuntimeGenerationRef, lsn: u64) {
         self.staged = Some((lsn, runtime));
     }
 
-    /// Initial readiness is `identity → handshake → stage → success`. After an
-    /// ambiguity poisons an already staged claim, explicit reconciliation may
-    /// reuse that exact reservation, but must report a new handshake and
-    /// success after the poison decision. An old success can therefore never
-    /// auto-promote after stream loss.
+    /// Initial readiness is the durable `delivery → quiesce → old runtime →
+    /// launch → identity → handshake → stage → success` chain for a
+    /// continuation (`identity → handshake → stage → success` for fresh
+    /// spawn). If ambiguity poisons an already staged claim, reconciliation may
+    /// reuse that reservation, but a later handshake and success are required.
     pub(crate) fn is_ready(
         &self,
         runtime: &RuntimeGenerationRef,
+        continuation: bool,
+        accepted_lsn: u64,
         latest_disposition_lsn: u64,
     ) -> bool {
         let Some((staged_lsn, staged_runtime)) = self.staged.as_ref() else {
             return false;
         };
-        if staged_runtime != runtime {
+        if staged_runtime != runtime
+            || !self.has_initial_handshake_before(runtime, continuation, Some(*staged_lsn))
+        {
             return false;
         }
+
+        if latest_disposition_lsn > accepted_lsn {
+            self.handshake_reconciling
+                .iter()
+                .filter(|(_, candidate)| candidate == runtime)
+                .any(|(handshake_lsn, _)| {
+                    *handshake_lsn > latest_disposition_lsn
+                        && self.success_after(
+                            runtime,
+                            (*staged_lsn)
+                                .max(*handshake_lsn)
+                                .max(latest_disposition_lsn),
+                        )
+                })
+        } else {
+            self.success_after(runtime, *staged_lsn)
+        }
+    }
+
+    fn has_initial_handshake_before(
+        &self,
+        runtime: &RuntimeGenerationRef,
+        continuation: bool,
+        before_lsn: Option<u64>,
+    ) -> bool {
         self.external_identity_known
             .iter()
             .filter(|(_, candidate)| candidate == runtime)
             .any(|(identity_lsn, _)| {
-                self.handshake_reconciling
-                    .iter()
-                    .filter(|(_, candidate)| candidate == runtime)
-                    .any(|(handshake_lsn, _)| {
-                        *handshake_lsn > *identity_lsn
-                            && *handshake_lsn > latest_disposition_lsn
-                            && self
-                                .success_evidence_reported
-                                .iter()
-                                .filter(|(_, candidate)| candidate == runtime)
-                                .any(|(success_lsn, _)| {
-                                    *success_lsn > *handshake_lsn
-                                        && *success_lsn > *staged_lsn
-                                        && *success_lsn > latest_disposition_lsn
-                                })
-                    })
+                (!continuation || self.has_continuation_prefix(*identity_lsn))
+                    && self
+                        .handshake_reconciling
+                        .iter()
+                        .filter(|(_, candidate)| candidate == runtime)
+                        .any(|(handshake_lsn, _)| {
+                            *handshake_lsn > *identity_lsn
+                                && before_lsn.is_none_or(|limit| *handshake_lsn < limit)
+                        })
             })
+    }
+
+    fn has_continuation_prefix(&self, identity_lsn: u64) -> bool {
+        self.delivered.iter().any(|delivered_lsn| {
+            self.quiescing_prior
+                .iter()
+                .filter(|quiesce_lsn| **quiesce_lsn > *delivered_lsn)
+                .any(|quiesce_lsn| {
+                    self.prior_terminated
+                        .iter()
+                        .filter(|terminated_lsn| **terminated_lsn > *quiesce_lsn)
+                        .any(|terminated_lsn| {
+                            self.launch_attempted.iter().any(|launch_lsn| {
+                                *launch_lsn > *terminated_lsn && *launch_lsn < identity_lsn
+                            })
+                        })
+                })
+        })
+    }
+
+    fn success_after(&self, runtime: &RuntimeGenerationRef, after_lsn: u64) -> bool {
+        self.success_evidence_reported
+            .iter()
+            .filter(|(_, candidate)| candidate == runtime)
+            .any(|(success_lsn, _)| *success_lsn > after_lsn)
     }
 }

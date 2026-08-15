@@ -551,6 +551,7 @@ where
                                 revision: 1,
                             },
                         ),
+                        continuation_context_status: 0,
                     },
                 )),
             },
@@ -1923,6 +1924,8 @@ async fn transition_fault_cannot_strand_authenticated_result_and_legacy_strand_f
         let _guard = gate.acquire().await;
         seed_adapter_scoped_spawn(&storage).await;
     }
+    report_progress(&service, &token, SpawnExecutionPhase::ExternalIdentityKnown).await;
+    report_progress(&service, &token, SpawnExecutionPhase::HandshakeReconciling).await;
     report_successful_spawn(&service, &token).await;
     let before_fault = all_events(&storage).await;
 

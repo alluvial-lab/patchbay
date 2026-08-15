@@ -1,14 +1,13 @@
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, ExternalEffectDisposition, ExternalRuntimeRef, Generation,
-    LogicalTargetCreated, LogicalTargetId, LogicalTargetInitialCurrentAssigned,
+    AuthorityDomainId, ContinuationContextStatus, ExternalEffectDisposition, ExternalRuntimeRef,
+    Generation, LogicalTargetCreated, LogicalTargetId, LogicalTargetInitialCurrentAssigned,
     RuntimeGenerationRef, RuntimeSessionId, SessionActivityState, SessionConnectivityState,
     SessionRegistered, SessionState, SpawnExecutionPhase, SpawnGenerationClaim, StoredEventKind,
 };
 use patchbay_core::{
     session::{
         events, phase_outcome, validate_continuation_prior_quiesced, CandidateOutcome,
-        ClaimFenceOutcome, ContinuationContextStatus, PriorRuntimeOutcome, SessionRegistry,
-        SpawnOrchestrationError,
+        ClaimFenceOutcome, PriorRuntimeOutcome, SessionRegistry, SpawnOrchestrationError,
     },
     storage::RecordedEvent,
 };
@@ -97,17 +96,23 @@ fn registry(
 }
 
 #[test]
-fn continuation_context_vocabulary_is_closed_and_process_state_honest() {
-    for value in ["resumed", "new_context", "unknown"] {
-        assert_eq!(
-            ContinuationContextStatus::try_from(value).unwrap().as_str(),
-            value
-        );
-    }
-    assert!(matches!(
-        ContinuationContextStatus::try_from("restored_process"),
-        Err(SpawnOrchestrationError::UnknownContinuationContextStatus(_))
-    ));
+fn generated_continuation_context_vocabulary_is_closed_and_process_state_honest() {
+    assert_eq!(
+        ContinuationContextStatus::try_from(1),
+        Ok(ContinuationContextStatus::Resumed)
+    );
+    assert_eq!(
+        ContinuationContextStatus::try_from(2),
+        Ok(ContinuationContextStatus::NewContext)
+    );
+    assert_eq!(
+        ContinuationContextStatus::try_from(3),
+        Ok(ContinuationContextStatus::Unknown)
+    );
+    assert!(ContinuationContextStatus::try_from(4).is_err());
+    assert!(!ContinuationContextStatus::Resumed
+        .as_str_name()
+        .contains("PROCESS"));
 }
 
 #[test]

@@ -1,5 +1,6 @@
 import { create, fromBinary } from "@bufbuild/protobuf";
 import {
+  ContinuationContextStatus,
   ExternalRuntimeRefSchema,
   GenerationSchema,
   LsnSchema,
@@ -13,6 +14,7 @@ import {
 } from "@patchbay/contracts";
 import {
   continuationContextExplanation,
+  continuationContextStatusName,
   continuationSpawnPayload,
   freshSpawnPayload,
   spawnAdapterTarget,
@@ -81,7 +83,7 @@ export async function restartCommand(
 ): Promise<number> {
   const context = await operationContext(store, authorityDomainId);
   const session = resolveSession(await loadSessions(client, authorityDomainId), options.target);
-  const logicalTargetId = await resolveManagedLogicalTarget(client, authorityDomainId, session);
+  const managed = await resolveManagedLogicalTarget(client, authorityDomainId, session);
   const targetScope = spawnAdapterTarget(required(session.adapterId?.value, "session adapter id"));
   const operation = operationBase(
     context,
@@ -89,14 +91,22 @@ export async function restartCommand(
     OperationKind.SPAWN,
     operationIds(targetScope, options),
   );
-  operation.payload = continuationSpawnPayload(exactPrior(logicalTargetId, session), {
+  operation.payload = continuationSpawnPayload(exactPrior(managed.logicalTargetId, session), {
     shape: options.shape,
     deploymentAuthorityRef: options.deploymentAuthorityRef,
   });
   const identity = canonicalSessionIdentity(session);
   output.stderr(options.json
-    ? JSON.stringify({ target: identity, intent: "continuation", context: "unknown" })
-    : `Target: ${identity} intent=continuation; ${continuationContextExplanation("unknown")}`);
+    ? JSON.stringify({
+        target: identity,
+        intent: "continuation",
+        ...(managed.contextStatus === undefined
+          ? {}
+          : { currentContext: continuationContextStatusName(managed.contextStatus) }),
+      })
+    : `Target: ${identity} intent=continuation${managed.contextStatus === undefined
+      ? ""
+      : `; current ${continuationContextExplanation(managed.contextStatus)}`}`);
   return printSubmissionResult(await client.submit({ operation }), options.json, output);
 }
 
@@ -120,14 +130,14 @@ async function resolveManagedLogicalTarget(
   client: Pick<ControlClient, "subscribe">,
   authorityDomainId: string,
   session: Session,
-): Promise<string> {
+): Promise<{ logicalTargetId: string; contextStatus?: ContinuationContextStatus }> {
   const expected = externalIdentity(
     session.adapterId?.value,
     session.deploymentScope,
     session.runtimeSessionId?.value,
     session.sessionGeneration?.value,
   );
-  let found: string | undefined;
+  let found: { logicalTargetId: string; contextStatus?: ContinuationContextStatus } | undefined;
   for await (const event of client.subscribe({
     authorityDomainId: { value: authorityDomainId },
     cursor: create(LsnSchema, { value: 0n }),
@@ -141,14 +151,31 @@ async function resolveManagedLogicalTarget(
       external.runtimeSessionId?.value,
       external.generation?.value,
     ) !== expected) continue;
-    const candidate = required(promotion.promotedRuntime?.logicalTargetId?.value, "promoted logical target id");
-    if (found && found !== candidate) throw new Error("current runtime has conflicting logical-target history");
+    const logicalTargetId = required(
+      promotion.promotedRuntime?.logicalTargetId?.value,
+      "promoted logical target id",
+    );
+    const reportedContext = promotion.stagedSuccessor?.staged?.continuationContextStatus;
+    const contextStatus = reportedContext === undefined
+      || reportedContext === ContinuationContextStatus.UNSPECIFIED
+      ? undefined
+      : reportedContinuationContext(reportedContext);
+    const candidate = { logicalTargetId, contextStatus };
+    if (found && (found.logicalTargetId !== candidate.logicalTargetId
+        || found.contextStatus !== candidate.contextStatus)) {
+      throw new Error("current runtime has conflicting managed promotion history");
+    }
     found = candidate;
   }
   if (!found) {
     throw new Error("session is not a reconciled managed logical target; restart is unavailable");
   }
   return found;
+}
+
+function reportedContinuationContext(status: ContinuationContextStatus): ContinuationContextStatus {
+  continuationContextStatusName(status);
+  return status;
 }
 
 function externalIdentity(

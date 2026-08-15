@@ -1,28 +1,31 @@
 use std::collections::{BTreeSet, HashSet};
 
 use patchbay_contracts::patchbay::{
-    quarantined_runtime_evidence, runtime_generation_disposition, spawn_claim_event, spawn_request,
-    typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
+    no_external_effect_proof, quarantined_runtime_evidence, runtime_generation_disposition,
+    spawn_claim_disposition_changed, spawn_claim_event, spawn_request, typed_correlation,
+    AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
     AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AuditEventKind,
     AuditRecord, AuthorityDomainId, CommandId, CommandTransition, ContinuationAuthorityProvenance,
     DescendantGrant, DescendantGrantProvenance, Elicitation, ElicitationId, ElicitationState,
     EndpointId, EventId, ExternalEffectDisposition, ExternalRuntimeRef, FailureCode, FreshSpawn,
     Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey,
     LogicalTargetCandidateReleased, LogicalTargetCandidateReserved, LogicalTargetCreated,
-    LogicalTargetId, LogicalTargetInitialCurrentAssigned, Lsn, Observation, ObservationKind,
-    Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
+    LogicalTargetId, LogicalTargetInitialCurrentAssigned, Lsn, NoExternalEffectProof, Observation,
+    ObservationKind, Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
     QuarantinedRuntimeEvidence, Revocation, RuntimeDeliveryAcknowledgementEvidence,
     RuntimeElicitationMutationEvidence, RuntimeEvidenceClassificationContext,
     RuntimeEvidenceQuarantineReason, RuntimeEvidenceSourceAttachment, RuntimeGenerationDisposition,
     RuntimeGenerationRef, RuntimeGenerationUnknown, RuntimeSessionId,
     RuntimeTranscriptStatusEvidence, SessionActivityState, SessionConnectivityState,
     SessionRegistered, SessionReport, SessionReportSourceCursor, SessionState, SpawnClaimAccepted,
-    SpawnClaimDisposition, SpawnClaimEvent, SpawnContinuation, SpawnEvidenceAttachment,
-    SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
-    SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnPromotionAuthorityEvidence,
-    SpawnPromotionCommitted, SpawnPromotionLifecycleEvidence, SpawnPromotionResultEvidence,
-    SpawnPromotionStagedEvidence, SpawnRequest, SpawnSuccessorEvidenceStaged, SpawnTargetSpec,
-    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
+    SpawnClaimAmbiguityEvidence, SpawnClaimDisposition, SpawnClaimDispositionChanged,
+    SpawnClaimEvent, SpawnContinuation, SpawnEvidenceAttachment, SpawnExecutionEvidence,
+    SpawnExecutionEvidenceProducer, SpawnExecutionPhase, SpawnGenerationClaim,
+    SpawnPendingReplacementFence, SpawnPromotionAuthorityEvidence, SpawnPromotionCommitted,
+    SpawnPromotionLifecycleEvidence, SpawnPromotionResultEvidence, SpawnPromotionStagedEvidence,
+    SpawnRequest, SpawnSuccessorEvidenceStaged, SpawnTargetSpec, StoredEventKind,
+    StoredEventPayload, SupervisorPreLaunchFailureProof, TargetScope, TargetScopeKind,
+    TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{
@@ -203,6 +206,44 @@ fn identified_evidence(
             logical_target_id: claim.logical_target_id,
             external_runtime: Some(external_runtime),
         }),
+    }
+}
+
+fn continuation_prelaunch_evidence(
+    accepted: &SpawnClaimAccepted,
+    phase: SpawnExecutionPhase,
+) -> SpawnExecutionEvidence {
+    assert!(matches!(
+        phase,
+        SpawnExecutionPhase::QuiescingPrior | SpawnExecutionPhase::PriorTerminated
+    ));
+    SpawnExecutionEvidence {
+        authority_domain_id: Some(domain()),
+        exact_claim: accepted.claim.clone(),
+        phase: phase as i32,
+        external_effect_disposition: ExternalEffectDisposition::ProvedNone as i32,
+        producer: SpawnExecutionEvidenceProducer::CurrentAdapter as i32,
+        source_attachment: Some(SpawnEvidenceAttachment {
+            adapter_id: Some(AdapterId {
+                value: "pi".to_owned(),
+            }),
+            adapter_generation: Some(Generation { value: 3 }),
+            attachment_event_id: Some(event_id(1)),
+        }),
+        failure_code: FailureCode::ExecutionFailed as i32,
+        no_external_effect_proof: Some(NoExternalEffectProof {
+            proof: Some(
+                no_external_effect_proof::Proof::ExactSupervisorPreLaunchFailure(
+                    SupervisorPreLaunchFailureProof {
+                        adapter_id: Some(AdapterId {
+                            value: "pi".to_owned(),
+                        }),
+                        adapter_generation: Some(Generation { value: 3 }),
+                    },
+                ),
+            ),
+        }),
+        external_runtime: None,
     }
 }
 
@@ -414,6 +455,8 @@ fn staged() -> SpawnSuccessorEvidenceStaged {
         }),
         source_attachment: Some(source_attachment()),
         external_runtime_reservation: Some(external(1)),
+        continuation_context_status:
+            patchbay_contracts::patchbay::ContinuationContextStatus::Unspecified as i32,
     }
 }
 
@@ -805,57 +848,73 @@ async fn append_prefix(storage: &RusqliteStorage, prefix: Vec<RecordedEvent>) {
         } else if event.payload.kind == StoredEventKind::SpawnClaim as i32 {
             let claim_event = SpawnClaimEvent::decode(event.payload.payload.as_slice())
                 .expect("claim fixture decodes");
-            let spawn_claim_event::Mutation::Accepted(accepted) =
-                claim_event.mutation.expect("claim fixture mutation")
-            else {
-                panic!("prefix fixture requires accepted claim");
-            };
-            let accepted_operation = accepted.accepted_operation.as_ref().unwrap();
-            let operation = accepted_operation.operation.as_ref().unwrap();
-            let mut audit = AuditRecordDraft::new(
-                Timestamp {
-                    seconds: 10,
-                    nanos: 0,
-                },
-                AuditEventKind::CommandSubmissionAccepted,
-            );
-            audit.actor_id = operation
-                .sender
-                .as_ref()
-                .and_then(|sender| sender.actor_id.clone());
-            audit.endpoint_id = operation
-                .sender
-                .as_ref()
-                .and_then(|sender| sender.endpoint_id.clone());
-            audit.device_id = operation
-                .sender
-                .as_ref()
-                .and_then(|sender| sender.device_id.clone());
-            audit.command_id = operation.command_id.clone();
-            audit.grant_id = accepted_operation.authorizing_grant_id.clone();
-            audit.target_scope = operation.target_scope.clone();
-            audit.reason_code = "operation_spawn".to_owned();
-            let key = IdempotencyKey {
-                value: operation.idempotency_key.clone(),
-            };
-            let logical_payload = operation.encode_to_vec();
-            match storage
-                .append_spawn_claim_accepted(
-                    &domain(),
-                    &key,
-                    &TargetKey::new("spawn-target".to_owned()).unwrap(),
-                    accepted,
-                    audit,
-                    logical_payload,
-                )
-                .await
-                .expect("claim fixture appends through its dedicated boundary")
-            {
-                patchbay_core::storage::SpawnClaimDedupOutcome::Appended(committed) => {
-                    committed.source_event_id
-                }
-                patchbay_core::storage::SpawnClaimDedupOutcome::Duplicate(_) => {
-                    panic!("prefix fixture unexpectedly deduplicated")
+            let mutation = claim_event.mutation.expect("claim fixture mutation");
+            if matches!(mutation, spawn_claim_event::Mutation::DispositionChanged(_)) {
+                let existing = storage
+                    .read_after(
+                        &domain(),
+                        Lsn {
+                            value: event.event_id.lsn.as_ref().unwrap().value - 1,
+                        },
+                    )
+                    .await
+                    .expect("claim-disposition fixture lookup succeeds")
+                    .into_iter()
+                    .find(|stored| stored.event_id == event.event_id)
+                    .expect("dedicated evidence writer emitted claim disposition");
+                assert_eq!(existing.payload, event.payload);
+                existing.event_id
+            } else {
+                let spawn_claim_event::Mutation::Accepted(accepted) = mutation else {
+                    unreachable!("handled disposition above")
+                };
+                let accepted_operation = accepted.accepted_operation.as_ref().unwrap();
+                let operation = accepted_operation.operation.as_ref().unwrap();
+                let mut audit = AuditRecordDraft::new(
+                    Timestamp {
+                        seconds: 10,
+                        nanos: 0,
+                    },
+                    AuditEventKind::CommandSubmissionAccepted,
+                );
+                audit.actor_id = operation
+                    .sender
+                    .as_ref()
+                    .and_then(|sender| sender.actor_id.clone());
+                audit.endpoint_id = operation
+                    .sender
+                    .as_ref()
+                    .and_then(|sender| sender.endpoint_id.clone());
+                audit.device_id = operation
+                    .sender
+                    .as_ref()
+                    .and_then(|sender| sender.device_id.clone());
+                audit.command_id = operation.command_id.clone();
+                audit.grant_id = accepted_operation.authorizing_grant_id.clone();
+                audit.target_scope = operation.target_scope.clone();
+                audit.reason_code = "operation_spawn".to_owned();
+                let key = IdempotencyKey {
+                    value: operation.idempotency_key.clone(),
+                };
+                let logical_payload = operation.encode_to_vec();
+                match storage
+                    .append_spawn_claim_accepted(
+                        &domain(),
+                        &key,
+                        &TargetKey::new("spawn-target".to_owned()).unwrap(),
+                        accepted,
+                        audit,
+                        logical_payload,
+                    )
+                    .await
+                    .expect("claim fixture appends through its dedicated boundary")
+                {
+                    patchbay_core::storage::SpawnClaimDedupOutcome::Appended(committed) => {
+                        committed.source_event_id
+                    }
+                    patchbay_core::storage::SpawnClaimDedupOutcome::Duplicate(_) => {
+                        panic!("prefix fixture unexpectedly deduplicated")
+                    }
                 }
             }
         } else if event.payload.kind == StoredEventKind::Observation as i32
@@ -949,6 +1008,26 @@ fn deferred_result_audit() -> AuditRecordDraft {
     audit.target_scope = successful_result().target_scope;
     audit.reason_code = "spawn_completion_deferred".to_owned();
     audit
+}
+
+async fn append_fresh_prestaging_phases(storage: &RusqliteStorage) {
+    for phase in [
+        SpawnExecutionPhase::ExternalIdentityKnown,
+        SpawnExecutionPhase::HandshakeReconciling,
+    ] {
+        storage
+            .append_spawn_execution_evidence_reconciled(
+                &domain(),
+                identified_evidence(
+                    &accepted_claim(),
+                    external(1),
+                    phase,
+                    FailureCode::Unspecified,
+                ),
+            )
+            .await
+            .expect("pre-staging progress evidence commits");
+    }
 }
 
 async fn append_production_promotion_prefix(storage: &RusqliteStorage) {
@@ -1338,7 +1417,6 @@ fn promotion_producer_fences_conflicting_result_outcomes_in_both_orders() {
                 payload: result(second).encode_to_vec(),
             },
         ));
-        prefix.push(recorded(10, encode_staged_successor(&staged())));
 
         let error = next_spawn_promotion(
             &domain(),
@@ -1367,7 +1445,6 @@ fn promotion_producer_treats_exact_failed_result_retries_as_one_non_success() {
             },
         ));
     }
-    prefix.push(recorded(10, encode_staged_successor(&staged())));
 
     assert!(next_spawn_promotion(
         &domain(),
@@ -1387,6 +1464,7 @@ async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_
     let mut prefix = valid_prefix();
     prefix.truncate(7);
     append_prefix(&storage, prefix).await;
+    append_fresh_prestaging_phases(&storage).await;
 
     let generic = encode_staged_successor(&staged());
     assert!(matches!(
@@ -1448,7 +1526,7 @@ async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_
         .append_spawn_successor_staged_idempotent(&domain(), staged())
         .await
         .expect("exact staged successor retry reconciles");
-    assert_eq!(first, event_id(8));
+    assert_eq!(first, event_id(10));
     assert_eq!(retry, first);
 
     let exact = staged();
@@ -1482,7 +1560,7 @@ async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_
             .append_spawn_successor_staged_idempotent(&domain(), changed)
             .await,
         Err(StorageError::StagedSuccessorConflict {
-            existing_lsn: 8,
+            existing_lsn: 10,
             ..
         })
     ));
@@ -1520,11 +1598,12 @@ async fn v5_migration_backfills_staged_successor_reconciliation_without_consumin
     let mut prefix = valid_prefix();
     prefix.truncate(7);
     append_prefix(&storage, prefix).await;
+    append_fresh_prestaging_phases(&storage).await;
     let original = storage
         .append_spawn_successor_staged_idempotent(&domain(), staged())
         .await
         .expect("staged successor commits before migration fixture downgrade");
-    assert_eq!(original, event_id(8));
+    assert_eq!(original, event_id(10));
     drop(storage);
     tokio::task::yield_now().await;
 
@@ -1562,7 +1641,7 @@ async fn v5_migration_backfills_staged_successor_reconciliation_without_consumin
             .await
             .unwrap()
             .len(),
-        8,
+        10,
         "index backfill must not consume a durable LSN"
     );
     drop(migrated);
@@ -1580,7 +1659,7 @@ async fn v5_migration_backfills_staged_successor_reconciliation_without_consumin
         )
         .unwrap();
     assert_eq!(version, 6);
-    assert_eq!(indexed_lsn, 8);
+    assert_eq!(indexed_lsn, 10);
 }
 
 #[tokio::test]
@@ -2152,6 +2231,8 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
     let mut candidate_report = report("spawn-a");
     candidate_report.runtime_session_id = successor_external.runtime_session_id.clone();
     candidate_report.session_generation = successor_external.generation;
+    candidate_report.continuation_context_status =
+        patchbay_contracts::patchbay::ContinuationContextStatus::Resumed as i32;
     let candidate = RuntimeGenerationRef {
         logical_target_id: Some(LogicalTargetId {
             value: "logical-a".to_owned(),
@@ -2176,6 +2257,8 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
         }),
         source_attachment: Some(source_attachment()),
         external_runtime_reservation: Some(successor_external.clone()),
+        continuation_context_status:
+            patchbay_contracts::patchbay::ContinuationContextStatus::Resumed as i32,
     };
     let replacement_grant = Grant {
         grant_id: Some(GrantId {
@@ -2217,6 +2300,14 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
                 phase,
                 FailureCode::Unspecified,
             )),
+        )
+    };
+    let continuation_prelaunch = |lsn, phase| {
+        recorded(
+            lsn,
+            patchbay_core::session::encode_spawn_execution_evidence(
+                &continuation_prelaunch_evidence(&continuation_accepted, phase),
+            ),
         )
     };
     let prefix = vec![
@@ -2317,32 +2408,55 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
                     .encode_to_vec(),
             },
         ),
-        continuation_progress(11, SpawnExecutionPhase::ExternalIdentityKnown),
-        continuation_progress(12, SpawnExecutionPhase::HandshakeReconciling),
+        continuation_prelaunch(11, SpawnExecutionPhase::QuiescingPrior),
+        continuation_prelaunch(12, SpawnExecutionPhase::PriorTerminated),
+        continuation_progress(13, SpawnExecutionPhase::LaunchAttempted),
         recorded(
-            13,
+            14,
+            encode_spawn_claim_event(&SpawnClaimEvent {
+                authority_domain_id: Some(domain()),
+                mutation: Some(spawn_claim_event::Mutation::DispositionChanged(
+                    SpawnClaimDispositionChanged {
+                        claim_operation_id: Some(command()),
+                        from_disposition: SpawnClaimDisposition::Active as i32,
+                        to_disposition: SpawnClaimDisposition::PoisonedPendingReconciliation as i32,
+                        evidence: Some(
+                            spawn_claim_disposition_changed::Evidence::AmbiguousExternalEffect(
+                                SpawnClaimAmbiguityEvidence {
+                                    evidence_event_id: Some(event_id(13)),
+                                },
+                            ),
+                        ),
+                    },
+                )),
+            }),
+        ),
+        continuation_progress(15, SpawnExecutionPhase::ExternalIdentityKnown),
+        continuation_progress(16, SpawnExecutionPhase::HandshakeReconciling),
+        recorded(
+            17,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnSuccessorEvidenceStaged as i32,
                 payload: continuation_staged.encode_to_vec(),
             },
         ),
         recorded(
-            14,
+            18,
             StoredEventPayload {
                 kind: StoredEventKind::Observation as i32,
                 payload: successful_result().encode_to_vec(),
             },
         ),
-        continuation_progress(15, SpawnExecutionPhase::SuccessEvidenceReported),
+        continuation_progress(19, SpawnExecutionPhase::SuccessEvidenceReported),
     ];
     let mut promotion = unstamped_promotion();
     promotion.accepted_claim_event_id = Some(event_id(7));
     promotion.accepted_claim = Some(continuation_accepted);
     promotion.lifecycle[0].event_id = Some(event_id(9));
     promotion.lifecycle[1].event_id = Some(event_id(10));
-    promotion.successful_result.as_mut().unwrap().event_id = Some(event_id(14));
+    promotion.successful_result.as_mut().unwrap().event_id = Some(event_id(18));
     promotion.staged_successor = Some(SpawnPromotionStagedEvidence {
-        event_id: Some(event_id(13)),
+        event_id: Some(event_id(17)),
         staged: Some(continuation_staged),
     });
     promotion.promoted_runtime = Some(candidate);
@@ -2360,9 +2474,9 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
         .as_mut()
         .unwrap()
         .continuation_authority = Some(continuation);
-    promotion.promotion_event_id = Some(event_id(16));
-    promotion.completion_audit_event_id = Some(event_id(17));
-    descendant.audit_id = Some(event_id(17));
+    promotion.promotion_event_id = Some(event_id(20));
+    promotion.completion_audit_event_id = Some(event_id(21));
+    descendant.audit_id = Some(event_id(21));
     (prefix, promotion)
 }
 
@@ -2371,18 +2485,18 @@ fn production_continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommi
     prefix
         .last_mut()
         .expect("continuation fixture ends with success progress")
-        .event_id = event_id(16);
+        .event_id = event_id(20);
     // The deferred successful Result writer adds its audit after direct fixture
-    // LSN 14, so the following success-phase, promotion, and audit facts shift
+    // LSN 18, so the following success-phase, promotion, and audit facts shift
     // by one in the production storage path.
-    promotion.promotion_event_id = Some(event_id(17));
-    promotion.completion_audit_event_id = Some(event_id(18));
+    promotion.promotion_event_id = Some(event_id(21));
+    promotion.completion_audit_event_id = Some(event_id(22));
     promotion
         .authority
         .as_mut()
         .and_then(|authority| authority.descendant_grant.as_mut())
         .expect("continuation promotion has descendant authority")
-        .audit_id = Some(event_id(18));
+        .audit_id = Some(event_id(22));
     (prefix, promotion)
 }
 
@@ -3431,7 +3545,7 @@ fn managed_completion_decision_suppresses_expired_or_revoked_exact_prior_authori
 
     let (mut revoked_prefix, _) = continuation_fixture();
     revoked_prefix.push(recorded(
-        16,
+        20,
         StoredEventPayload {
             kind: StoredEventKind::Revocation as i32,
             payload: Revocation {
@@ -3468,6 +3582,52 @@ fn managed_completion_decision_suppresses_expired_or_revoked_exact_prior_authori
 }
 
 #[test]
+fn continuation_phase_chain_rejects_missing_and_out_of_order_durable_evidence() {
+    let decision_time = Timestamp {
+        seconds: 10,
+        nanos: 0,
+    };
+    let assert_not_ready = |prefix: &[RecordedEvent], label: &str| {
+        assert!(
+            !matches!(
+                next_spawn_promotion(&domain(), prefix, decision_time),
+                Ok(Some(_))
+            ),
+            "{label} must not become promotion-ready"
+        );
+    };
+
+    let (mut missing_quiesce, _) = continuation_fixture();
+    missing_quiesce[10].payload = missing_quiesce[11].payload.clone();
+    assert_not_ready(&missing_quiesce, "missing quiesce evidence");
+
+    let (mut missing_old_runtime, _) = continuation_fixture();
+    missing_old_runtime[11].payload = missing_old_runtime[10].payload.clone();
+    assert_not_ready(&missing_old_runtime, "missing prior-terminated evidence");
+
+    let (mut handshake_before_identity, _) = continuation_fixture();
+    let identity = handshake_before_identity[14].payload.clone();
+    handshake_before_identity[14].payload = handshake_before_identity[15].payload.clone();
+    handshake_before_identity[15].payload = identity;
+    assert_not_ready(&handshake_before_identity, "handshake before identity");
+
+    let (mut stage_before_handshake, _) = continuation_fixture();
+    let handshake = stage_before_handshake[15].payload.clone();
+    stage_before_handshake[15].payload = stage_before_handshake[16].payload.clone();
+    stage_before_handshake[16].payload = handshake;
+    assert_not_ready(&stage_before_handshake, "stage before handshake");
+
+    let (mut phases_before_delivery, _) = continuation_fixture();
+    let delivered = phases_before_delivery[8].payload.clone();
+    let running = phases_before_delivery[9].payload.clone();
+    phases_before_delivery[8].payload = phases_before_delivery[10].payload.clone();
+    phases_before_delivery[9].payload = phases_before_delivery[11].payload.clone();
+    phases_before_delivery[10].payload = delivered;
+    phases_before_delivery[11].payload = running;
+    assert_not_ready(&phases_before_delivery, "phase evidence before delivery");
+}
+
+#[test]
 fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promotion() {
     let (prefix, promotion) = continuation_fixture();
     let (mut authority, mut targets, mut claims, mut commands) = aggregate_from_prefix(&prefix);
@@ -3477,7 +3637,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
         &mut claims,
         &mut commands,
         &recorded(
-            16,
+            20,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnPromotionCommitted as i32,
                 payload: promotion.encode_to_vec(),
@@ -3517,13 +3677,13 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
     );
     let logical = sessions.logical_targets().get(&logical_target_id).unwrap();
     assert!(logical.tombstones.values().any(|tombstone| {
-        tombstone.external_runtime_ref == external(1) && tombstone.superseded_at_lsn == 16
+        tombstone.external_runtime_ref == external(1) && tombstone.superseded_at_lsn == 20
     }));
     let managed_lineages = sessions.managed_lineage_checkpoint_records();
     assert_eq!(managed_lineages.len(), 1);
     assert_eq!(managed_lineages[0].logical_target_id, logical_target_id);
     assert_eq!(managed_lineages[0].tombstones.len(), 1);
-    assert_eq!(managed_lineages[0].tombstones[0].superseded_at_lsn, 16);
+    assert_eq!(managed_lineages[0].tombstones[0].superseded_at_lsn, 20);
     let checkpoint_sessions: Vec<_> = sessions.sessions().cloned().collect();
     let checkpoint_tombstones: Vec<_> = sessions.tombstones().cloned().collect();
     let logical_checkpoint = sessions.logical_targets().checkpoint_records();
@@ -3535,7 +3695,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
     sessions_with_reused_old_slot.push(reused_old_slot);
     let hydrated = SessionRegistry::from_checkpoint_with_managed_lineages(
         domain(),
-        16,
+        20,
         sessions_with_reused_old_slot.clone(),
         checkpoint_tombstones.clone(),
         logical_checkpoint.clone(),
@@ -3551,7 +3711,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
     missing_logical_tombstone[0].tombstones.clear();
     assert!(SessionRegistry::from_checkpoint_with_managed_lineages(
         domain(),
-        16,
+        20,
         sessions_with_reused_old_slot,
         checkpoint_tombstones,
         missing_logical_tombstone,
@@ -3576,7 +3736,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
         &mut claims,
         &mut commands,
         &recorded(
-            16,
+            20,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnPromotionCommitted as i32,
                 payload: expired_promotion.encode_to_vec(),
@@ -3592,7 +3752,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
 
     let (mut revoked_prefix, mut revoked_promotion) = continuation_fixture();
     revoked_prefix.push(recorded(
-        16,
+        20,
         StoredEventPayload {
             kind: StoredEventKind::Revocation as i32,
             payload: Revocation {
@@ -3612,8 +3772,8 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
             .encode_to_vec(),
         },
     ));
-    revoked_promotion.promotion_event_id = Some(event_id(17));
-    revoked_promotion.completion_audit_event_id = Some(event_id(18));
+    revoked_promotion.promotion_event_id = Some(event_id(21));
+    revoked_promotion.completion_audit_event_id = Some(event_id(22));
     revoked_promotion
         .authority
         .as_mut()
@@ -3621,7 +3781,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
         .descendant_grant
         .as_mut()
         .unwrap()
-        .audit_id = Some(event_id(18));
+        .audit_id = Some(event_id(22));
     let (mut authority, mut targets, mut claims, mut commands) =
         aggregate_from_prefix(&revoked_prefix);
     assert!(fold_spawn_promotion_ordered(
@@ -3630,7 +3790,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
         &mut claims,
         &mut commands,
         &recorded(
-            17,
+            21,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnPromotionCommitted as i32,
                 payload: revoked_promotion.encode_to_vec(),
@@ -3673,8 +3833,8 @@ async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_
         )
         .await
         .expect("exact current N and reserved claimed N+1 promote atomically");
-    assert_eq!(committed.source_event_id, event_id(17));
-    assert_eq!(committed.audit_event_id, event_id(18));
+    assert_eq!(committed.source_event_id, event_id(21));
+    assert_eq!(committed.audit_event_id, event_id(22));
 
     let sessions = patchbay_core::session::rebuild_from_log(&valid, &domain())
         .await
@@ -3796,7 +3956,7 @@ async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_
         &mut claims,
         &mut commands,
         &recorded(
-            13,
+            20,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnPromotionCommitted as i32,
                 payload: wrong_current_promotion.encode_to_vec(),
@@ -3846,10 +4006,21 @@ async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_
     let projected_claim = accepted.claim.clone().unwrap();
     accepted_event.mutation = Some(spawn_claim_event::Mutation::Accepted(accepted));
     wrong_claim_prefix[6].payload = encode_spawn_claim_event(&accepted_event);
-    let mut projected_stage =
-        SpawnSuccessorEvidenceStaged::decode(wrong_claim_prefix[12].payload.payload.as_slice())
-            .unwrap();
     let candidate_three = external_with_runtime("runtime-c", 3);
+    for index in [10, 11, 12, 14, 15, 18] {
+        let mut evidence =
+            SpawnExecutionEvidence::decode(wrong_claim_prefix[index].payload.payload.as_slice())
+                .unwrap();
+        evidence.exact_claim = Some(projected_claim.clone());
+        if let Some(runtime) = evidence.external_runtime.as_mut() {
+            runtime.external_runtime = Some(candidate_three.clone());
+        }
+        wrong_claim_prefix[index].payload =
+            patchbay_core::session::encode_spawn_execution_evidence(&evidence);
+    }
+    let mut projected_stage =
+        SpawnSuccessorEvidenceStaged::decode(wrong_claim_prefix[16].payload.payload.as_slice())
+            .unwrap();
     projected_stage.exact_claim = Some(projected_claim);
     projected_stage.report.as_mut().unwrap().runtime_session_id =
         candidate_three.runtime_session_id.clone();
@@ -3870,7 +4041,7 @@ async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_
     disposition.expected_prior = Some(prior_two);
     disposition.claimed_generation = Some(Generation { value: 3 });
     projected_stage.external_runtime_reservation = Some(candidate_three);
-    wrong_claim_prefix[12].payload = encode_staged_successor(&projected_stage);
+    wrong_claim_prefix[16].payload = encode_staged_successor(&projected_stage);
     let (mut authority, mut targets, mut claims, mut commands) =
         aggregate_from_prefix(&wrong_claim_prefix);
     let before = (
@@ -3885,7 +4056,7 @@ async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_
         &mut claims,
         &mut commands,
         &recorded(
-            13,
+            20,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnPromotionCommitted as i32,
                 payload: wrong_claim_promotion.encode_to_vec(),
@@ -3897,7 +4068,7 @@ async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_
 
     let (mut released_prefix, released_promotion) = production_continuation_fixture();
     released_prefix.push(recorded(
-        17,
+        21,
         patchbay_core::session::events::encode(
             &patchbay_core::session::events::logical_target_candidate_released(
                 domain(),
@@ -4233,14 +4404,20 @@ async fn promotion_rejects_result_before_delivered_or_later_running_evidence() {
             .unwrap(),
         event_id(9)
     );
+    append_fresh_prestaging_phases(&before_running).await;
     assert_eq!(
         before_running
             .append_spawn_successor_staged_idempotent(&domain(), staged())
             .await
             .unwrap(),
-        event_id(10)
+        event_id(12)
     );
     let mut promotion = production_unstamped_promotion();
+    promotion
+        .staged_successor
+        .as_mut()
+        .expect("promotion has staged successor")
+        .event_id = Some(event_id(12));
     promotion.lifecycle[0].event_id = Some(event_id(6));
     promotion.lifecycle[1].event_id = Some(event_id(9));
     promotion.successful_result.as_mut().unwrap().event_id = Some(event_id(7));

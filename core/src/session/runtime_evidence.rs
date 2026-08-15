@@ -9,8 +9,8 @@ use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
     quarantined_runtime_evidence, runtime_generation_disposition, spawn_claim_event,
-    typed_correlation, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
-    DescendantGrantProvenance, EventId, ExternalRuntimeRef, FailureCode, GrantId,
+    typed_correlation, AuthorityDomainId, CommandId, CommandTransition, ContinuationContextStatus,
+    DescendantGrant, DescendantGrantProvenance, EventId, ExternalRuntimeRef, FailureCode, GrantId,
     GrantRevocationPolicy, LogicalTargetTombstone, Observation, ObservationKind, OperationKind,
     OperationState, QuarantinedRuntimeEvidence, RuntimeEvidenceClassificationContext,
     RuntimeEvidenceQuarantineReason, RuntimeEvidenceSourceAttachment,
@@ -734,8 +734,10 @@ fn validate_spawn_promotion_generation_prestate(
 }
 
 /// Classify one authenticated session report through the shared generation
-/// fence. `ClaimedSuccessor` is returned only for an exact active durable claim;
-/// it conveys staging authority and nothing else.
+/// fence. `ClaimedSuccessor` is returned only for an exact active or poisoned
+/// durable claim match. It selects the managed staging path; the claim-owned
+/// durable phase chain and reserved runtime remain separate staging
+/// preconditions.
 pub fn classify_session_report(
     authority_domain_id: &AuthorityDomainId,
     report: &SessionReport,
@@ -764,7 +766,7 @@ pub fn classify_session_report(
                     record,
                     report,
                     targets,
-                    true,
+                    false,
                 ) {
                     let claim = &record.claim;
                     return RuntimeGenerationDisposition {
@@ -1358,6 +1360,30 @@ pub fn validate_staged_successor(
         return Err(fence(
             "staged successor report does not name the claim operation",
         ));
+    }
+    let report_context = ContinuationContextStatus::try_from(report.continuation_context_status)
+        .map_err(|_| {
+            malformed("staged successor report has unknown continuation context status")
+        })?;
+    let staged_context = ContinuationContextStatus::try_from(staged.continuation_context_status)
+        .map_err(|_| malformed("staged successor has unknown continuation context status"))?;
+    if report_context != staged_context {
+        return Err(fence(
+            "staged successor context status disagrees with the exact adapter report",
+        ));
+    }
+    match claim.expected_prior.as_ref() {
+        Some(_) if staged_context == ContinuationContextStatus::Unspecified => {
+            return Err(malformed(
+                "continuation successor has unspecified adapter context status",
+            ));
+        }
+        None if staged_context != ContinuationContextStatus::Unspecified => {
+            return Err(fence(
+                "fresh successor carries a continuation-only context status",
+            ));
+        }
+        _ => {}
     }
     Ok(())
 }

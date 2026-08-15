@@ -8,6 +8,7 @@ import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import {
   AdapterIdSchema,
   CommandIdSchema,
+  ContinuationContextStatus,
   ExternalRuntimeRefSchema,
   GenerationSchema,
   LogicalTargetIdSchema,
@@ -17,7 +18,9 @@ import {
   RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
   SpawnPromotionCommittedSchema,
+  SpawnPromotionStagedEvidenceSchema,
   SpawnRequestSchema,
+  SpawnSuccessorEvidenceStagedSchema,
   StoredEventKind,
   StoredEventPayloadSchema,
   SubmissionOutcome,
@@ -84,7 +87,14 @@ test("restart resolves durable managed identity and submits exact continuation w
       generation: create(GenerationSchema, { value: 3n }),
     }),
   });
-  const promotion = create(SpawnPromotionCommittedSchema, { promotedRuntime: prior });
+  const promotion = create(SpawnPromotionCommittedSchema, {
+    promotedRuntime: prior,
+    stagedSuccessor: create(SpawnPromotionStagedEvidenceSchema, {
+      staged: create(SpawnSuccessorEvidenceStagedSchema, {
+        continuationContextStatus: ContinuationContextStatus.RESUMED,
+      }),
+    }),
+  });
   let submitted: Operation | undefined;
   const output = captureOutput();
   const client: Pick<ControlClient, "loadSnapshot" | "subscribe" | "submit"> = {
@@ -124,6 +134,7 @@ test("restart resolves durable managed identity and submits exact continuation w
   assert.equal(request.intent.case, "continuation");
   if (request.intent.case !== "continuation") assert.fail("continuation intent expected");
   assert.deepEqual(request.intent.value.prior, prior);
-  assert.match(output.err.join("\n"), /context continuity is unknown/);
+  assert.match(output.err.join("\n"), /logical context resumed/);
+  assert.doesNotMatch(output.err.join("\n"), /context continuity is unknown/);
   assert.doesNotMatch(output.err.join("\n"), /process state (was|is) restored/i);
 });

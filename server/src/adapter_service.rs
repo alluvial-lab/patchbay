@@ -541,6 +541,7 @@ fn staged_successor_for_claim(
         runtime_session_id: report.runtime_session_id.clone(),
         generation: report.session_generation,
     };
+    let continuation_context_status = report.continuation_context_status;
     let staged = SpawnSuccessorEvidenceStaged {
         authority_domain_id: Some(domain.clone()),
         exact_claim: Some(claim.clone()),
@@ -552,6 +553,7 @@ fn staged_successor_for_claim(
         disposition: Some(disposition),
         source_attachment: Some(source_attachment),
         external_runtime_reservation: Some(external),
+        continuation_context_status,
     };
     session::validate_staged_successor(&staged)
         .map_err(|error| Status::failed_precondition(error.to_string()))?;
@@ -1464,6 +1466,15 @@ where
         let event_id = match request.observation {
             Some(observation_request::Observation::SessionReport(mut report)) => {
                 require_same_adapter(report.adapter_id.as_ref(), &authenticated_adapter)?;
+                let continuation_context =
+                    patchbay_contracts::patchbay::ContinuationContextStatus::try_from(
+                        report.continuation_context_status,
+                    )
+                    .map_err(|_| {
+                        Status::invalid_argument(
+                            "session report has unknown continuation context status",
+                        )
+                    })?;
                 let source_cursor = report.source_cursor.as_mut().ok_or_else(|| {
                     Status::invalid_argument("session report is missing source_cursor")
                 })?;
@@ -1667,6 +1678,14 @@ where
                     disposition.disposition.as_ref(),
                     Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_))
                 );
+                if !claimed_successor
+                    && continuation_context
+                        != patchbay_contracts::patchbay::ContinuationContextStatus::Unspecified
+                {
+                    return Err(Status::invalid_argument(
+                        "continuation context status is valid only on an exact staged successor",
+                    ));
+                }
                 if claimed_successor {
                     let claim_record = correlated_claim.ok_or_else(|| {
                         Status::internal("managed successor report lost its durable claim")
@@ -1680,6 +1699,20 @@ where
                         claim_record,
                         disposition,
                     )?;
+                    let command_id = claim_record
+                        .claim
+                        .claim_operation_id
+                        .as_ref()
+                        .expect("accepted claim validation requires command identity");
+                    let candidate = staged
+                        .classified_target
+                        .as_ref()
+                        .expect("staged successor validation requires classified target");
+                    if !claims.successor_staging_ready(command_id, candidate) {
+                        return Err(Status::failed_precondition(
+                            "successor staging requires ordered durable delivery/runtime phase evidence",
+                        ));
+                    }
                     let event_id = self
                         .storage
                         .append_spawn_successor_staged_idempotent(&domain, staged)

@@ -53,8 +53,7 @@ pub use spawn_claim::{
 };
 pub use spawn_orchestration::{
     phase_outcome, runtime_matches_claim, validate_continuation_prior_quiesced, CandidateOutcome,
-    ClaimFenceOutcome, ContinuationContextStatus, PriorRuntimeOutcome, SpawnOrchestrationError,
-    SpawnPhaseOutcome,
+    ClaimFenceOutcome, PriorRuntimeOutcome, SpawnOrchestrationError, SpawnPhaseOutcome,
 };
 pub use state::{
     allowed_activity_transition, allowed_connectivity_transition, effective_connectivity,

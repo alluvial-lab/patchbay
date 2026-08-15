@@ -124,20 +124,28 @@ export function createCockpitShell(
     content.className = "cockpit__content";
     content.dataset.mobileBottomNavReserve = "bottom-tabs";
     const rail = renderRail(document, destination, settingsOpen, (next, source) => selectDestination(next, source));
-    const sidebar = renderSidebar(document, model, selectedKey, filter, showToolCalls, {
-      select(session) {
-        selectedKey = sessionKey(session.identity);
-        mobileDetailOpen = true;
-        render();
+    const sidebar = renderSidebar(
+      document,
+      model,
+      selectedKey,
+      filter,
+      showToolCalls,
+      model.lockdown.active || Boolean(model.lockdown.submitting),
+      {
+        select(session) {
+          selectedKey = sessionKey(session.identity);
+          mobileDetailOpen = true;
+          render();
+        },
+        filter(value) {
+          filter = value;
+          render();
+        },
+        spawn: options.actions?.spawn
+          ? (adapterId) => options.actions!.spawn!(adapterId)
+          : undefined,
       },
-      filter(value) {
-        filter = value;
-        render();
-      },
-      spawn: options.actions?.spawn
-        ? (adapterId) => options.actions!.spawn!(adapterId)
-        : undefined,
-    });
+    );
     const main = document.createElement("section");
     main.className = "main";
     detail = renderSessionDetail(document, model, selectedSession(), {
@@ -548,6 +556,7 @@ function renderSidebar(
   selectedKey: string | undefined,
   filter: string,
   showToolCalls: boolean,
+  lockdownReadOnly: boolean,
   actions: SidebarActions,
 ): HTMLElement {
   const sidebar = document.createElement("aside");
@@ -564,12 +573,14 @@ function renderSidebar(
   const spawn = iconActionButton(
     document,
     "plus",
-    knownAdapters.length === 1 && actions.spawn
-      ? `Spawn session on ${knownAdapters[0]}`
-      : knownAdapters.length === 1
-        ? "Spawn session unavailable"
-        : "Spawn requires exactly one selected adapter",
-    knownAdapters.length === 1 && actions.spawn
+    lockdownReadOnly
+      ? "Disabled during lockdown or while a lockdown decision is pending."
+      : knownAdapters.length === 1 && actions.spawn
+        ? `Spawn session on ${knownAdapters[0]}`
+        : knownAdapters.length === 1
+          ? "Spawn session unavailable"
+          : "Spawn requires exactly one selected adapter",
+    !lockdownReadOnly && knownAdapters.length === 1 && actions.spawn
       ? () => actions.spawn!(knownAdapters[0]!)
       : undefined,
   );

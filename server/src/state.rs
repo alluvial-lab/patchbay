@@ -1524,6 +1524,7 @@ mod tests {
                 attachment_event_id: Some(event_id(1)),
             }),
             external_runtime_reservation: Some(external.clone()),
+            continuation_context_status: 0,
         };
         let transition = |from, to| CommandTransition {
             command_id: Some(command.clone()),

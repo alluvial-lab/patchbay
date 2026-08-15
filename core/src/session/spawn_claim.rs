@@ -11,10 +11,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use patchbay_contracts::patchbay::{
     no_external_effect_proof, session_state_event, spawn_claim_disposition_changed,
     spawn_claim_event, AcceptedOperation, AdapterId, AuthorityDomainId, CommandId,
-    ContinuationAuthorityProvenance, EventId, ExternalEffectDisposition, FailureCode, Lsn,
-    Observation, ObservationKind, OperationKind, OperationState, RuntimeGenerationRef,
-    SessionConnectivityState, SessionStateEvent, SpawnClaimAccepted, SpawnClaimDisposition,
-    SpawnClaimDispositionChanged, SpawnClaimEvent, SpawnExecutionEvidence,
+    CommandTransition, ContinuationAuthorityProvenance, EventId, ExternalEffectDisposition,
+    FailureCode, Lsn, Observation, ObservationKind, OperationKind, OperationState,
+    RuntimeGenerationRef, SessionConnectivityState, SessionStateEvent, SpawnClaimAccepted,
+    SpawnClaimDisposition, SpawnClaimDispositionChanged, SpawnClaimEvent, SpawnExecutionEvidence,
     SpawnExecutionEvidenceProducer, SpawnExecutionPhase, SpawnGenerationClaim,
     SpawnPendingReplacementFence, SpawnPriorWorkDisposition, SpawnPriorWorkEffect,
     SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
@@ -228,6 +228,20 @@ impl SpawnClaimRegistry {
     /// exact staged runtime. Result/lifecycle/authority remain separate
     /// prerequisites owned by the promotion producer and completion driver.
     #[must_use]
+    pub fn successor_staging_ready(
+        &self,
+        command_id: &CommandId,
+        runtime: &RuntimeGenerationRef,
+    ) -> bool {
+        self.records.get(command_id).is_some_and(|record| {
+            self.completion_phases
+                .get(command_id)
+                .is_some_and(|phases| {
+                    phases.may_stage(runtime, record.claim.expected_prior.is_some())
+                })
+        })
+    }
+
     pub fn completion_phases_ready(
         &self,
         command_id: &CommandId,
@@ -236,7 +250,14 @@ impl SpawnClaimRegistry {
         self.records.get(command_id).is_some_and(|record| {
             self.completion_phases
                 .get(command_id)
-                .is_some_and(|phases| phases.is_ready(runtime, record.latest_disposition_lsn))
+                .is_some_and(|phases| {
+                    phases.is_ready(
+                        runtime,
+                        record.claim.expected_prior.is_some(),
+                        record.accepted_lsn,
+                        record.latest_disposition_lsn,
+                    )
+                })
         })
     }
 
@@ -288,6 +309,14 @@ impl SpawnClaimRegistry {
                     ))
                 })?;
             next.apply_claim_event(claim_event, event_lsn)?;
+        } else if kind == StoredEventKind::CommandTransition {
+            let transition =
+                CommandTransition::decode(event.payload.payload.as_slice()).map_err(|error| {
+                    corrupt_record(format!(
+                        "cannot decode spawn lifecycle transition at LSN {event_lsn}: {error}"
+                    ))
+                })?;
+            next.apply_command_transition(&transition, event_lsn);
         } else if kind == StoredEventKind::SpawnExecutionEvidence {
             let evidence = SpawnExecutionEvidence::decode(event.payload.payload.as_slice())
                 .map_err(|error| {
@@ -396,6 +425,20 @@ impl SpawnClaimRegistry {
         Ok(())
     }
 
+    fn apply_command_transition(&mut self, transition: &CommandTransition, event_lsn: u64) {
+        if OperationState::try_from(transition.from_state).ok() == Some(OperationState::Accepted)
+            && OperationState::try_from(transition.to_state).ok() == Some(OperationState::Delivered)
+        {
+            if let Some(phases) = transition
+                .command_id
+                .as_ref()
+                .and_then(|command_id| self.completion_phases.get_mut(command_id))
+            {
+                phases.observe_delivered(event_lsn);
+            }
+        }
+    }
+
     fn apply_execution_evidence(
         &mut self,
         evidence: SpawnExecutionEvidence,
@@ -437,29 +480,22 @@ impl SpawnClaimRegistry {
             return Ok(());
         }
         let effect = required_external_effect_disposition(evidence.external_effect_disposition)?;
+        let phase = required_execution_phase(evidence.phase)?;
+        let failure = FailureCode::try_from(evidence.failure_code)
+            .expect("execution evidence contract validated failure");
         if effect == ExternalEffectDisposition::Identified {
-            let runtime = evidence
-                .external_runtime
-                .as_ref()
-                .expect("identified evidence contract validated");
-            self.reserve_identified_runtime(&command_id, runtime)?;
-            let phase = required_execution_phase(evidence.phase)?;
-            let failure = FailureCode::try_from(evidence.failure_code)
-                .expect("execution evidence contract validated failure");
-            if failure == FailureCode::Unspecified
-                && matches!(
-                    phase,
-                    SpawnExecutionPhase::ExternalIdentityKnown
-                        | SpawnExecutionPhase::HandshakeReconciling
-                        | SpawnExecutionPhase::SuccessEvidenceReported
-                )
-            {
-                self.completion_phases
-                    .get_mut(&command_id)
-                    .expect("accepted claim initialized completion phases")
-                    .observe_progress(phase, runtime.clone(), event_lsn);
-            }
+            self.reserve_identified_runtime(
+                &command_id,
+                evidence
+                    .external_runtime
+                    .as_ref()
+                    .expect("identified evidence contract validated"),
+            )?;
         }
+        self.completion_phases
+            .get_mut(&command_id)
+            .expect("accepted claim initialized completion phases")
+            .observe_progress(phase, evidence.external_runtime, failure, event_lsn);
         Ok(())
     }
 
@@ -498,6 +534,11 @@ impl SpawnClaimRegistry {
             .as_ref()
             .expect("staged successor validated")
             .clone();
+        if !self.successor_staging_ready(command_id, &runtime) {
+            return Err(corrupt_log(
+                "successor staging omits or reorders required durable delivery/runtime evidence",
+            ));
+        }
         self.reserve_identified_runtime(command_id, &runtime)?;
         self.completion_phases
             .get_mut(command_id)

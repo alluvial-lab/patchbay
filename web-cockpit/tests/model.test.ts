@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { create, toBinary, type DescMessage, type MessageShape } from "@bufbuild/protobuf";
 import {
+  AcceptedOperationSchema,
   ActorEndpointRefSchema,
   ActorIdSchema,
   AdapterIdSchema,
@@ -10,13 +11,16 @@ import {
   AuthorityDomainIdSchema,
   CommandIdSchema,
   CommandTransitionSchema,
+  ContinuationContextStatus,
   ElicitationIdSchema,
   ElicitationResponsePayloadSchema,
   ElicitationSchema,
   ElicitationState,
   EventIdSchema,
+  ExternalRuntimeRefSchema,
   FailureCode,
   GenerationSchema,
+  LogicalTargetIdSchema,
   LsnSchema,
   ObservationKind,
   ObservationSchema,
@@ -43,17 +47,24 @@ import {
   ResourceStateUpsertSchema,
   ResourceViewRevisionSchema,
   ResourceViewStateUpdateSchema,
+  RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
   SessionGenerationBumpedSchema,
   SessionModelChangedSchema,
+  SessionReportSchema,
   SessionRegisteredSchema,
   SessionSchema,
   SessionSnapshotSchema,
   SessionStateEventSchema,
   SecurityLockdownEventSchema,
   SessionStateSchema,
+  SpawnClaimAcceptedSchema,
+  SpawnGenerationClaimSchema,
+  SpawnPromotionCommittedSchema,
+  SpawnPromotionStagedEvidenceSchema,
+  SpawnSuccessorEvidenceStagedSchema,
   StoredEventKind,
   StoredEventPayloadSchema,
   SubscribeEventSchema,
@@ -86,6 +97,79 @@ const adapterId = create(AdapterIdSchema, { value: "pi" });
 const runtimeSessionId = create(RuntimeSessionIdSchema, { value: "session-1" });
 const deploymentScope = "laptop";
 const encoder = new TextEncoder();
+
+test("spawn promotion folds the generated continuation context outcome", () => {
+  const prior = create(RuntimeGenerationRefSchema, {
+    logicalTargetId: create(LogicalTargetIdSchema, { value: "logical-1" }),
+    externalRuntime: create(ExternalRuntimeRefSchema, {
+      adapterId,
+      deploymentScope,
+      runtimeSessionId,
+      generation: create(GenerationSchema, { value: 1n }),
+    }),
+  });
+  const promoted = create(RuntimeGenerationRefSchema, {
+    logicalTargetId: prior.logicalTargetId,
+    externalRuntime: create(ExternalRuntimeRefSchema, {
+      adapterId,
+      deploymentScope,
+      runtimeSessionId: create(RuntimeSessionIdSchema, { value: "session-2" }),
+      generation: create(GenerationSchema, { value: 2n }),
+    }),
+  });
+  const commandId = create(CommandIdSchema, { value: "spawn-continuation" });
+  const claim = create(SpawnGenerationClaimSchema, {
+    authorityDomainId: DOMAIN,
+    claimOperationId: commandId,
+    logicalTargetId: prior.logicalTargetId,
+    expectedPrior: prior,
+    claimedGeneration: create(GenerationSchema, { value: 2n }),
+  });
+  const operation = create(OperationSchema, {
+    commandId,
+    authorityDomainId: DOMAIN,
+    kind: OperationKind.SPAWN,
+    idempotencyKey: "spawn-continuation-key",
+  });
+  const report = create(SessionReportSchema, {
+    adapterId,
+    deploymentScope,
+    runtimeSessionId: promoted.externalRuntime?.runtimeSessionId,
+    sessionGeneration: promoted.externalRuntime?.generation,
+    connectivity: SessionConnectivityState.LIVE,
+    activity: SessionActivityState.IDLE,
+    continuationContextStatus: ContinuationContextStatus.NEW_CONTEXT,
+  });
+  const promotion = create(SpawnPromotionCommittedSchema, {
+    acceptedClaim: create(SpawnClaimAcceptedSchema, {
+      acceptedOperation: create(AcceptedOperationSchema, { operation }),
+      claim,
+    }),
+    stagedSuccessor: create(SpawnPromotionStagedEvidenceSchema, {
+      staged: create(SpawnSuccessorEvidenceStagedSchema, {
+        exactClaim: claim,
+        report,
+        classifiedTarget: promoted,
+        continuationContextStatus: ContinuationContextStatus.NEW_CONTEXT,
+      }),
+    }),
+    promotedRuntime: promoted,
+  });
+
+  const model = fold(
+    emptyPresentationModel(),
+    stored(
+      1n,
+      StoredEventKind.SPAWN_PROMOTION_COMMITTED,
+      SpawnPromotionCommittedSchema,
+      promotion,
+    ),
+  );
+  assert.equal(
+    model.commands.get(commandId.value)?.continuationContextStatus,
+    ContinuationContextStatus.NEW_CONTEXT,
+  );
+});
 
 test("fold is pure and registration exposes the stable identity tuple", () => {
   const initial = emptyPresentationModel();

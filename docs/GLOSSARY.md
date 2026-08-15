@@ -54,7 +54,7 @@ A core-owned stable identity that binds a managed spawn lineage across runtime-s
 
 ## Restart as continuation
 
-An intentional replacement expressed as a new `spawn` Operation with a new command/idempotency key and exact continuation prior. The generic core owns claim/fence/evidence/promotion semantics; the adapter owns how it terminates, replaces, and reconciles the runtime. Adapter-native context status is `resumed`, `new_context`, or `unknown` and never guarantees arbitrary process-state restoration.
+An intentional replacement expressed as a new `spawn` Operation with a new command/idempotency key and exact continuation prior. The generic core owns claim/fence/evidence/promotion semantics; the adapter owns how it terminates, replaces, and reconciles the runtime. The adapter fills the generated continuation-context status (`resumed`, `new_context`, or `unknown`) on the exact successor report; staged/promotion evidence preserves it without a core default. It never guarantees arbitrary process-state restoration.
 
 ## Session report source cursor
 

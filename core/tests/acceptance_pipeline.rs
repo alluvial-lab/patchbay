@@ -565,6 +565,7 @@ fn live_session_report() -> SessionReport {
             adapter_generation: Some(Generation { value: 1 }),
             revision: 1,
         }),
+        continuation_context_status: 0,
     }
 }
 
