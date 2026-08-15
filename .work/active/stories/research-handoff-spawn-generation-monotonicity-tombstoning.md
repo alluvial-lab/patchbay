@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-generation-monotonicity-tombstoning
 kind: story
-stage: review
+stage: implementing
 tags: [protocol, verification, security]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-registration]
