@@ -14,7 +14,7 @@ Autopilot the **spawn stride** in the Patchbay `.work/` substrate. Load + follow
 ## The designs are GATE-COMPLETE — implement, don't redesign
 Passed research-grounding → feature-design → 5-reviewer adversarial review (10 BLOCKERs) → redesign (all resolved). Review: `.work/active/reviews/spawn-stride-adversarial-review-2026-08-12.md`. **Implement against the resolved designs; do not re-litigate resolved BLOCKERs.**
 
-## PROGRESS (sessions 2026-08-13→15) — 9/16 SPAWN STORIES DONE (all 6 leaves + Units 1, 2, 8); pushed through `c0a4168`
+## PROGRESS (sessions 2026-08-13→15) — 12/16 SPAWN STORIES DONE (all 6 leaves + Units 1,2,3,4,8); Unit 6 at round-4 fix; pushed through `4e1c75e`
 - Leaf 1 identity ✅, Leaf 2 continuation ✅, Leaf 3 claim-registry ✅, Leaf 5 crash-evidence ✅ (prior session).
 - **Leaf 6 `runtime-evidence-promotion-contract` ✅ DONE** — converged CLEAN at pass 7 after 6 fix rounds (6→5→2→1→3→1→CLEAN; commits `eee06b2`→`cc7cbb1`→`4d18ce0`→`3154368`→`c9a0eee`→`87b3882`+`8eda91c`→`9ae4488`). Full production wiring: classifier+quarantine+ordered-promotion-fold in real ingress/observation/authority/server-aggregate; storage boundary exclusivity on ALL routes; descendant authority bound to exact accepted Operation; result-ordering + conflict suppression; idempotent staged-successor + deferred-success retries; five dedicated writers pairwise disjoint. Reviews: `.work/active/reviews/leaf6-runtime-evidence-*` (7 files; `-rereview6` = pass 7 CLEAN).
 - **Leaf 4 `cursor-authoritative-replacement-contract` ✅ DONE** — converged at NITs pass 3 after 2 fix rounds (`b9bb6ec`→`72a2678`→`233ef83`). Non-subclassable exported `AuthoritativeCursorReplacement`; overlapping-reader store conformance; pending-guard oracles; 23/23 operator-domain tests. Reviews: `.work/active/reviews/leaf4-cursor-replacement-*` (3 files).
@@ -50,6 +50,14 @@ Review lane: `[verification]`-tagged stories get the DEEP lane (completeness→a
 - **Subagents commit but don't push** — push + verify CI per wave (currently billing-blocked; keep pushing, keep noting).
 - **Disk hygiene:** SQLite WAL/SHM leak FIXED (f35eda9). KEEP `target/debug` (43G build cache). `target/test-tmp` ~1G — clear ONLY at a wave boundary AND only when the next worker will touch Rust sources first (deleting it after a build without a source change breaks tests with dir errors). Do NOT rm after a TS-only worker boundary.
 - **Context discipline:** carry only queue state + summaries; delegate heavy work. At ~70% context, checkpoint (commit + update THIS file) and stop.
+
+
+## Session-3 additions (2026-08-15)
+- **Unit 3 `logical-target-registration` ✅ DONE** — pass-4 nits after 3 fix rounds (`03b9ea0`→`7a058cc`→`014f3a5`→orchestrator-inline `0420025`+`0871d13`). Managed staging-only + reverse-index reservation; schema-v6 indexed retry reconciliation; bounded end-to-end gate path (AdapterRegistryLookup point materialization + feature-gated whole-registry clone counter seam). Lesson recorded: `git restore <file>` reverts uncommitted work too — COMMIT BEFORE mutating.
+- **Unit 4 `generation-monotonicity-tombstoning` ✅ DONE** — pass-4 CLEAN after 3 rounds (`7d57a39`→`faa71e4`→`de0c48c`→`d7af211`). Rounds 1-2 patched tombstone-presence inference (kept failing); round 3 ROOT-CAUSED: explicit managed-lineage provenance marker in checkpoint format 3 (format 2 = unmarked legacy) — converged immediately. Heuristic inference of intent from state shape is a known trap; prefer explicit provenance.
+- **Unit 6 `idempotency-duplicate-handling`** — 4 rounds deep (`972942f`→`3e8cc88`→`c3db45e`→`d64019c`→r4 in flight). Effect-before-ack poisons; identified-success stages; ownership-index binding; identified-launch poisons; running-state oracle; per-stream offer tracking (r3) — pass 4 found the tracking process-local (restart redelivery); r4 makes it durable/reconstructed.
+- **Parallel-pair pattern works**: disjoint Rust file sets + cargo lock + orchestrator verifies merged state after both commit; then parallel read-only reviews on the clean tree.
+- CI still billing-blocked (every push fails in ~5s; local four-group verification is the gate; operator must fix GitHub billing).
 
 ## Acceptance
 Drive the spawn stride to `done`: all ~22 child stories done (implemented + reviewed), both features done. Push; confirm CI green once billing is fixed. Do not cut a release (separate release-deploy stride).
