@@ -14,7 +14,7 @@ Autopilot the **spawn stride** in the Patchbay `.work/` substrate. Load + follow
 ## The designs are GATE-COMPLETE — implement, don't redesign
 Passed research-grounding → feature-design → 5-reviewer adversarial review (10 BLOCKERs) → redesign (all resolved). Review: `.work/active/reviews/spawn-stride-adversarial-review-2026-08-12.md`. **Implement against the resolved designs; do not re-litigate resolved BLOCKERs.**
 
-## PROGRESS (sessions 2026-08-13→15) — 13/16 SPAWN STORIES DONE (all 6 leaves + Units 1,2,3,4,6,8); pushed through `e204b7b`
+## PROGRESS (sessions 2026-08-13→16) — ALL 16 SPAWN STORIES DONE; FEATURE AT REVIEW (4 MATERIALs from integrated feature review `.work/active/reviews/spawn-feature-review-2026-08-15.md`, verdict NEEDS FIX); pushed through `ae7b489`+fixes
 - Leaf 1 identity ✅, Leaf 2 continuation ✅, Leaf 3 claim-registry ✅, Leaf 5 crash-evidence ✅ (prior session).
 - **Leaf 6 `runtime-evidence-promotion-contract` ✅ DONE** — converged CLEAN at pass 7 after 6 fix rounds (6→5→2→1→3→1→CLEAN; commits `eee06b2`→`cc7cbb1`→`4d18ce0`→`3154368`→`c9a0eee`→`87b3882`+`8eda91c`→`9ae4488`). Full production wiring: classifier+quarantine+ordered-promotion-fold in real ingress/observation/authority/server-aggregate; storage boundary exclusivity on ALL routes; descendant authority bound to exact accepted Operation; result-ordering + conflict suppression; idempotent staged-successor + deferred-success retries; five dedicated writers pairwise disjoint. Reviews: `.work/active/reviews/leaf6-runtime-evidence-*` (7 files; `-rereview6` = pass 7 CLEAN).
 - **Leaf 4 `cursor-authoritative-replacement-contract` ✅ DONE** — converged at NITs pass 3 after 2 fix rounds (`b9bb6ec`→`72a2678`→`233ef83`). Non-subclassable exported `AuthoritativeCursorReplacement`; overlapping-reader store conformance; pending-guard oracles; 23/23 operator-domain tests. Reviews: `.work/active/reviews/leaf4-cursor-replacement-*` (3 files).
@@ -51,6 +51,12 @@ Review lane: `[verification]`-tagged stories get the DEEP lane (completeness→a
 - **Disk hygiene:** SQLite WAL/SHM leak FIXED (f35eda9). KEEP `target/debug` (43G build cache). `target/test-tmp` ~1G — clear ONLY at a wave boundary AND only when the next worker will touch Rust sources first (deleting it after a build without a source change breaks tests with dir errors). Do NOT rm after a TS-only worker boundary.
 - **Context discipline:** carry only queue state + summaries; delegate heavy work. At ~70% context, checkpoint (commit + update THIS file) and stop.
 
+
+## Session-4 additions (2026-08-15/16)
+- **Units 5, 7, 9, 10 DONE** (stale-event-fencing p4; completion-driver p1 CLEAN; restart-orchestration p3 incl. new generated `ContinuationContextStatus` carriage; reconnect-cursor p2 incl. lineage-anchored cockpit snapshots). ALL 16 children done.
+- **Feature integrated review** (`.work/active/reviews/spawn-feature-review-2026-08-15.md`): core spine judged strong (no authority bypass, no duplicate-generation, no partial promotion); 4 MATERIALs at operator/substrate boundaries (see wave plan above). Pi concrete spawn explicitly deferred-by-scope to the Pi feature — correct.
+- Workers DO sometimes halt correctly on proto-window needs (Unit 9 finding 2) — re-dispatch with explicit proto-editor authorization worked cleanly.
+- CI green through `3518197` (public repo).
 
 ## Session-3 additions (2026-08-15)
 - **Unit 3 `logical-target-registration` ✅ DONE** — pass-4 nits after 3 fix rounds (`03b9ea0`→`7a058cc`→`014f3a5`→orchestrator-inline `0420025`+`0871d13`). Managed staging-only + reverse-index reservation; schema-v6 indexed retry reconciliation; bounded end-to-end gate path (AdapterRegistryLookup point materialization + feature-gated whole-registry clone counter seam). Lesson recorded: `git restore <file>` reverts uncommitted work too — COMMIT BEFORE mutating.
