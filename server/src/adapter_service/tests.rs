@@ -4894,6 +4894,23 @@ async fn abnormal_delivery_stream_drop_marks_adapter_sessions_stale() {
         became_stale,
         "abnormal stream drop did not durably mark the session stale"
     );
+    let detached = session::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("detached session projection replays");
+    assert_eq!(
+        detached
+            .get_live_session(&adapter_id(), "machine-a", &runtime_session_id())
+            .expect("detach retains the exact runtime generation")
+            .identity
+            .session_generation,
+        Generation { value: 1 },
+        "detach degrades connectivity; it never retires or allocates a runtime generation"
+    );
+    assert_eq!(
+        detached.tombstones().count(),
+        0,
+        "detach cannot manufacture a supersession tombstone"
+    );
 
     report_session(
         &service,
@@ -4906,15 +4923,19 @@ async fn abnormal_delivery_stream_drop_marks_adapter_sessions_stale() {
     let refreshed = session::rebuild_from_log(&storage, &domain)
         .await
         .expect("session log rebuilds after reconnect report");
+    let reauthenticated = refreshed
+        .get_live_session(&adapter_id(), "machine-a", &runtime_session_id())
+        .expect("session remains registered");
     assert_eq!(
-        refreshed
-            .get_live_session(&adapter_id(), "machine-a", &runtime_session_id())
-            .expect("session remains registered")
-            .state
-            .connectivity(),
+        reauthenticated.state.connectivity(),
         SessionConnectivityState::Live,
         "a fresh adapter report restores authoritative liveness"
     );
+    assert_eq!(
+        reauthenticated.identity.session_generation,
+        Generation { value: 1 }
+    );
+    assert_eq!(refreshed.tombstones().count(), 0);
 }
 
 #[tokio::test]

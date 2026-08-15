@@ -592,7 +592,7 @@ Summary: 54 modeled properties (9 promoted, 45 draft), 15 reserved-unmodeled sta
 
 Source vectors: `contracts/vectors/*.json`. CI check: `node contracts/scripts/check-vectors.mjs` (or `npm run check:vectors` from `contracts/ts/`).
 
-Summary: 56 vector(s), 17 promoted vector(s), 1 checked-normative property requiring promoted-vector coverage. Current checked-normative coverage gate is active.
+Summary: 57 vector(s), 17 promoted vector(s), 1 checked-normative property requiring promoted-vector coverage. Current checked-normative coverage gate is active.
 
 | Property id | Classification | Vectors | `.proto` fields/enums exercised by vectors |
 |---|---|---|---|
@@ -647,7 +647,7 @@ Summary: 56 vector(s), 17 promoted vector(s), 1 checked-normative property requi
 | `SenderMatchesClaim` | stated-normative | — | — |
 | `SessionIdentityTuple` | stated-normative | — | — |
 | `SessionReportSourceOrdering` | checked-normative | [session-report-source-ordering](../contracts/vectors/session-report-source-ordering.json) (promoted) | patchbay.AuditRecord.failure_code<br>patchbay.AuditRecord.kind<br>patchbay.AuditRecord.reason_code<br>patchbay.Session.last_source_cursor<br>patchbay.Session.model<br>patchbay.SessionReport.adapter_id<br>patchbay.SessionReport.deployment_scope<br>patchbay.SessionReport.model<br>patchbay.SessionReport.runtime_session_id<br>patchbay.SessionReport.session_generation<br>patchbay.SessionReport.source_cursor<br>patchbay.SessionReportApplied.previous_source_cursor<br>patchbay.SessionReportApplied.report<br>patchbay.SessionReportSourceCursor.adapter_generation<br>patchbay.SessionReportSourceCursor.revision<br>patchbay.SessionSnapshot.sessions<br>patchbay.SessionStateEvent.report_applied |
-| `SnapshotConsistentPrefix` | stated-normative | — | — |
+| `SnapshotConsistentPrefix` | stated-normative | [spawn-reconnect-cursor-convergence](../contracts/vectors/spawn-reconnect-cursor-convergence.json) (draft) | patchbay.EventId.authority_domain_id<br>patchbay.EventId.lsn<br>patchbay.Session.last_authoritative_lsn<br>patchbay.Session.session_generation<br>patchbay.SessionSnapshot.authority_domain_id<br>patchbay.SessionSnapshot.core_generation<br>patchbay.SessionSnapshot.snapshot_lsn<br>patchbay.SpawnPromotionCommitted.promoted_runtime |
 | `SnapshotCrossDomainRejected` | stated-normative | — | — |
 | `SnapshotStaleRejected` | stated-normative | [snapshot-reconciliation](../contracts/vectors/snapshot-reconciliation.json) (promoted) | patchbay.LoadSnapshotRequest.view_kind<br>patchbay.LoadSnapshotResponse.snapshot_payload<br>patchbay.LoadSnapshotResponse.view_kind<br>patchbay.Observation.lsn<br>patchbay.ObservationSubscription.cursor<br>patchbay.Resource.revision_lsn<br>patchbay.ResourceSnapshot.authority_domain_id<br>patchbay.ResourceSnapshot.core_generation<br>patchbay.ResourceSnapshot.resources<br>patchbay.ResourceSnapshot.snapshot_lsn<br>patchbay.SessionSnapshot.core_generation<br>patchbay.SessionSnapshot.lockdown<br>patchbay.SessionSnapshot.view_revisions<br>patchbay.StoredSessionCheckpoint.snapshot<br>patchbay.StoredSessionCheckpoint.tombstones |
 | `SpawnCreatesDescendantGrant` | stated-normative | [spawn-continuation-context-status-carriage](../contracts/vectors/spawn-continuation-context-status-carriage.json) (draft) | patchbay.ContinuationContextStatus<br>patchbay.SessionReport.continuation_context_status<br>patchbay.SpawnSuccessorEvidenceStaged.continuation_context_status |

@@ -96,6 +96,7 @@ const DOMAIN = create(AuthorityDomainIdSchema, { value: "operator-domain" });
 const adapterId = create(AdapterIdSchema, { value: "pi" });
 const runtimeSessionId = create(RuntimeSessionIdSchema, { value: "session-1" });
 const deploymentScope = "laptop";
+const CORE_GENERATION = create(GenerationSchema, { value: 7n });
 const encoder = new TextEncoder();
 
 test("spawn promotion folds the generated continuation context outcome", () => {
@@ -528,12 +529,14 @@ test("snapshot replacement discards the old projection and pending elicitations 
     {
       session: create(SessionSnapshotSchema, {
         authorityDomainId: DOMAIN,
-        snapshotLsn: create(LsnSchema, { value: 0n }),
+        snapshotLsn: create(LsnSchema, { value: 3n }),
+        coreGeneration: CORE_GENERATION,
         sessions: [],
       }),
       resource: create(ResourceSnapshotSchema, {
         authorityDomainId: DOMAIN,
-        snapshotLsn: create(LsnSchema, { value: 0n }),
+        snapshotLsn: create(LsnSchema, { value: 3n }),
+        coreGeneration: CORE_GENERATION,
       }),
     },
     [],
@@ -541,7 +544,96 @@ test("snapshot replacement discards the old projection and pending elicitations 
   assert.equal(projection.model.sessions.size, 0);
   assert.equal(projection.model.elicitations.size, 0);
   assert.equal(projection.model.commands.size, 0);
-  assert.equal(projection.model.cursor, 0n);
+  assert.equal(projection.model.cursor, 3n);
+});
+
+test("newer core snapshot authority exactly replaces cached N and remembered streams cannot roll it back", () => {
+  const priorKey = sessionKey({
+    adapterId: "pi",
+    deploymentScope,
+    runtimeSessionId: "session-1",
+    generation: 1n,
+  });
+  const successorIdentity = {
+    adapterId: "pi",
+    deploymentScope,
+    runtimeSessionId: "session-2",
+    generation: 2n,
+  };
+  const successorKey = sessionKey(successorIdentity);
+  const projection = new PresentationProjection(fold(emptyPresentationModel(), registration(1n, 1n)));
+  projection.markUnreconciled();
+
+  const baselines = {
+    session: create(SessionSnapshotSchema, {
+      authorityDomainId: DOMAIN,
+      snapshotLsn: create(LsnSchema, { value: 3n }),
+      coreGeneration: CORE_GENERATION,
+      sessions: [create(SessionSchema, {
+        authorityDomainId: DOMAIN,
+        adapterId,
+        deploymentScope,
+        runtimeSessionId: create(RuntimeSessionIdSchema, { value: "session-2" }),
+        sessionGeneration: create(GenerationSchema, { value: 2n }),
+        state: create(SessionStateSchema, {
+          connectivity: SessionConnectivityState.LIVE,
+          activity: SessionActivityState.IDLE,
+        }),
+        lastAuthoritativeLsn: create(LsnSchema, { value: 3n }),
+      })],
+    }),
+    resource: create(ResourceSnapshotSchema, {
+      authorityDomainId: DOMAIN,
+      snapshotLsn: create(LsnSchema, { value: 3n }),
+      coreGeneration: CORE_GENERATION,
+    }),
+  };
+  projection.replaceFromSnapshots(baselines, []);
+
+  assert.equal(projection.model.coreGeneration, 7n);
+  assert.equal(projection.model.sessions.has(priorKey), false, "an omitted cached N is deleted");
+  assert.equal(projection.model.sessions.has(successorKey), true);
+  assert.equal(rendersLive(projection.model.sessions.get(successorKey)!), true);
+
+  const repaired = projection.model;
+  projection.foldEvent(registration(3n, 1n));
+  assert.equal(
+    projection.model,
+    repaired,
+    "an equal-LSN event remembered by the broken stream cannot reinsert N",
+  );
+
+  const staleBaselines = {
+    session: create(SessionSnapshotSchema, {
+      authorityDomainId: DOMAIN,
+      snapshotLsn: create(LsnSchema, { value: 3n }),
+      coreGeneration: CORE_GENERATION,
+      sessions: [create(SessionSchema, {
+        authorityDomainId: DOMAIN,
+        adapterId,
+        deploymentScope,
+        runtimeSessionId,
+        sessionGeneration: create(GenerationSchema, { value: 1n }),
+        state: create(SessionStateSchema, {
+          connectivity: SessionConnectivityState.LIVE,
+          activity: SessionActivityState.WORKING,
+        }),
+        lastAuthoritativeLsn: create(LsnSchema, { value: 1n }),
+      })],
+    }),
+    resource: create(ResourceSnapshotSchema, {
+      authorityDomainId: DOMAIN,
+      snapshotLsn: create(LsnSchema, { value: 3n }),
+      coreGeneration: CORE_GENERATION,
+    }),
+  };
+  assert.throws(
+    () => projection.replaceFromSnapshots(staleBaselines, []),
+    /not newer than cached core authority/,
+  );
+  assert.equal(projection.model, repaired, "a non-newer cached-N snapshot installs nothing");
+  assert.equal(projection.model.sessions.has(priorKey), false);
+  assert.equal(projection.model.sessions.has(successorKey), true);
 });
 
 test("a late Elicitation event cannot rewrite the first terminal state", () => {
@@ -955,6 +1047,7 @@ test("unequal snapshot horizons replay each state axis only after its own baseli
       session: create(SessionSnapshotSchema, {
         authorityDomainId: DOMAIN,
         snapshotLsn: create(LsnSchema, { value: 1n }),
+        coreGeneration: CORE_GENERATION,
         sessions: [create(SessionSchema, {
           authorityDomainId: DOMAIN,
           adapterId,
@@ -971,6 +1064,7 @@ test("unequal snapshot horizons replay each state axis only after its own baseli
       resource: create(ResourceSnapshotSchema, {
         authorityDomainId: DOMAIN,
         snapshotLsn: create(LsnSchema, { value: 3n }),
+        coreGeneration: CORE_GENERATION,
         resources: [create(ResourceSchema, {
           authorityDomainId: DOMAIN,
           identity,
@@ -1018,6 +1112,7 @@ test("reverse unequal snapshot horizons replay the resource axis after its own b
       session: create(SessionSnapshotSchema, {
         authorityDomainId: DOMAIN,
         snapshotLsn: create(LsnSchema, { value: 3n }),
+        coreGeneration: CORE_GENERATION,
         sessions: [create(SessionSchema, {
           authorityDomainId: DOMAIN,
           adapterId,
@@ -1037,6 +1132,7 @@ test("reverse unequal snapshot horizons replay the resource axis after its own b
       resource: create(ResourceSnapshotSchema, {
         authorityDomainId: DOMAIN,
         snapshotLsn: create(LsnSchema, { value: 1n }),
+        coreGeneration: CORE_GENERATION,
         resources: [create(ResourceSchema, {
           authorityDomainId: DOMAIN,
           identity,
@@ -1124,10 +1220,12 @@ test("invalid replay never installs a partially rebuilt projection", () => {
     session: create(SessionSnapshotSchema, {
       authorityDomainId: DOMAIN,
       snapshotLsn: create(LsnSchema, { value: 1n }),
+      coreGeneration: CORE_GENERATION,
     }),
     resource: create(ResourceSnapshotSchema, {
       authorityDomainId: DOMAIN,
       snapshotLsn: create(LsnSchema, { value: 0n }),
+      coreGeneration: CORE_GENERATION,
     }),
   }, [malformed]));
   assert.equal(projection.model, before);

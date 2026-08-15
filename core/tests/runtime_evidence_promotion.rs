@@ -3801,7 +3801,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
 }
 
 #[tokio::test]
-async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_out_of_order() {
+async fn continuation_reconnect_replay_converges_and_rejects_double_or_out_of_order_promotion() {
     let (prefix, promotion) = production_continuation_fixture();
     let staged_index = prefix
         .iter()
@@ -3825,6 +3825,52 @@ async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_
     assert_eq!(staged.disposition.as_ref(), Some(&actual_disposition));
     let valid = RusqliteStorage::open_in_memory().unwrap();
     append_prefix(&valid, prefix).await;
+
+    // A restart before promotion reconstructs the exact poisoned claim/fence and
+    // staged reservation, but never publishes N+1. Remembered process/stream
+    // evidence is not part of any of these replay authorities.
+    let staged_sessions = patchbay_core::session::rebuild_from_log(&valid, &domain())
+        .await
+        .expect("session replay reconstructs the staged continuation");
+    let staged_claims = patchbay_core::session::rebuild_spawn_claims_from_log(&valid, &domain())
+        .await
+        .expect("claim replay reconstructs the pending replacement fence");
+    let prior = RuntimeGenerationRef {
+        logical_target_id: Some(LogicalTargetId {
+            value: "logical-a".to_owned(),
+        }),
+        external_runtime: Some(external(1)),
+    };
+    assert!(matches!(
+        staged_claims.delivery_fence(&prior),
+        patchbay_core::session::SpawnDeliveryFence::ReplacementPending { .. }
+    ));
+    assert_eq!(
+        staged_claims
+            .claim_for_operation(&command())
+            .unwrap()
+            .disposition,
+        SpawnClaimDisposition::PoisonedPendingReconciliation
+    );
+    assert!(staged_sessions
+        .sessions()
+        .any(|session| session.identity.session_generation.value == 1));
+    assert!(staged_sessions
+        .sessions()
+        .all(|session| session.identity.session_generation.value != 2));
+    assert_eq!(
+        patchbay_core::session::rebuild_from_log(&valid, &domain())
+            .await
+            .expect("a second staged replay converges"),
+        staged_sessions,
+    );
+    assert_eq!(
+        patchbay_core::session::rebuild_spawn_claims_from_log(&valid, &domain())
+            .await
+            .expect("a second claim replay converges"),
+        staged_claims,
+    );
+
     let committed = valid
         .append_spawn_promotion_audited(
             &domain(),
@@ -3848,6 +3894,30 @@ async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_
     let authority = patchbay_core::authority::rebuild_from_log(&valid, &domain())
         .await
         .expect("authority replay reconstructs descendant authority");
+    assert_eq!(
+        patchbay_core::session::rebuild_from_log(&valid, &domain())
+            .await
+            .expect("repeated session replay converges"),
+        sessions,
+    );
+    assert_eq!(
+        patchbay_core::session::rebuild_spawn_claims_from_log(&valid, &domain())
+            .await
+            .expect("repeated claim replay converges"),
+        claims,
+    );
+    assert_eq!(
+        patchbay_core::acceptance::rebuild_from_log(&valid, &domain())
+            .await
+            .expect("repeated command replay converges"),
+        commands,
+    );
+    assert_eq!(
+        patchbay_core::authority::rebuild_from_log(&valid, &domain())
+            .await
+            .expect("repeated authority replay converges"),
+        authority,
+    );
     let logical_target_id = LogicalTargetId {
         value: "logical-a".to_owned(),
     };

@@ -113,6 +113,10 @@ const IMPLEMENTATION_RUNNERS = Object.freeze({
     command: 'npm',
     args: ['--prefix', 'web-cockpit', 'test', '--', '--test-name-pattern=conformance vector runner'],
   },
+  'operator-domain': {
+    command: 'npm',
+    args: ['--prefix', 'operator-domain', 'test', '--', '--test-name-pattern=conformance vector runner'],
+  },
   'token-commune-adapter': {
     command: 'npm',
     args: ['--prefix', 'token-commune-adapter', 'run', 'test:conformance'],

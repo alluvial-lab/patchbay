@@ -3,9 +3,29 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
-import { create } from "@bufbuild/protobuf";
+import { create, toBinary } from "@bufbuild/protobuf";
 import {
-  AdapterSnapshotSupport, PayloadContentType, PayloadEnvelopeSchema, ResourceFreshnessState,
+  AdapterIdSchema,
+  AdapterSnapshotSupport,
+  AuthorityDomainIdSchema,
+  EventIdSchema,
+  GenerationSchema,
+  LsnSchema,
+  PayloadContentType,
+  PayloadEnvelopeSchema,
+  ResourceFreshnessState,
+  ResourceSnapshotSchema,
+  RuntimeSessionIdSchema,
+  SessionActivityState,
+  SessionConnectivityState,
+  SessionRegisteredSchema,
+  SessionSchema,
+  SessionSnapshotSchema,
+  SessionStateEventSchema,
+  SessionStateSchema,
+  StoredEventKind,
+  StoredEventPayloadSchema,
+  SubscribeEventSchema,
 } from "@patchbay/contracts";
 import {
   TOKEN_COMMUNE_PRESENTATION_CONTRACT, composeTokenCommunePools, decodeTokenCommuneProjection,
@@ -14,10 +34,13 @@ import {
 import { JSDOM } from "jsdom";
 
 import {
+  PresentationProjection,
   emptyPresentationModel,
+  rendersLive,
   rendersResourceCurrent,
   resourceCollectionKey,
   resourceKey,
+  sessionKey,
   type ResourceView,
 } from "../src/domain/model.js";
 import type { ProviderPoolProjection } from "../src/domain/resource-projection.js";
@@ -571,6 +594,133 @@ async function killWebMutation(vector: ConformanceVector, mutationId: string): P
   }
 }
 
+function whole(value: unknown, name: string): bigint {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative safe integer`);
+  }
+  return BigInt(value);
+}
+
+function executeSpawnReconnectSurface(vector: ConformanceVector): void {
+  const input = object(vector.input, "input");
+  const expected = object(vector.expected_outcome, "expected outcome");
+  const domain = create(AuthorityDomainIdSchema, {
+    value: text(input.authority_domain_id, "authority domain"),
+  });
+  const adapterId = create(AdapterIdSchema, { value: text(input.adapter_id, "adapter id") });
+  const deploymentScope = text(input.deployment_scope, "deployment scope");
+  const cachedGeneration = whole(input.cached_generation, "cached generation");
+  const promotedGeneration = whole(input.promoted_generation, "promoted generation");
+  const cachedLsn = whole(input.cached_lsn, "cached LSN");
+  const promotionLsn = whole(input.promotion_lsn, "promotion LSN");
+  const coreGeneration = create(GenerationSchema, {
+    value: whole(input.core_generation, "core generation"),
+  });
+  const priorRuntime = create(RuntimeSessionIdSchema, { value: "runtime-n" });
+  const successorRuntime = create(RuntimeSessionIdSchema, { value: "runtime-n-plus-one" });
+
+  const registrationEvent = (lsn: bigint, runtimeSessionId: typeof priorRuntime, generation: bigint) => {
+    const registered = create(SessionRegisteredSchema, {
+      adapterId,
+      deploymentScope,
+      runtimeSessionId,
+      sessionGeneration: create(GenerationSchema, { value: generation }),
+      initialState: create(SessionStateSchema, {
+        connectivity: SessionConnectivityState.LIVE,
+        activity: SessionActivityState.WORKING,
+      }),
+    });
+    return create(SubscribeEventSchema, {
+      eventId: create(EventIdSchema, {
+        authorityDomainId: domain,
+        lsn: create(LsnSchema, { value: lsn }),
+      }),
+      payload: create(StoredEventPayloadSchema, {
+        kind: StoredEventKind.SESSION_STATE,
+        payload: toBinary(SessionStateEventSchema, create(SessionStateEventSchema, {
+          authorityDomainId: domain,
+          mutation: { case: "registered", value: registered },
+        })),
+      }),
+    });
+  };
+
+  const projection = new PresentationProjection();
+  projection.foldEvent(registrationEvent(cachedLsn, priorRuntime, cachedGeneration));
+  projection.markUnreconciled();
+  projection.replaceFromSnapshots({
+    session: create(SessionSnapshotSchema, {
+      authorityDomainId: domain,
+      coreGeneration,
+      snapshotLsn: create(LsnSchema, { value: promotionLsn }),
+      sessions: [create(SessionSchema, {
+        authorityDomainId: domain,
+        adapterId,
+        deploymentScope,
+        runtimeSessionId: successorRuntime,
+        sessionGeneration: create(GenerationSchema, { value: promotedGeneration }),
+        state: create(SessionStateSchema, {
+          connectivity: SessionConnectivityState.LIVE,
+          activity: SessionActivityState.IDLE,
+        }),
+        lastAuthoritativeLsn: create(LsnSchema, { value: promotionLsn }),
+      })],
+    }),
+    resource: create(ResourceSnapshotSchema, {
+      authorityDomainId: domain,
+      coreGeneration,
+      snapshotLsn: create(LsnSchema, { value: promotionLsn }),
+    }),
+  }, []);
+
+  const priorKey = sessionKey({
+    adapterId: adapterId.value,
+    deploymentScope,
+    runtimeSessionId: priorRuntime.value,
+    generation: cachedGeneration,
+  });
+  const successorKey = sessionKey({
+    adapterId: adapterId.value,
+    deploymentScope,
+    runtimeSessionId: successorRuntime.value,
+    generation: promotedGeneration,
+  });
+  assert.equal(projection.model.sessions.has(priorKey), expected.surface_tombstoned_or_cached_generation_visible);
+  assert.equal(projection.model.sessions.get(successorKey)?.identity.generation, BigInt(expected.surface_current_generation as number));
+  assert.equal(rendersLive(projection.model.sessions.get(successorKey)!), true);
+
+  const repaired = projection.model;
+  projection.foldEvent(registrationEvent(promotionLsn, priorRuntime, cachedGeneration));
+  assert.equal(projection.model, repaired, "remembered equal-LSN stream evidence must be inert");
+  assert.equal(projection.model.sessions.has(priorKey), expected.remembered_equal_lsn_overwrites_repair);
+
+  assert.throws(() => projection.replaceFromSnapshots({
+    session: create(SessionSnapshotSchema, {
+      authorityDomainId: domain,
+      coreGeneration,
+      snapshotLsn: create(LsnSchema, { value: promotionLsn }),
+      sessions: [create(SessionSchema, {
+        authorityDomainId: domain,
+        adapterId,
+        deploymentScope,
+        runtimeSessionId: priorRuntime,
+        sessionGeneration: create(GenerationSchema, { value: cachedGeneration }),
+        state: create(SessionStateSchema, {
+          connectivity: SessionConnectivityState.LIVE,
+          activity: SessionActivityState.WORKING,
+        }),
+        lastAuthoritativeLsn: create(LsnSchema, { value: cachedLsn }),
+      })],
+    }),
+    resource: create(ResourceSnapshotSchema, {
+      authorityDomainId: domain,
+      coreGeneration,
+      snapshotLsn: create(LsnSchema, { value: promotionLsn }),
+    }),
+  }, []), /not newer than cached core authority/);
+  assert.equal(projection.model, repaired, "rejected cached-N replacement must install nothing");
+}
+
 async function executeVectorCase(vector: ConformanceVector, caseName: string): Promise<void> {
   assert.ok(vector.property_id);
   assert.ok(vector.promotion_status === "draft" || vector.promotion_status === "promoted");
@@ -580,6 +730,9 @@ async function executeVectorCase(vector: ConformanceVector, caseName: string): P
       return;
     case "token_commune_cockpit_presentation":
       executeTokenCommunePresentation(vector);
+      return;
+    case "spawn_reconnect_surface_convergence":
+      executeSpawnReconnectSurface(vector);
       return;
     default:
       throw new Error(`unhandled ${RUNNER} conformance case ${vector.vector_id}:${caseName}`);

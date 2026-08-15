@@ -256,6 +256,8 @@ export interface AdapterView {
 
 export interface PresentationModel {
   authorityDomainId?: string;
+  /** Persisted core/storage continuity anchor carried by authoritative snapshots. */
+  coreGeneration?: bigint;
   cursor: bigint;
   reconciled: boolean;
   sessions: Map<string, SessionView>;
@@ -375,13 +377,24 @@ export function replaceFromSnapshots(
   const sessionDomain = required(snapshots.session.authorityDomainId?.value, "session snapshot authority domain");
   const resourceDomain = required(snapshots.resource.authorityDomainId?.value, "resource snapshot authority domain");
   if (sessionDomain !== resourceDomain) throw new Error("cross-domain snapshot baselines rejected");
+  const sessionGeneration = positiveBigint(
+    snapshots.session.coreGeneration?.value,
+    "session snapshot core generation",
+  );
+  const resourceGeneration = positiveBigint(
+    snapshots.resource.coreGeneration?.value,
+    "resource snapshot core generation",
+  );
+  if (sessionGeneration !== resourceGeneration) {
+    throw new Error("cross-generation snapshot baselines rejected");
+  }
   const sessionLsn = requiredBigint(snapshots.session.snapshotLsn?.value, "session snapshot LSN");
   const resourceLsn = requiredBigint(snapshots.resource.snapshotLsn?.value, "resource snapshot LSN");
   const horizon = sessionLsn > resourceLsn ? sessionLsn : resourceLsn;
 
   const sessions = new Map<string, SessionView>();
   for (const session of snapshots.session.sessions) {
-    const view = sessionFromSnapshot(session, sessionLsn);
+    const view = sessionFromSnapshot(session, sessionDomain, sessionLsn);
     const key = sessionKey(view.identity);
     if (sessions.has(key)) throw new Error(`session snapshot repeats identity ${key}`);
     sessions.set(key, { ...view, reconciled: false });
@@ -425,6 +438,7 @@ export function replaceFromSnapshots(
 
   let model: PresentationModel = {
     authorityDomainId: sessionDomain,
+    coreGeneration: sessionGeneration,
     cursor: 0n,
     reconciled: false,
     sessions,
@@ -601,7 +615,9 @@ export class PresentationProjection implements ReconcileProjection {
   }
 
   replaceFromSnapshots(snapshots: SnapshotBaselines, replayEvents: readonly SubscribeEvent[]): void {
-    this.model = replaceFromSnapshots(snapshots, replayEvents);
+    const replacement = replaceFromSnapshots(snapshots, replayEvents);
+    assertNewerCoreAuthority(this.model, replacement);
+    this.model = replacement;
   }
 
   replaceSecuritySnapshot(snapshot: SecuritySnapshot): void {
@@ -1472,7 +1488,18 @@ function deriveNeedsYou(model: PresentationModel): void {
   );
 }
 
-function sessionFromSnapshot(session: Session, snapshotLsn: bigint): SessionView {
+function sessionFromSnapshot(
+  session: Session,
+  authorityDomainId: string,
+  snapshotLsn: bigint,
+): SessionView {
+  if (session.authorityDomainId?.value !== authorityDomainId) {
+    throw new Error("cross-domain session snapshot record rejected");
+  }
+  const lastLsn = session.lastAuthoritativeLsn?.value ?? snapshotLsn;
+  if (lastLsn > snapshotLsn) {
+    throw new Error("session snapshot record exceeds its authority horizon");
+  }
   const identity = identityFromParts(session);
   return {
     identity,
@@ -1485,7 +1512,7 @@ function sessionFromSnapshot(session: Session, snapshotLsn: bigint): SessionView
       ? SessionActivityState.UNKNOWN
       : normalizeActivity(session.state?.activity),
     needsYou: false,
-    lastLsn: session.lastAuthoritativeLsn?.value ?? snapshotLsn,
+    lastLsn,
     lastUpdate: timestampDate(session.observedAt),
     tombstoned: session.tombstoned,
     reconciled: true,
@@ -1918,6 +1945,34 @@ function required(value: string | undefined, name: string): string {
 function requiredBigint(value: bigint | undefined, name: string): bigint {
   if (value === undefined || value < 0n) throw new Error(`${name} is missing or invalid`);
   return value;
+}
+
+function positiveBigint(value: bigint | undefined, name: string): bigint {
+  const parsed = requiredBigint(value, name);
+  if (parsed === 0n) throw new Error(`${name} must be positive`);
+  return parsed;
+}
+
+/** Cached surface state is replaceable only by a strictly newer prefix of the
+ * same persisted core continuity. Streams, process handles, and wall clocks do
+ * not participate in this comparison. */
+function assertNewerCoreAuthority(
+  current: PresentationModel,
+  replacement: PresentationModel,
+): void {
+  if (!current.authorityDomainId) return;
+  if (replacement.authorityDomainId !== current.authorityDomainId) {
+    throw new Error("cross-domain snapshot replacement rejected");
+  }
+  if (
+    current.coreGeneration !== undefined
+    && replacement.coreGeneration !== current.coreGeneration
+  ) {
+    throw new Error("cross-generation snapshot replacement rejected");
+  }
+  if (replacement.cursor <= current.cursor) {
+    throw new Error("snapshot replacement is not newer than cached core authority");
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

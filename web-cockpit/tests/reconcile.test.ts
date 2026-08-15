@@ -59,6 +59,7 @@ import {
 const DOMAIN = create(AuthorityDomainIdSchema, { value: "operator-domain" });
 const ADAPTER = create(AdapterIdSchema, { value: "pi" });
 const RUNTIME = create(RuntimeSessionIdSchema, { value: "session-1" });
+const CORE_GENERATION = create(GenerationSchema, { value: 7n });
 
 class RecordingProjection implements ReconcileProjection {
   readonly folded: bigint[] = [];
@@ -473,6 +474,7 @@ function snapshotResponse(
     ? toBinary(SessionSnapshotSchema, create(SessionSnapshotSchema, {
         authorityDomainId,
         snapshotLsn: create(LsnSchema, { value: lsn }),
+        coreGeneration: CORE_GENERATION,
         sessions: [
           create(SessionSchema, {
             authorityDomainId,
@@ -490,6 +492,7 @@ function snapshotResponse(
     : toBinary(ResourceSnapshotSchema, create(ResourceSnapshotSchema, {
         authorityDomainId,
         snapshotLsn: create(LsnSchema, { value: lsn }),
+        coreGeneration: CORE_GENERATION,
       }));
   return create(LoadSnapshotResponseSchema, {
     present: true,

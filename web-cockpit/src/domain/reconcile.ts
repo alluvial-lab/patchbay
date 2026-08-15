@@ -140,6 +140,17 @@ export class Reconciler {
     const resourceResponse = await this.loadSnapshotView(authorityDomainId, SnapshotViewKind.RESOURCE);
     const session = fromBinary(SessionSnapshotSchema, sessionResponse.snapshotPayload);
     const resource = fromBinary(ResourceSnapshotSchema, resourceResponse.snapshotPayload);
+    const sessionCoreGeneration = requiredPositiveBigint(
+      session.coreGeneration?.value,
+      "session snapshot core generation",
+    );
+    const resourceCoreGeneration = requiredPositiveBigint(
+      resource.coreGeneration?.value,
+      "resource snapshot core generation",
+    );
+    if (sessionCoreGeneration !== resourceCoreGeneration) {
+      throw new Error("cross-generation snapshot baselines rejected");
+    }
     const sessionLsn = validateSnapshotIdentity(
       session.authorityDomainId?.value,
       session.snapshotLsn?.value,
@@ -248,6 +259,12 @@ function assertId(value: string | undefined, name: string): asserts value is str
 function requiredBigint(value: bigint | undefined, name: string): bigint {
   if (value === undefined || value < 0n) throw new Error(`${name} is missing or invalid`);
   return value;
+}
+
+function requiredPositiveBigint(value: bigint | undefined, name: string): bigint {
+  const parsed = requiredBigint(value, name);
+  if (parsed === 0n) throw new Error(`${name} must be positive`);
+  return parsed;
 }
 
 function isAbortError(error: unknown): boolean {

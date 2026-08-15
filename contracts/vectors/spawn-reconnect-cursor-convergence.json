@@ -1,0 +1,55 @@
+{
+  "vector_id": "spawn-reconnect-cursor-convergence",
+  "property_id": "SnapshotConsistentPrefix",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "operator-domain", "case": "external_cursor_authoritative_replacement" },
+    { "runner": "web-cockpit", "case": "spawn_reconnect_surface_convergence" }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.EventId.authority_domain_id",
+    "patchbay.EventId.lsn",
+    "patchbay.SessionSnapshot.authority_domain_id",
+    "patchbay.SessionSnapshot.core_generation",
+    "patchbay.SessionSnapshot.snapshot_lsn",
+    "patchbay.Session.session_generation",
+    "patchbay.Session.last_authoritative_lsn",
+    "patchbay.SpawnPromotionCommitted.promoted_runtime"
+  ],
+  "description": "Reconnect keeps the core lifecycle LSN, external persisted-state cursor, and surface snapshot authority distinct. A newer core snapshot exactly replaces cached N with N+1; an unknown external cursor atomically replaces exact membership plus leaf/cursor/epoch under verified native continuity; remembered or omitted stale state cannot become current.",
+  "input": {
+    "authority_domain_id": "authority-main",
+    "core_generation": 7,
+    "cached_generation": 1,
+    "promoted_generation": 2,
+    "cached_lsn": 3,
+    "promotion_lsn": 9,
+    "adapter_id": "pi",
+    "deployment_scope": "machine-a",
+    "external_continuity_id": "native-session-a",
+    "cross_native_continuity_id": "native-session-b",
+    "patchbay_generations": [1, 2],
+    "old_projection_ids": ["kept", "omitted-stale"],
+    "replacement_projection_ids": ["kept", "current"],
+    "old_cursor": "cursor-3",
+    "replacement_cursor": "cursor-9",
+    "old_leaf": "leaf-3",
+    "replacement_leaf": "leaf-9",
+    "old_epoch": 4,
+    "replacement_epoch": 5
+  },
+  "expected_outcome": {
+    "surface_current_generation": 2,
+    "surface_tombstoned_or_cached_generation_visible": false,
+    "remembered_equal_lsn_overwrites_repair": false,
+    "external_scope_survives_patchbay_generation": true,
+    "cross_native_cursor_reuse_rejected": true,
+    "external_projection_ids": ["kept", "current"],
+    "external_cursor": "cursor-9",
+    "external_leaf": "leaf-9",
+    "external_epoch": 5,
+    "omitted_stale_entry_removed": true,
+    "cursor_visible_before_exact_projection": false
+  },
+  "invariant_check": "SnapshotConsistentPrefix: only the newer same-domain/same-continuity core LSN replaces cached logical state, while the separately scoped external cursor installs exact projection membership, leaf, cursor, and epoch together; neither cursor is translated into the other."
+}
