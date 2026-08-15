@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 proptest = []
+conformance-fault-injection = []
 
 [dependencies]
 patchbay-contracts = { path = "../contracts/rust" }

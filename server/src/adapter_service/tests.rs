@@ -2186,6 +2186,8 @@ async fn exact_late_staged_retry_exits_before_any_full_rebuild_under_the_decisio
         "unauthenticated evidence must not reach the indexed storage port"
     );
 
+    let registry_clones_before_retry = patchbay_core::adapter::ADAPTER_REGISTRY_CLONES
+        .load(Ordering::SeqCst);
     let retry = service
         .ingest_observation(authenticated_with_attachment_token(
             ObservationRequest {
@@ -2201,7 +2203,12 @@ async fn exact_late_staged_retry_exits_before_any_full_rebuild_under_the_decisio
     assert_eq!(
         ADAPTER_PROJECTION_MATERIALIZATIONS.load(Ordering::SeqCst),
         materializations_before_retry,
-        "exact staged retry must return before any adapter projection materialization (no whole-registry or per-record clone ahead of the indexed exit)"
+        "exact staged retry must return before any adapter projection materialization (no per-record clone ahead of the indexed exit)"
+    );
+    assert_eq!(
+        patchbay_core::adapter::ADAPTER_REGISTRY_CLONES.load(Ordering::SeqCst),
+        registry_clones_before_retry,
+        "exact staged retry must not clone the whole adapter registry (bounded gate-held work)"
     );
     assert_eq!(
         storage.full_scan_attempts.load(Ordering::SeqCst),

@@ -33,6 +33,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 tempfile = "3"
 patchbay-test-support = { path = "../patchbay-test-support" }
+patchbay-core = { path = "../core", features = ["conformance-fault-injection"] }
 
 [[bin]]
 name = "patchbay-core-server"

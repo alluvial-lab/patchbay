@@ -39,9 +39,26 @@ pub struct AdapterRecord {
     pub attach_event_id: EventId,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 pub struct AdapterRegistry {
     records: HashMap<AdapterId, AdapterRecord>,
+}
+
+/// Test/conformance seam: counts whole-registry clones. Gate-held fast paths
+/// (exact staged-successor retry reconciliation) must perform zero of these;
+/// only fresh classification after an indexed miss may materialize records.
+#[cfg(feature = "conformance-fault-injection")]
+pub static ADAPTER_REGISTRY_CLONES: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+impl Clone for AdapterRegistry {
+    fn clone(&self) -> Self {
+        #[cfg(feature = "conformance-fault-injection")]
+        ADAPTER_REGISTRY_CLONES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Self {
+            records: self.records.clone(),
+        }
+    }
 }
 
 impl AdapterRegistry {
