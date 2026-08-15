@@ -10,10 +10,12 @@ use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, runtime_generation_disposition,
     spawn_claim_event, AcceptedOperation, ActorEndpointRef, ActorId, AdapterDiagnosticReport,
     AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport, AttachRequest, AttachResult,
-    AuthorityDomainId, Delivery, EventId, FailureCode, Generation, Observation, ObservationRequest,
-    ObservationResult, OperationState, ReceiveRequest, RuntimeEvidenceQuarantineReason,
+    AuthorityDomainId, Delivery, EventId, ExternalEffectDisposition, FailureCode, Generation,
+    Observation, ObservationKind, ObservationRequest, ObservationResult, OperationKind,
+    OperationState, ReceiveRequest, RuntimeEvidenceQuarantineReason,
     RuntimeEvidenceSourceAttachment, RuntimeGenerationDisposition, RuntimeGenerationRef,
-    SpawnClaimAccepted, SpawnClaimEvent, SpawnEvidenceAttachment, SpawnExecutionEvidenceProducer,
+    SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent, SpawnEvidenceAttachment,
+    SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
     SpawnSuccessorEvidenceStaged, StoredEventKind, TargetScopeKind,
 };
 use patchbay_core::{
@@ -547,6 +549,129 @@ fn session_report_has_stale_source_order(
     };
     reported_generation.value < last_generation.value
         || (reported_generation == last_generation && reported.revision <= last.revision)
+}
+
+async fn poison_ambiguous_spawn_result<S: Storage>(
+    storage: &S,
+    commands: &CommandIndex,
+    authority_domain_id: &AuthorityDomainId,
+    adapter_id: &AdapterId,
+    source_attachment: &RuntimeEvidenceSourceAttachment,
+    observation: &Observation,
+) -> Result<(), Status> {
+    if ObservationKind::try_from(observation.kind).ok() != Some(ObservationKind::Result)
+        || !matches!(
+            FailureCode::try_from(observation.failure_code).ok(),
+            Some(
+                FailureCode::Cancelled
+                    | FailureCode::Expired
+                    | FailureCode::ExecutionOutcomeUnknown
+            )
+        )
+    {
+        return Ok(());
+    }
+    let Some(command_id) = acceptance::exact_command_correlation(&observation.correlations) else {
+        return Ok(());
+    };
+    let Some(command) = commands.get_command(&command_id) else {
+        return Ok(());
+    };
+    if OperationKind::try_from(command.operation.kind).ok() != Some(OperationKind::Spawn)
+        || !matches!(
+            command.state,
+            OperationState::Delivered | OperationState::Running
+        )
+        || command.operation.target_scope != observation.target_scope
+    {
+        return Ok(());
+    }
+    let claims = session::rebuild_spawn_claims_from_log(storage, authority_domain_id)
+        .await
+        .map_err(map_spawn_claim_error)?;
+    let record = session::SpawnClaimQuery::claim_for_operation(&claims, &command_id)
+        .ok_or_else(|| Status::failed_precondition("ambiguous spawn result has no exact claim"))?;
+    if record.adapter_id != *adapter_id
+        || !matches!(
+            record.disposition,
+            SpawnClaimDisposition::Active | SpawnClaimDisposition::PoisonedPendingReconciliation
+        )
+    {
+        return Ok(());
+    }
+    storage
+        .append_spawn_execution_evidence_reconciled(
+            authority_domain_id,
+            SpawnExecutionEvidence {
+                authority_domain_id: Some(authority_domain_id.clone()),
+                exact_claim: Some(record.claim.clone()),
+                phase: SpawnExecutionPhase::LaunchAttempted as i32,
+                external_effect_disposition: ExternalEffectDisposition::MayExist as i32,
+                producer: SpawnExecutionEvidenceProducer::CurrentAdapter as i32,
+                source_attachment: Some(SpawnEvidenceAttachment {
+                    adapter_id: source_attachment.adapter_id.clone(),
+                    adapter_generation: source_attachment.adapter_generation,
+                    attachment_event_id: source_attachment.attachment_event_id.clone(),
+                }),
+                failure_code: observation.failure_code,
+                no_external_effect_proof: None,
+                external_runtime: None,
+            },
+        )
+        .await
+        .map_err(map_storage_error_to_status)?;
+    Ok(())
+}
+
+async fn poison_ambiguous_spawn_claims_for_adapter<S: Storage>(
+    storage: &S,
+    commands: &CommandIndex,
+    authority_domain_id: &AuthorityDomainId,
+    adapter_id: &AdapterId,
+    source_attachment: SpawnEvidenceAttachment,
+) -> Result<(), adapter::AdapterError> {
+    let claims = session::rebuild_spawn_claims_from_log(storage, authority_domain_id)
+        .await
+        .map_err(|error| adapter::AdapterError::CorruptRecord(error.to_string()))?;
+    let candidates: Vec<_> = claims
+        .records()
+        .filter(|record| {
+            record.disposition == SpawnClaimDisposition::Active && record.adapter_id == *adapter_id
+        })
+        .filter_map(|record| {
+            let command_id = record.claim.claim_operation_id.as_ref()?;
+            let command = commands.get_command(command_id)?;
+            matches!(
+                command.state,
+                OperationState::Accepted | OperationState::Delivered | OperationState::Running
+            )
+            .then(|| (record.claim.clone(), command.state))
+        })
+        .collect();
+
+    for (claim, state) in candidates {
+        storage
+            .append_spawn_execution_evidence_reconciled(
+                authority_domain_id,
+                SpawnExecutionEvidence {
+                    authority_domain_id: Some(authority_domain_id.clone()),
+                    exact_claim: Some(claim),
+                    phase: if state == OperationState::Running {
+                        SpawnExecutionPhase::LaunchAttempted as i32
+                    } else {
+                        SpawnExecutionPhase::Offered as i32
+                    },
+                    external_effect_disposition: ExternalEffectDisposition::MayExist as i32,
+                    producer: SpawnExecutionEvidenceProducer::Core as i32,
+                    source_attachment: Some(source_attachment.clone()),
+                    failure_code: FailureCode::ExecutionOutcomeUnknown as i32,
+                    no_external_effect_proof: None,
+                    external_runtime: None,
+                },
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 async fn rebuild_command_projection<S: Storage>(
@@ -1159,14 +1284,11 @@ where
                 // this authenticated adapter (it only ever reads that record).
                 let adapter_projection = AdapterRegistry::from_single(
                     authenticated_adapter.clone(),
-                    adapter_lookup
-                        .point_record()
-                        .await
-                        .ok_or_else(|| {
-                            Status::unauthenticated(
-                                "adapter attachment is not current; reattach required",
-                            )
-                        })?,
+                    adapter_lookup.point_record().await.ok_or_else(|| {
+                        Status::unauthenticated(
+                            "adapter attachment is not current; reattach required",
+                        )
+                    })?,
                 );
 
                 // The adapter owns an independent session projection. Rebuild
@@ -1424,9 +1546,10 @@ where
                     .map_err(map_spawn_claim_error)?;
                 Some(
                     self.storage
-                        .append(&domain, session::encode_spawn_execution_evidence(&evidence))
+                        .append_spawn_execution_evidence_reconciled(&domain, evidence)
                         .await
-                        .map_err(map_storage_error_to_status)?,
+                        .map_err(map_storage_error_to_status)?
+                        .evidence_event_id,
                 )
             }
             Some(observation_request::Observation::ResourceReport(report)) => {
@@ -1672,6 +1795,18 @@ where
                         }));
                     }
                 }
+                poison_ambiguous_spawn_result(
+                    &self.storage,
+                    &commands.index,
+                    &domain,
+                    &authenticated_adapter,
+                    &source_attachment,
+                    &observation,
+                )
+                .await?;
+                catch_up_command_projection(&self.storage, &domain, &mut commands)
+                    .await
+                    .map_err(map_acceptance_error_to_status)?;
                 let event_id = if adapter::is_delivery_acknowledgement(&observation) {
                     adapter::ingest_delivery_acknowledgement(
                         &self.storage,
@@ -1751,6 +1886,17 @@ where
             (events, live_commands.clone())
         };
 
+        let stale_spawn_source = {
+            let adapters = self.adapters.lock().await;
+            let record = adapters.get(&authenticated_adapter).ok_or_else(|| {
+                Status::failed_precondition("adapter is no longer durably attached")
+            })?;
+            SpawnEvidenceAttachment {
+                adapter_id: Some(authenticated_adapter.clone()),
+                adapter_generation: record.registration.adapter_generation,
+                attachment_event_id: Some(record.attach_event_id.clone()),
+            }
+        };
         let storage = self.storage.clone();
         let commands = Arc::clone(&self.commands);
         let adapters = Arc::clone(&self.adapters);
@@ -1783,20 +1929,31 @@ where
                     let mut projection = commands.lock().await;
                     let caught_up =
                         catch_up_command_projection(&storage, &stale_domain, &mut projection).await;
-                    let failed = match caught_up {
-                        Ok(_) => adapter::fail_running_commands_for_adapter(
-                            &storage,
-                            &projection.index,
-                            &stale_domain,
-                            &stale_adapter,
-                        )
-                        .await
-                        .map(|_| ()),
+                    let reconciled = match caught_up {
+                        Ok(_) => {
+                            let poisoned = poison_ambiguous_spawn_claims_for_adapter(
+                                &storage,
+                                &projection.index,
+                                &stale_domain,
+                                &stale_adapter,
+                                stale_spawn_source,
+                            )
+                            .await;
+                            let failed = adapter::fail_running_commands_for_adapter(
+                                &storage,
+                                &projection.index,
+                                &stale_domain,
+                                &stale_adapter,
+                            )
+                            .await
+                            .map(|_| ());
+                            poisoned.and(failed)
+                        }
                         Err(error) => Err(adapter::AdapterError::CorruptRecord(error.to_string())),
                     };
                     let rebuilt =
                         catch_up_command_projection(&storage, &stale_domain, &mut projection).await;
-                    failed.and_then(|()| {
+                    reconciled.and_then(|()| {
                         rebuilt.map(|_| ()).map_err(|error| {
                             adapter::AdapterError::CorruptRecord(error.to_string())
                         })
@@ -2090,6 +2247,8 @@ fn map_spawn_claim_error(error: session::SpawnClaimError) -> Status {
     match error {
         session::SpawnClaimError::UnknownClaim(_)
         | session::SpawnClaimError::GenerationAlreadyClaimed(_)
+        | session::SpawnClaimError::ClaimRuntimeConflict { .. }
+        | session::SpawnClaimError::ExternalRuntimeOwnershipConflict { .. }
         | session::SpawnClaimError::IllegalDispositionTransition { .. } => {
             Status::failed_precondition(error.to_string())
         }

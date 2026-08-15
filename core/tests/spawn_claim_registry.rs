@@ -9,16 +9,16 @@ use patchbay_contracts::patchbay::{
     ExternalEffectDisposition, ExternalRuntimeRef, FailureCode, FreshSpawn, Generation, GrantId,
     IdempotencyKey, LogicalTargetId, Lsn, NoExternalEffectProof, Observation, ObservationKind,
     Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
-    RuntimeGenerationRef, RuntimeSessionId, SessionConnectivityChanged, SessionConnectivityState,
-    SessionStateEvent, SpawnClaimAbandonmentEvidence, SpawnClaimAccepted,
-    SpawnClaimAmbiguityEvidence, SpawnClaimCheckpoint, SpawnClaimCheckpointRecord,
-    SpawnClaimDisposition, SpawnClaimDispositionChanged, SpawnClaimEvent,
-    SpawnClaimNoEffectRelease, SpawnClaimPromotionEvidence, SpawnContinuation,
-    SpawnEvidenceAttachment, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer,
-    SpawnExecutionPhase, SpawnGenerationClaim, SpawnPendingReplacementFence,
-    SpawnPriorWorkDisposition, SpawnPriorWorkEffect, SpawnRequest, SpawnTargetSpec,
-    StoredEventKind, StoredEventPayload, SupervisorPreLaunchFailureProof, TargetScope,
-    TargetScopeKind,
+    RuntimeGenerationRef, RuntimeSessionId, SessionActivityState, SessionConnectivityChanged,
+    SessionConnectivityState, SessionRegistered, SessionState, SessionStateEvent,
+    SpawnClaimAbandonmentEvidence, SpawnClaimAccepted, SpawnClaimAmbiguityEvidence,
+    SpawnClaimCheckpoint, SpawnClaimCheckpointRecord, SpawnClaimDisposition,
+    SpawnClaimDispositionChanged, SpawnClaimEvent, SpawnClaimNoEffectRelease,
+    SpawnClaimPromotionEvidence, SpawnContinuation, SpawnEvidenceAttachment,
+    SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
+    SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnPriorWorkDisposition,
+    SpawnPriorWorkEffect, SpawnRequest, SpawnTargetSpec, StoredEventKind, StoredEventPayload,
+    SupervisorPreLaunchFailureProof, TargetScope, TargetScopeKind,
 };
 use patchbay_core::session::{
     allowed_spawn_claim_transition, encode_spawn_claim_event, encode_spawn_execution_evidence,
@@ -26,7 +26,7 @@ use patchbay_core::session::{
     SpawnClaimability, SpawnDeliveryFence, REPLACEMENT_PENDING_REASON,
 };
 use patchbay_core::storage::{
-    AuditRecordDraft, RecordedEvent, RusqliteStorage, Storage, TargetKey,
+    AuditRecordDraft, RecordedEvent, RusqliteStorage, Storage, StorageError, TargetKey,
 };
 use proptest::prelude::*;
 use prost::Message;
@@ -44,8 +44,18 @@ fn command(value: &str) -> CommandId {
 }
 
 fn target() -> LogicalTargetId {
+    logical("logical-a")
+}
+
+fn logical(value: &str) -> LogicalTargetId {
     LogicalTargetId {
-        value: "logical-a".to_owned(),
+        value: value.to_owned(),
+    }
+}
+
+fn adapter(value: &str) -> AdapterId {
+    AdapterId {
+        value: value.to_owned(),
     }
 }
 
@@ -393,6 +403,28 @@ fn attachment_event(lsn: u64, adapter: &str, generation: u64) -> RecordedEvent {
     )
 }
 
+fn prior_registration_event(lsn: u64) -> RecordedEvent {
+    recorded(
+        lsn,
+        patchbay_core::session::events::encode(&patchbay_core::session::events::registered(
+            domain(),
+            SessionRegistered {
+                adapter_id: Some(adapter("pi")),
+                deployment_scope: "machine-a".to_owned(),
+                runtime_session_id: Some(RuntimeSessionId {
+                    value: "runtime-a".to_owned(),
+                }),
+                session_generation: Some(Generation { value: 7 }),
+                initial_state: Some(SessionState {
+                    connectivity: SessionConnectivityState::Stale as i32,
+                    activity: SessionActivityState::Unknown as i32,
+                }),
+                ..SessionRegistered::default()
+            },
+        )),
+    )
+}
+
 fn prior_live_event(lsn: u64) -> RecordedEvent {
     prior_live_event_for(lsn, 7)
 }
@@ -456,6 +488,29 @@ fn execution_evidence_event(
         external_runtime,
         source("pi", 3, 1),
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execution_evidence(
+    exact_claim: SpawnGenerationClaim,
+    phase: SpawnExecutionPhase,
+    disposition: ExternalEffectDisposition,
+    producer: SpawnExecutionEvidenceProducer,
+    failure: FailureCode,
+    proof: Option<NoExternalEffectProof>,
+    external_runtime: Option<RuntimeGenerationRef>,
+) -> SpawnExecutionEvidence {
+    SpawnExecutionEvidence {
+        authority_domain_id: Some(domain()),
+        exact_claim: Some(exact_claim),
+        phase: phase as i32,
+        external_effect_disposition: disposition as i32,
+        producer: producer as i32,
+        source_attachment: Some(source("pi", 3, 1)),
+        failure_code: failure as i32,
+        no_external_effect_proof: proof,
+        external_runtime,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1732,6 +1787,322 @@ proptest! {
             SpawnClaimability::Conflict(_)
         ));
     }
+}
+
+#[tokio::test]
+async fn reconciled_ambiguity_poisons_once_survives_restart_and_suppresses_relaunch() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    storage
+        .append(&domain(), attachment_event(1, "pi", 3).payload)
+        .await
+        .unwrap();
+    persist_claim(&storage, fresh_accepted("spawn-a")).await;
+    let evidence = execution_evidence(
+        claim("spawn-a", None),
+        SpawnExecutionPhase::LaunchAttempted,
+        ExternalEffectDisposition::MayExist,
+        SpawnExecutionEvidenceProducer::CurrentAdapter,
+        FailureCode::ExecutionOutcomeUnknown,
+        None,
+        None,
+    );
+
+    assert!(matches!(
+        storage
+            .append(&domain(), encode_spawn_execution_evidence(&evidence))
+            .await,
+        Err(StorageError::UnsupportedOperation)
+    ));
+    let first = storage
+        .append_spawn_execution_evidence_reconciled(&domain(), evidence.clone())
+        .await
+        .unwrap();
+    assert!(!first.deduplicated);
+    assert!(first.disposition_event_id.is_some());
+    let event_count = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap()
+        .len();
+    let retry = storage
+        .append_spawn_execution_evidence_reconciled(&domain(), evidence)
+        .await
+        .unwrap();
+    assert!(retry.deduplicated);
+    assert_eq!(retry.evidence_event_id, first.evidence_event_id);
+    assert!(retry.disposition_event_id.is_none());
+    assert_eq!(
+        storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap()
+            .len(),
+        event_count
+    );
+
+    let claims = rebuild_spawn_claims_from_log(&storage, &domain())
+        .await
+        .unwrap();
+    assert_eq!(
+        claims
+            .claim_for_operation(&command("spawn-a"))
+            .unwrap()
+            .disposition,
+        SpawnClaimDisposition::PoisonedPendingReconciliation
+    );
+    assert!(matches!(
+        claims.classify_claim(&claim("spawn-b", None)),
+        SpawnClaimability::Conflict(_)
+    ));
+    let commands = patchbay_core::acceptance::rebuild_from_log(&storage, &domain())
+        .await
+        .unwrap();
+    assert!(commands.delivery_is_suppressed(&command("spawn-a")));
+}
+
+#[tokio::test]
+async fn proved_none_releases_once_but_never_redelivers_the_original_attempt() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    storage
+        .append(&domain(), attachment_event(1, "pi", 3).payload)
+        .await
+        .unwrap();
+    persist_claim(&storage, fresh_accepted("spawn-a")).await;
+    let evidence = execution_evidence(
+        claim("spawn-a", None),
+        SpawnExecutionPhase::Offered,
+        ExternalEffectDisposition::ProvedNone,
+        SpawnExecutionEvidenceProducer::CurrentAdapter,
+        FailureCode::DeliveryRejected,
+        Some(refusal_proof("pi", 3)),
+        None,
+    );
+
+    let first = storage
+        .append_spawn_execution_evidence_reconciled(&domain(), evidence.clone())
+        .await
+        .unwrap();
+    assert!(first.disposition_event_id.is_some());
+    let count = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap()
+        .len();
+    let retry = storage
+        .append_spawn_execution_evidence_reconciled(&domain(), evidence)
+        .await
+        .unwrap();
+    assert!(retry.deduplicated);
+    assert!(retry.disposition_event_id.is_none());
+    assert_eq!(
+        storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap()
+            .len(),
+        count
+    );
+
+    let claims = rebuild_spawn_claims_from_log(&storage, &domain())
+        .await
+        .unwrap();
+    assert_eq!(
+        claims
+            .claim_for_operation(&command("spawn-a"))
+            .unwrap()
+            .disposition,
+        SpawnClaimDisposition::ReleasedNoExternalEffect
+    );
+    assert!(matches!(
+        claims.classify_claim(&claim("spawn-b", None)),
+        SpawnClaimability::Available
+    ));
+    let commands = patchbay_core::acceptance::rebuild_from_log(&storage, &domain())
+        .await
+        .unwrap();
+    assert!(commands.delivery_is_suppressed(&command("spawn-a")));
+}
+
+#[tokio::test]
+async fn continuation_no_effect_waits_for_post_proof_exact_prior_liveness() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    storage
+        .append(&domain(), attachment_event(1, "pi", 3).payload)
+        .await
+        .unwrap();
+    storage
+        .append(&domain(), prior_registration_event(2).payload)
+        .await
+        .unwrap();
+    persist_claim(&storage, continuation_accepted("spawn-a")).await;
+    let evidence = execution_evidence(
+        claim("spawn-a", Some(7)),
+        SpawnExecutionPhase::Offered,
+        ExternalEffectDisposition::ProvedNone,
+        SpawnExecutionEvidenceProducer::CurrentAdapter,
+        FailureCode::DeliveryRejected,
+        Some(refusal_proof("pi", 3)),
+        None,
+    );
+    let before_invalid = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap()
+        .len();
+    let mut invalid = evidence.clone();
+    invalid.source_attachment = Some(source("pi", 2, 1));
+    assert!(storage
+        .append_spawn_execution_evidence_reconciled(&domain(), invalid)
+        .await
+        .is_err());
+    assert_eq!(
+        storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap()
+            .len(),
+        before_invalid
+    );
+
+    let first = storage
+        .append_spawn_execution_evidence_reconciled(&domain(), evidence.clone())
+        .await
+        .unwrap();
+    assert!(first.disposition_event_id.is_none());
+    let pending = rebuild_spawn_claims_from_log(&storage, &domain())
+        .await
+        .unwrap();
+    assert_eq!(
+        pending
+            .claim_for_operation(&command("spawn-a"))
+            .unwrap()
+            .disposition,
+        SpawnClaimDisposition::Active
+    );
+
+    storage
+        .append(&domain(), prior_live_event(99).payload)
+        .await
+        .unwrap();
+    let released = storage
+        .append_spawn_execution_evidence_reconciled(&domain(), evidence.clone())
+        .await
+        .unwrap();
+    assert!(released.deduplicated);
+    assert!(released.disposition_event_id.is_some());
+    let count = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap()
+        .len();
+    let retry = storage
+        .append_spawn_execution_evidence_reconciled(&domain(), evidence)
+        .await
+        .unwrap();
+    assert!(retry.deduplicated);
+    assert!(retry.disposition_event_id.is_none());
+    assert_eq!(
+        storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap()
+            .len(),
+        count
+    );
+    let claims = rebuild_spawn_claims_from_log(&storage, &domain())
+        .await
+        .unwrap();
+    assert_eq!(
+        claims
+            .claim_for_operation(&command("spawn-a"))
+            .unwrap()
+            .disposition,
+        SpawnClaimDisposition::ReleasedNoExternalEffect
+    );
+    assert!(matches!(
+        claims.delivery_fence(&runtime(7)),
+        SpawnDeliveryFence::Open
+    ));
+}
+
+#[tokio::test]
+async fn identified_runtime_is_reserved_to_its_original_claim_at_ingress() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    storage
+        .append(&domain(), attachment_event(1, "pi", 3).payload)
+        .await
+        .unwrap();
+    persist_claim(&storage, fresh_accepted("spawn-a")).await;
+    let external = ExternalRuntimeRef {
+        adapter_id: Some(adapter("pi")),
+        deployment_scope: "machine-a".to_owned(),
+        runtime_session_id: Some(RuntimeSessionId {
+            value: "native-shared".to_owned(),
+        }),
+        generation: Some(Generation { value: 1 }),
+    };
+    let first_runtime = RuntimeGenerationRef {
+        logical_target_id: Some(logical("logical-a")),
+        external_runtime: Some(external.clone()),
+    };
+    let first = execution_evidence(
+        claim("spawn-a", None),
+        SpawnExecutionPhase::ExternalIdentityKnown,
+        ExternalEffectDisposition::Identified,
+        SpawnExecutionEvidenceProducer::CurrentAdapter,
+        FailureCode::ExecutionFailed,
+        None,
+        Some(first_runtime.clone()),
+    );
+    storage
+        .append_spawn_execution_evidence_reconciled(&domain(), first)
+        .await
+        .unwrap();
+
+    let mut accepted_b = fresh_accepted("spawn-b");
+    accepted_b.claim.as_mut().unwrap().logical_target_id = Some(logical("logical-b"));
+    persist_claim(&storage, accepted_b).await;
+    let mut claim_b = claim("spawn-b", None);
+    claim_b.logical_target_id = Some(logical("logical-b"));
+    let second_runtime = RuntimeGenerationRef {
+        logical_target_id: Some(logical("logical-b")),
+        external_runtime: Some(external),
+    };
+    let second = execution_evidence(
+        claim_b,
+        SpawnExecutionPhase::ExternalIdentityKnown,
+        ExternalEffectDisposition::Identified,
+        SpawnExecutionEvidenceProducer::CurrentAdapter,
+        FailureCode::ExecutionFailed,
+        None,
+        Some(second_runtime),
+    );
+    assert!(matches!(
+        storage
+            .append_spawn_execution_evidence_reconciled(&domain(), second)
+            .await,
+        Err(StorageError::DuplicateNativeReference { .. })
+    ));
+
+    let claims = rebuild_spawn_claims_from_log(&storage, &domain())
+        .await
+        .unwrap();
+    assert_eq!(
+        claims
+            .claim_for_external_runtime(&first_runtime)
+            .unwrap()
+            .claim
+            .claim_operation_id
+            .as_ref(),
+        Some(&command("spawn-a"))
+    );
+    assert_eq!(
+        claims
+            .claim_for_operation(&command("spawn-b"))
+            .unwrap()
+            .disposition,
+        SpawnClaimDisposition::Active
+    );
 }
 
 #[test]

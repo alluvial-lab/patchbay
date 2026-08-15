@@ -24,8 +24,8 @@ use patchbay_contracts::patchbay::{
     ActorId, AdapterDiagnosticDetail, AuditEventKind, AuditPage, AuthorityDomainId, CommandId,
     CommandTransition, EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn,
     Observation, ObservationKind, OperationKind, OperationState, QuarantinedRuntimeEvidence,
-    RuntimeEvidenceSourceAttachment, SessionReport, SpawnClaimAccepted, SpawnPromotionCommitted,
-    SpawnSuccessorEvidenceStaged, StoredEventPayload, TargetScope,
+    RuntimeEvidenceSourceAttachment, SessionReport, SpawnClaimAccepted, SpawnExecutionEvidence,
+    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventPayload, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -375,6 +375,20 @@ pub enum SpawnClaimDedupOutcome {
     Duplicate(SpawnClaimAppend),
 }
 
+/// Result of exact-claim execution-evidence reconciliation.
+///
+/// `evidence_event_id` always identifies the first canonical evidence event.
+/// `disposition_event_id` is present only when this call durably changed the
+/// claim (poison or no-effect release). Exact retries never append another
+/// evidence event; they may append a once-only release after continuation
+/// liveness becomes durably provable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawnExecutionEvidenceAppend {
+    pub evidence_event_id: EventId,
+    pub disposition_event_id: Option<EventId>,
+    pub deduplicated: bool,
+}
+
 /// Errors at the storage boundary.
 ///
 /// This type is deliberately backend-neutral: it does not carry `rusqlite::Error`
@@ -452,6 +466,11 @@ pub enum StorageError {
         command_id: String,
         existing_lsn: u64,
     },
+
+    /// Execution evidence disagrees with the claim's immutable reconciled
+    /// external runtime or arrives after a terminal claim disposition.
+    #[error("spawn execution evidence conflicts with claim {command_id}")]
+    SpawnExecutionEvidenceConflict { command_id: String },
 
     /// One exact external runtime is already reserved by another logical
     /// target. This is a protocol conflict, not corrupt storage: the first
@@ -814,6 +833,22 @@ pub trait Storage: Send + Sync {
         _report: SessionReport,
         _source_attachment: RuntimeEvidenceSourceAttachment,
     ) -> impl std::future::Future<Output = Result<Option<EventId>, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    /// Atomically append exact-claim execution evidence and the claim
+    /// disposition it proves, or reconcile an exact retry to the original
+    /// evidence event. Implementations rebuild the durable claim prefix inside
+    /// the writer transaction, reject cross-claim/external-runtime ownership,
+    /// and never derive no-effect from command terminality or missing delivery
+    /// acknowledgements. A continuation no-effect proof remains evidence-only
+    /// until exact prior-N live state is durably present after that proof.
+    fn append_spawn_execution_evidence_reconciled(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _evidence: SpawnExecutionEvidence,
+    ) -> impl std::future::Future<Output = Result<SpawnExecutionEvidenceAppend, StorageError>> + Send
+    {
         async { Err(StorageError::UnsupportedOperation) }
     }
 

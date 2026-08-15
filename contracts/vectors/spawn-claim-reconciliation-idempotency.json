@@ -1,0 +1,45 @@
+{
+  "vector_id": "spawn-claim-reconciliation-idempotency",
+  "property_id": "boundary-validation",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "rust-core", "case": "spawn_claim_reconciliation_contract" }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.SpawnExecutionEvidence.exact_claim",
+    "patchbay.SpawnExecutionEvidence.external_effect_disposition",
+    "patchbay.SpawnExecutionEvidence.no_external_effect_proof",
+    "patchbay.SpawnExecutionEvidence.external_runtime",
+    "patchbay.SpawnClaimDispositionChanged.evidence",
+    "patchbay.SpawnClaimDisposition"
+  ],
+  "description": "Exact spawn-evidence retries reconcile without re-execution; ambiguous outcomes poison and retain the generation fence; release requires one of the closed no-effect proof variants; identified runtime ownership remains bound to the original claim.",
+  "input": {
+    "exact_retry": true,
+    "ambiguous_effects": [
+      "EXTERNAL_EFFECT_DISPOSITION_MAY_EXIST",
+      "EXTERNAL_EFFECT_DISPOSITION_IDENTIFIED"
+    ],
+    "closed_release_proofs": [
+      "authenticated_adapter_refusal_before_delivery",
+      "supervisor_pre_launch_failure",
+      "core_acceptance_abort_before_handoff"
+    ],
+    "forbidden_release_inputs": [
+      "terminal_command_state",
+      "missing_acknowledgement",
+      "silence"
+    ],
+    "identified_runtime_owner": "original_exact_claim"
+  },
+  "expected_outcome": {
+    "exact_retry_reexecutes": false,
+    "exact_retry_appends_second_evidence": false,
+    "ambiguous_disposition": "SPAWN_CLAIM_DISPOSITION_POISONED_PENDING_RECONCILIATION",
+    "ambiguous_fence_retained": true,
+    "proved_none_requires_closed_proof": true,
+    "continuation_release_requires_post_proof_prior_liveness": true,
+    "identified_runtime_automatic_replacement": false
+  },
+  "invariant_check": "A retry cannot repeat a non-idempotent spawn effect; ambiguity retains exclusive generation ownership until typed reconciliation proves no effect, promotes the original claim, or records operator abandonment."
+}

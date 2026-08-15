@@ -17,16 +17,16 @@ use patchbay_contracts::patchbay::{
     ResourceReport, ResourceReportMutation, ResourceSnapshotReport, ResourceStateUnknown,
     ResourceStateUpsert, ResourceViewReport, RuntimeGenerationRef, RuntimeSessionId,
     SchemaDescriptor, SecurityLockdownEntered, SessionActivityState, SessionConnectivityState,
-    SessionReportSourceCursor, SessionStateEvent, SpawnClaimAccepted, SpawnClaimEvent,
-    SpawnContinuation, SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnRequest,
-    SpawnTargetSpec, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
-    TypedCorrelation,
+    SessionReportSourceCursor, SessionStateEvent, SpawnClaimAccepted, SpawnClaimDisposition,
+    SpawnClaimEvent, SpawnContinuation, SpawnGenerationClaim, SpawnPendingReplacementFence,
+    SpawnRequest, SpawnTargetSpec, StoredEventKind, StoredEventPayload, TargetScope,
+    TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
     resource::ResourceRegistry,
     security::events as security_events,
-    session::{ExternalRuntimeOwnership, SessionRegistry},
+    session::{ExternalRuntimeOwnership, SessionRegistry, SpawnClaimQuery},
     storage::{
         AuditRecordDraft, AuditedBatchAppend, CoreGenerationStore, DedupOutcome, RecordedEvent,
         RusqliteStorage, Storage, StorageError, StoredSnapshot, TargetKey,
@@ -2165,8 +2165,7 @@ async fn exact_late_staged_retry_exits_before_any_full_rebuild_under_the_decisio
         .into_inner();
 
     storage.reject_full_scans();
-    let materializations_before_retry =
-        ADAPTER_PROJECTION_MATERIALIZATIONS.load(Ordering::SeqCst);
+    let materializations_before_retry = ADAPTER_PROJECTION_MATERIALIZATIONS.load(Ordering::SeqCst);
     let unauthenticated = service
         .ingest_observation(authenticated_with_attachment_token(
             ObservationRequest {
@@ -2186,8 +2185,8 @@ async fn exact_late_staged_retry_exits_before_any_full_rebuild_under_the_decisio
         "unauthenticated evidence must not reach the indexed storage port"
     );
 
-    let registry_clones_before_retry = patchbay_core::adapter::ADAPTER_REGISTRY_CLONES
-        .load(Ordering::SeqCst);
+    let registry_clones_before_retry =
+        patchbay_core::adapter::ADAPTER_REGISTRY_CLONES.load(Ordering::SeqCst);
     let retry = service
         .ingest_observation(authenticated_with_attachment_token(
             ObservationRequest {
@@ -3342,15 +3341,19 @@ async fn managed_spawn_delivery_preserves_the_exact_durable_envelope_hot_and_aft
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
     };
-    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    let (service, _attachment_token) = attached_service(storage.clone(), domain.clone()).await;
     let accepted = append_replacement_claim(&storage, &domain, "replacement-delivery").await;
 
-    let mut hot_tail = receive_from_start(&service, &attachment_token).await;
-    let hot = hot_tail
-        .next()
+    let hot_events = storage
+        .read_after(&domain, Lsn { value: 0 })
         .await
-        .expect("hot delivery exists")
-        .expect("hot delivery is valid");
+        .expect("hot delivery events");
+    let hot_commands =
+        command_projection_from_events(&hot_events, &domain).expect("hot command projection");
+    let hot = deliveries_for_events(&hot_events, &hot_commands.index, &adapter_id(), 0)
+        .into_iter()
+        .find_map(Result::ok)
+        .expect("hot delivery exists");
     let hot_envelope = hot
         .accepted_spawn
         .as_ref()
@@ -3364,7 +3367,6 @@ async fn managed_spawn_delivery_preserves_the_exact_durable_envelope_hot_and_aft
             .as_ref()
             .and_then(|accepted| accepted.operation.as_ref())
     );
-    drop(hot_tail);
     drop(service);
 
     let restarted = AdapterControlServiceImpl::new(storage, domain.clone(), evidence_verifier())
@@ -3469,6 +3471,158 @@ fn managed_spawn_delivery_rejects_truncated_claim_and_authority_fields() {
             );
         assert_eq!(error.code(), tonic::Code::Internal, "field={field}");
     }
+}
+
+#[tokio::test]
+async fn delivered_ambiguous_spawn_results_poison_the_exact_claim() {
+    for failure in [
+        FailureCode::Cancelled,
+        FailureCode::Expired,
+        FailureCode::ExecutionOutcomeUnknown,
+    ] {
+        let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+        let domain = AuthorityDomainId {
+            value: "authority-main".into(),
+        };
+        let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+        let accepted = append_replacement_claim(&storage, &domain, "ambiguous-result").await;
+        let operation = accepted
+            .accepted_operation
+            .as_ref()
+            .and_then(|accepted| accepted.operation.as_ref())
+            .expect("accepted spawn operation")
+            .clone();
+        let mut tail = receive_from_start(&service, &attachment_token).await;
+        tail.next()
+            .await
+            .expect("managed delivery exists")
+            .expect("managed delivery is valid");
+        service
+            .ingest_observation(authenticated_with_attachment_token(
+                delivery_acknowledgement(domain.clone(), &operation),
+                &attachment_token,
+            ))
+            .await
+            .expect("delivery acknowledgement commits");
+        service
+            .ingest_observation(authenticated_with_attachment_token(
+                ObservationRequest {
+                    authority_domain_id: Some(domain.clone()),
+                    observation: Some(observation_request::Observation::Event(Observation {
+                        authority_domain_id: Some(domain.clone()),
+                        kind: ObservationKind::Result as i32,
+                        correlations: vec![TypedCorrelation {
+                            r#ref: Some(typed_correlation::Ref::CommandId(
+                                operation.command_id.clone().unwrap(),
+                            )),
+                        }],
+                        target_scope: operation.target_scope.clone(),
+                        failure_code: failure as i32,
+                        ..Observation::default()
+                    })),
+                },
+                &attachment_token,
+            ))
+            .await
+            .expect("ambiguous result is terminalized only after claim poison");
+
+        let claims = session::rebuild_spawn_claims_from_log(&storage, &domain)
+            .await
+            .expect("spawn claims rebuild");
+        assert_eq!(
+            claims
+                .claim_for_operation(operation.command_id.as_ref().unwrap())
+                .expect("exact claim")
+                .disposition,
+            SpawnClaimDisposition::PoisonedPendingReconciliation,
+            "failure={failure:?}"
+        );
+        let events = storage
+            .read_after(&domain, Lsn { value: 0 })
+            .await
+            .expect("ambiguous result events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event.payload.kind == StoredEventKind::SpawnExecutionEvidence as i32
+                })
+                .count(),
+            1,
+            "failure={failure:?}"
+        );
+        drop(tail);
+    }
+}
+
+#[tokio::test]
+async fn abnormal_stream_loss_poisons_managed_spawn_and_prevents_redelivery() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    append_replacement_claim(&storage, &domain, "ambiguous-spawn").await;
+
+    let mut first_tail = receive_from_start(&service, &attachment_token).await;
+    let delivery = first_tail
+        .next()
+        .await
+        .expect("managed spawn delivery exists")
+        .expect("managed spawn delivery is valid");
+    assert_eq!(
+        delivery
+            .operation
+            .as_ref()
+            .and_then(|operation| operation.command_id.as_ref())
+            .map(|command| command.value.as_str()),
+        Some("ambiguous-spawn")
+    );
+    drop(first_tail);
+
+    let mut poisoned = false;
+    for _ in 0..100 {
+        let claims = session::rebuild_spawn_claims_from_log(&storage, &domain)
+            .await
+            .expect("spawn claims rebuild");
+        if claims
+            .claim_for_operation(&CommandId {
+                value: "ambiguous-spawn".into(),
+            })
+            .is_some_and(|record| {
+                record.disposition == SpawnClaimDisposition::PoisonedPendingReconciliation
+            })
+        {
+            poisoned = true;
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(poisoned, "stream loss did not poison the exact spawn claim");
+    let events = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("events after stream loss");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event.payload.kind == StoredEventKind::SpawnExecutionEvidence as i32
+            })
+            .count(),
+        1
+    );
+
+    let mut replacement_tail = receive_from_start(&service, &attachment_token).await;
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            replacement_tail.next()
+        )
+        .await
+        .is_err(),
+        "poisoned exact command must not be automatically re-delivered"
+    );
 }
 
 #[tokio::test]

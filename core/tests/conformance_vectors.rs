@@ -3,13 +3,14 @@ use std::{collections::BTreeMap, env, fs, path::PathBuf};
 use patchbay_contracts::patchbay::{
     resource_report_mutation, resource_state_mutation, AcceptedOperation, ActorEndpointRef,
     ActorId, AdapterId, AdapterSnapshotSupport, AuthorityDomainId, CommandId, DeviceId, EndpointId,
-    FailureCode, Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, Lsn,
-    Observation, ObservationKind, Operation, OperationKind, OperationState, PayloadContentType,
-    PayloadEnvelope, ResourceFreshnessState, ResourceId, ResourceKind, ResourceReportMutation,
-    ResourceStateEvent, ResourceStateMutation, ResourceStateTombstone, ResourceStateUnknown,
-    ResourceStateUpsert, ResourceViewReport, ResourceViewStateUpdate, RuntimeSessionId,
-    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionState,
-    StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind, TimeWindow,
+    ExternalEffectDisposition, FailureCode, Generation, Grant, GrantId, GrantProvenance,
+    GrantRevocationPolicy, Lsn, Observation, ObservationKind, Operation, OperationKind,
+    OperationState, PayloadContentType, PayloadEnvelope, ResourceFreshnessState, ResourceId,
+    ResourceKind, ResourceReportMutation, ResourceStateEvent, ResourceStateMutation,
+    ResourceStateTombstone, ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport,
+    ResourceViewStateUpdate, RuntimeSessionId, SessionActivityState, SessionConnectivityState,
+    SessionRegistered, SessionState, SpawnExecutionPhase, StoredEventKind, SubmissionOutcome,
+    TargetScope, TargetScopeKind, TimeWindow,
 };
 use patchbay_core::{
     acceptance::{
@@ -1610,6 +1611,71 @@ async fn injection(vector: &ConformanceVector) -> Result<(), String> {
     Ok(())
 }
 
+fn spawn_claim_reconciliation_contract(vector: &ConformanceVector) -> Result<(), String> {
+    let ambiguous = vector
+        .input
+        .pointer("/ambiguous_effects")
+        .and_then(Value::as_array)
+        .ok_or("spawn vector lacks ambiguous effects")?
+        .iter()
+        .map(|value| value.as_str().ok_or("ambiguous effect must be a string"))
+        .collect::<Result<Vec<_>, _>>()?;
+    if ambiguous
+        != [
+            ExternalEffectDisposition::MayExist.as_str_name(),
+            ExternalEffectDisposition::Identified.as_str_name(),
+        ]
+        || !patchbay_core::session::allowed_external_effect_disposition(
+            SpawnExecutionPhase::LaunchAttempted,
+            ExternalEffectDisposition::MayExist,
+        )
+        || !patchbay_core::session::allowed_external_effect_disposition(
+            SpawnExecutionPhase::ExternalIdentityKnown,
+            ExternalEffectDisposition::Identified,
+        )
+    {
+        return Err("spawn ambiguity matrix drifted from the generated contract".to_owned());
+    }
+    let proofs = vector
+        .input
+        .pointer("/closed_release_proofs")
+        .and_then(Value::as_array)
+        .ok_or("spawn vector lacks closed release proofs")?
+        .iter()
+        .map(|value| value.as_str().ok_or("release proof must be a string"))
+        .collect::<Result<Vec<_>, _>>()?;
+    if proofs
+        != [
+            "authenticated_adapter_refusal_before_delivery",
+            "supervisor_pre_launch_failure",
+            "core_acceptance_abort_before_handoff",
+        ]
+        || boolean(&vector.expected_outcome, "/exact_retry_reexecutes")?
+        || boolean(
+            &vector.expected_outcome,
+            "/exact_retry_appends_second_evidence",
+        )?
+        || !boolean(&vector.expected_outcome, "/ambiguous_fence_retained")?
+        || !boolean(
+            &vector.expected_outcome,
+            "/proved_none_requires_closed_proof",
+        )?
+        || !boolean(
+            &vector.expected_outcome,
+            "/continuation_release_requires_post_proof_prior_liveness",
+        )?
+        || boolean(
+            &vector.expected_outcome,
+            "/identified_runtime_automatic_replacement",
+        )?
+        || string(&vector.expected_outcome, "/ambiguous_disposition")?
+            != "SPAWN_CLAIM_DISPOSITION_POISONED_PENDING_RECONCILIATION"
+    {
+        return Err("spawn reconciliation expectations violate the closed contract".to_owned());
+    }
+    Ok(())
+}
+
 async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), String> {
     if vector.property_id.is_empty()
         || !matches!(vector.promotion_status.as_str(), "draft" | "promoted")
@@ -1623,6 +1689,7 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         "resource_replay_prefix_idempotent" => resource_replay_prefix_idempotent(vector).await,
         "resource_identity_collision_fenced" => collision(vector),
         "opaque_observation_cannot_fold_resource_state" => injection(vector).await,
+        "spawn_claim_reconciliation_contract" => spawn_claim_reconciliation_contract(vector),
         _ => Err(format!(
             "unhandled {RUNNER} conformance case {}:{case}",
             vector.vector_id

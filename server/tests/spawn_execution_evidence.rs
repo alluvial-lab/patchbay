@@ -1,13 +1,14 @@
 use patchbay_contracts::patchbay::{
-    no_external_effect_proof, observation_request, spawn_request, AcceptedOperation,
-    ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRefusalBeforeDeliveryProof,
-    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
-    AuditEventKind, AuthorityDomainId, CommandId, DeviceId, EndpointId, ExternalEffectDisposition,
-    FailureCode, FreshSpawn, Generation, GrantId, IdempotencyKey, LogicalTargetId, Lsn,
-    NoExternalEffectProof, ObservationRequest, Operation, OperationKind, PayloadContentType,
-    PayloadEnvelope, SpawnClaimAccepted, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer,
-    SpawnExecutionPhase, SpawnGenerationClaim, SpawnRequest, SpawnTargetSpec, StoredEventKind,
-    TargetScope, TargetScopeKind,
+    no_external_effect_proof, observation_request, spawn_claim_event, spawn_request,
+    AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
+    AdapterRefusalBeforeDeliveryProof, AdapterRegistration, AdapterSnapshotSupport,
+    AdapterTargetCategory, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, DeviceId,
+    EndpointId, ExternalEffectDisposition, FailureCode, FreshSpawn, Generation, GrantId,
+    IdempotencyKey, LogicalTargetId, Lsn, NoExternalEffectProof, ObservationRequest, Operation,
+    OperationKind, PayloadContentType, PayloadEnvelope, SpawnClaimAccepted, SpawnClaimDisposition,
+    SpawnClaimEvent, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
+    SpawnGenerationClaim, SpawnRequest, SpawnTargetSpec, StoredEventKind, TargetScope,
+    TargetScopeKind,
 };
 use patchbay_core::storage::{AuditRecordDraft, RusqliteStorage, Storage, TargetKey};
 use patchbay_core_server::{
@@ -248,6 +249,47 @@ async fn authenticated_evidence_is_canonicalized_and_wrong_claim_is_not_appended
             .and_then(|source| source.adapter_generation)
             .map(|generation| generation.value),
         Some(1)
+    );
+    assert!(events.iter().any(|event| {
+        if event.payload.kind != StoredEventKind::SpawnClaim as i32 {
+            return false;
+        }
+        SpawnClaimEvent::decode(event.payload.payload.as_slice())
+            .ok()
+            .and_then(|event| event.mutation)
+            .is_some_and(|mutation| {
+                matches!(
+                    mutation,
+                    spawn_claim_event::Mutation::DispositionChanged(change)
+                        if change.to_disposition
+                            == SpawnClaimDisposition::ReleasedNoExternalEffect as i32
+                )
+            })
+    }));
+
+    let retry_receipt = service
+        .ingest_observation(authenticated(
+            ObservationRequest {
+                authority_domain_id: Some(domain()),
+                observation: Some(observation_request::Observation::SpawnExecutionEvidence(
+                    evidence.clone(),
+                )),
+            },
+            &token,
+        ))
+        .await
+        .expect("exact evidence retry")
+        .into_inner()
+        .event_id
+        .expect("retry event id");
+    assert_eq!(retry_receipt, receipt);
+    assert_eq!(
+        storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .expect("events after exact retry")
+            .len(),
+        events.len()
     );
 
     let before = events.len();

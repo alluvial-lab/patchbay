@@ -374,6 +374,7 @@ fn reject_generic_special(payload: &StoredEventPayload) -> Result<(), StorageErr
             StoredEventKind::Grant
                 | StoredEventKind::DescendantGrant
                 | StoredEventKind::SpawnClaim
+                | StoredEventKind::SpawnExecutionEvidence
                 | StoredEventKind::SpawnSuccessorEvidenceStaged
                 | StoredEventKind::SpawnPromotionCommitted
                 | StoredEventKind::QuarantinedRuntimeEvidence
@@ -643,6 +644,16 @@ where
                 report,
                 source_attachment,
             )
+            .await
+    }
+
+    async fn append_spawn_execution_evidence_reconciled(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        evidence: patchbay_contracts::patchbay::SpawnExecutionEvidence,
+    ) -> Result<super::SpawnExecutionEvidenceAppend, StorageError> {
+        self.inner
+            .append_spawn_execution_evidence_reconciled(authority_domain_id, evidence)
             .await
     }
 

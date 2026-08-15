@@ -82,6 +82,14 @@ pub enum SpawnClaimability<'a> {
 /// Read-only claim and exact-generation fence queries consumed by later units.
 pub trait SpawnClaimQuery {
     fn claim_for_operation(&self, command_id: &CommandId) -> Option<&SpawnClaimRecord>;
+    fn claim_for_external_runtime(
+        &self,
+        runtime: &RuntimeGenerationRef,
+    ) -> Option<&SpawnClaimRecord>;
+    fn identified_runtime_for_operation(
+        &self,
+        command_id: &CommandId,
+    ) -> Option<&RuntimeGenerationRef>;
     fn classify_claim(&self, claim: &SpawnGenerationClaim) -> SpawnClaimability<'_>;
     fn delivery_fence(&self, runtime: &RuntimeGenerationRef) -> SpawnDeliveryFence;
     fn delivery_fence_for_target_scope(&self, scope: &TargetScope) -> SpawnDeliveryFence;
@@ -99,6 +107,15 @@ pub enum SpawnClaimError {
     GenerationAlreadyClaimed(CommandId),
     #[error("spawn claim references unknown command {0:?}")]
     UnknownClaim(CommandId),
+    #[error("spawn claim {command_id:?} already identifies another external runtime")]
+    ClaimRuntimeConflict { command_id: CommandId },
+    #[error(
+        "external runtime identified by claim {attempted:?} is already owned by claim {owner:?}"
+    )]
+    ExternalRuntimeOwnershipConflict {
+        owner: CommandId,
+        attempted: CommandId,
+    },
     #[error("illegal spawn-claim disposition transition {from:?} -> {to:?}")]
     IllegalDispositionTransition {
         from: SpawnClaimDisposition,
@@ -130,6 +147,8 @@ pub struct SpawnClaimRegistry {
     applied_events: BTreeMap<u64, StoredEventPayload>,
     records: HashMap<CommandId, SpawnClaimRecord>,
     exclusive_claims: HashMap<SpawnClaimKey, CommandId>,
+    identified_runtime_by_claim: HashMap<CommandId, RuntimeGenerationRef>,
+    external_runtime_claims: HashMap<super::ExternalRuntimeKey, CommandId>,
     prior_work_effects: HashMap<CommandId, Vec<SpawnPriorWorkEffect>>,
 }
 
@@ -142,6 +161,8 @@ impl SpawnClaimRegistry {
             applied_events: BTreeMap::new(),
             records: HashMap::new(),
             exclusive_claims: HashMap::new(),
+            identified_runtime_by_claim: HashMap::new(),
+            external_runtime_claims: HashMap::new(),
             prior_work_effects: HashMap::new(),
         })
     }
@@ -245,6 +266,22 @@ impl SpawnClaimRegistry {
                     ))
                 })?;
             next.apply_claim_event(claim_event, event_lsn)?;
+        } else if kind == StoredEventKind::SpawnExecutionEvidence {
+            let evidence = SpawnExecutionEvidence::decode(event.payload.payload.as_slice())
+                .map_err(|error| {
+                    corrupt_record(format!(
+                        "cannot decode spawn execution evidence at LSN {event_lsn}: {error}"
+                    ))
+                })?;
+            next.apply_execution_evidence(evidence, event_lsn)?;
+        } else if kind == StoredEventKind::SpawnSuccessorEvidenceStaged {
+            let staged = SpawnSuccessorEvidenceStaged::decode(event.payload.payload.as_slice())
+                .map_err(|error| {
+                    corrupt_record(format!(
+                        "cannot decode staged spawn successor at LSN {event_lsn}: {error}"
+                    ))
+                })?;
+            next.apply_staged_successor(staged)?;
         } else if kind == StoredEventKind::SpawnPromotionCommitted {
             let promotion = SpawnPromotionCommitted::decode(event.payload.payload.as_slice())
                 .map_err(|error| {
@@ -332,6 +369,135 @@ impl SpawnClaimRegistry {
                 adapter_id,
             },
         );
+        Ok(())
+    }
+
+    fn apply_execution_evidence(
+        &mut self,
+        evidence: SpawnExecutionEvidence,
+        event_lsn: u64,
+    ) -> Result<(), SpawnClaimError> {
+        let command_id = evidence
+            .exact_claim
+            .as_ref()
+            .and_then(|claim| claim.claim_operation_id.as_ref())
+            .filter(|id| !id.value.is_empty())
+            .ok_or_else(|| corrupt_record("spawn execution evidence has no claim command id"))?
+            .clone();
+        let Some(record) = self.records.get(&command_id).cloned() else {
+            // Pre-acceptance or another claim's evidence is durable diagnostic
+            // input only. It cannot become disposition or runtime-ownership
+            // authority if a matching claim appears later.
+            return Ok(());
+        };
+        if !matches!(
+            record.disposition,
+            SpawnClaimDisposition::Active | SpawnClaimDisposition::PoisonedPendingReconciliation
+        ) {
+            // Exact retries are reconciled before append. Historical evidence
+            // after a terminal claim remains inert rather than reactivating it.
+            return Ok(());
+        }
+        if validate_execution_evidence_contract(
+            &self.applied_events,
+            &self.authority_domain_id,
+            &record,
+            &evidence,
+            event_lsn,
+        )
+        .is_err()
+        {
+            // Only a later disposition event can consume evidence. Keeping an
+            // invalid candidate inert preserves the Leaf-5 diagnostic contract
+            // while the authenticated ingress rejects it before new durability.
+            return Ok(());
+        }
+        if required_external_effect_disposition(evidence.external_effect_disposition)?
+            == ExternalEffectDisposition::Identified
+        {
+            self.reserve_identified_runtime(
+                &command_id,
+                evidence
+                    .external_runtime
+                    .as_ref()
+                    .expect("identified evidence contract validated"),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn apply_staged_successor(
+        &mut self,
+        staged: SpawnSuccessorEvidenceStaged,
+    ) -> Result<(), SpawnClaimError> {
+        super::validate_staged_successor(&staged)
+            .map_err(|error| corrupt_log(error.to_string()))?;
+        let claim = staged
+            .exact_claim
+            .as_ref()
+            .expect("staged successor validated");
+        let command_id = claim
+            .claim_operation_id
+            .as_ref()
+            .expect("staged successor validated");
+        let record = self
+            .records
+            .get(command_id)
+            .ok_or_else(|| SpawnClaimError::UnknownClaim(command_id.clone()))?;
+        if record.claim != *claim
+            || !matches!(
+                record.disposition,
+                SpawnClaimDisposition::Active
+                    | SpawnClaimDisposition::PoisonedPendingReconciliation
+            )
+        {
+            return Err(corrupt_log(
+                "staged successor does not belong to its exact active/poisoned claim",
+            ));
+        }
+        let runtime = staged
+            .classified_target
+            .as_ref()
+            .expect("staged successor validated")
+            .clone();
+        self.reserve_identified_runtime(command_id, &runtime)
+    }
+
+    fn reserve_identified_runtime(
+        &mut self,
+        command_id: &CommandId,
+        runtime: &RuntimeGenerationRef,
+    ) -> Result<(), SpawnClaimError> {
+        let record = self
+            .records
+            .get(command_id)
+            .ok_or_else(|| SpawnClaimError::UnknownClaim(command_id.clone()))?;
+        validate_promoted_runtime(&self.authority_domain_id, &record.claim, runtime)?;
+        if let Some(existing) = self.identified_runtime_by_claim.get(command_id) {
+            return if existing == runtime {
+                Ok(())
+            } else {
+                Err(SpawnClaimError::ClaimRuntimeConflict {
+                    command_id: command_id.clone(),
+                })
+            };
+        }
+        let external = runtime
+            .external_runtime
+            .as_ref()
+            .expect("identified runtime validated");
+        let key = external_runtime_key(&self.authority_domain_id, external)?;
+        if let Some(owner) = self.external_runtime_claims.get(&key) {
+            if owner != command_id {
+                return Err(SpawnClaimError::ExternalRuntimeOwnershipConflict {
+                    owner: owner.clone(),
+                    attempted: command_id.clone(),
+                });
+            }
+        }
+        self.external_runtime_claims.insert(key, command_id.clone());
+        self.identified_runtime_by_claim
+            .insert(command_id.clone(), runtime.clone());
         Ok(())
     }
 
@@ -453,6 +619,19 @@ impl SpawnClaimRegistry {
                 return Err(corrupt_log("released claim did not own its exclusive key"));
             }
             self.exclusive_claims.remove(&key);
+            if let Some(runtime) = self.identified_runtime_by_claim.remove(&command_id) {
+                let external = runtime
+                    .external_runtime
+                    .as_ref()
+                    .expect("stored identified runtime was validated");
+                let runtime_key = external_runtime_key(&self.authority_domain_id, external)?;
+                if self.external_runtime_claims.get(&runtime_key) != Some(&command_id) {
+                    return Err(corrupt_log(
+                        "released claim did not own its identified external runtime",
+                    ));
+                }
+                self.external_runtime_claims.remove(&runtime_key);
+            }
         }
         Ok(())
     }
@@ -461,6 +640,24 @@ impl SpawnClaimRegistry {
 impl SpawnClaimQuery for SpawnClaimRegistry {
     fn claim_for_operation(&self, command_id: &CommandId) -> Option<&SpawnClaimRecord> {
         self.records.get(command_id)
+    }
+
+    fn claim_for_external_runtime(
+        &self,
+        runtime: &RuntimeGenerationRef,
+    ) -> Option<&SpawnClaimRecord> {
+        let external = runtime.external_runtime.as_ref()?;
+        let key = external_runtime_key(&self.authority_domain_id, external).ok()?;
+        self.external_runtime_claims
+            .get(&key)
+            .and_then(|command_id| self.records.get(command_id))
+    }
+
+    fn identified_runtime_for_operation(
+        &self,
+        command_id: &CommandId,
+    ) -> Option<&RuntimeGenerationRef> {
+        self.identified_runtime_by_claim.get(command_id)
     }
 
     fn classify_claim(&self, claim: &SpawnGenerationClaim) -> SpawnClaimability<'_> {

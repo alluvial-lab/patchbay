@@ -30,12 +30,16 @@ use std::{
 };
 
 use patchbay_contracts::patchbay::{
-    runtime_generation_disposition, spawn_claim_event, typed_correlation, AuditEventKind,
-    AuditPage, AuditRecord, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
-    EventId, FailureCode, Generation, Grant, IdempotencyKey, Lsn, Observation, ObservationKind,
-    OperationKind, OperationState, QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason,
-    RuntimeEvidenceSourceAttachment, SessionReport, SpawnClaimAccepted, SpawnClaimEvent,
-    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
+    runtime_generation_disposition, session_state_event, spawn_claim_disposition_changed,
+    spawn_claim_event, typed_correlation, AuditEventKind, AuditPage, AuditRecord,
+    AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, EventId,
+    ExternalEffectDisposition, FailureCode, Generation, Grant, IdempotencyKey,
+    LogicalTargetCandidateReleased, Lsn, Observation, ObservationKind, OperationKind,
+    OperationState, QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason,
+    RuntimeEvidenceSourceAttachment, SessionReport, SessionStateEvent, SpawnClaimAccepted,
+    SpawnClaimAmbiguityEvidence, SpawnClaimDisposition, SpawnClaimDispositionChanged,
+    SpawnClaimEvent, SpawnClaimNoEffectRelease, SpawnExecutionEvidence, SpawnPromotionCommitted,
+    SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
@@ -46,7 +50,8 @@ use super::port::{
     AuditedBatchAppend, AuditedDecisionAppend, AuditedDedupOutcome, CoreGenerationStore,
     DedupOutcome, GrantAppendOutcome, GrantIdentityKey, ObservationTransitionAppend,
     ObservationWriteRoute, RecordedEvent, SpawnClaimAppend, SpawnClaimDedupOutcome,
-    SpawnPromotionAppend, Storage, StorageError, StoredSnapshot, TargetKey,
+    SpawnExecutionEvidenceAppend, SpawnPromotionAppend, Storage, StorageError, StoredSnapshot,
+    TargetKey,
 };
 
 pub const LATEST_SCHEMA_VERSION: u32 = 6;
@@ -1236,6 +1241,11 @@ enum WriterCommand {
         logical_payload: Vec<u8>,
         reply: oneshot::Sender<Result<SpawnClaimDedupOutcome, StorageError>>,
     },
+    AppendSpawnExecutionEvidenceReconciled {
+        authority_domain_id: String,
+        evidence: Box<SpawnExecutionEvidence>,
+        reply: oneshot::Sender<Result<SpawnExecutionEvidenceAppend, StorageError>>,
+    },
     AppendSpawnPromotionAudited {
         authority_domain_id: String,
         promotion: Box<SpawnPromotionCommitted>,
@@ -1526,6 +1536,18 @@ async fn writer_actor(
                     *accepted,
                     audit,
                     logical_payload,
+                );
+                let _ = reply.send(result);
+            }
+            WriterCommand::AppendSpawnExecutionEvidenceReconciled {
+                authority_domain_id,
+                evidence,
+                reply,
+            } => {
+                let result = do_append_spawn_execution_evidence_reconciled(
+                    &mut db,
+                    &authority_domain_id,
+                    *evidence,
                 );
                 let _ = reply.send(result);
             }
@@ -3251,6 +3273,326 @@ fn do_append_spawn_claim_accepted(
     }))
 }
 
+fn do_append_spawn_execution_evidence_reconciled(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    evidence: SpawnExecutionEvidence,
+) -> Result<SpawnExecutionEvidenceAppend, StorageError> {
+    let domain = AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    };
+    if authority_domain_id.is_empty() || evidence.authority_domain_id.as_ref() != Some(&domain) {
+        return Err(StorageError::CorruptRecord(
+            "spawn execution evidence has the wrong or empty authority domain".to_owned(),
+        ));
+    }
+    let command_id = evidence
+        .exact_claim
+        .as_ref()
+        .and_then(|claim| claim.claim_operation_id.as_ref())
+        .filter(|command_id| !command_id.value.is_empty())
+        .ok_or_else(|| {
+            StorageError::CorruptRecord(
+                "spawn execution evidence has no claim operation id".to_owned(),
+            )
+        })?
+        .clone();
+    let effect = ExternalEffectDisposition::try_from(evidence.external_effect_disposition)
+        .map_err(|_| {
+            StorageError::CorruptRecord(
+                "spawn execution evidence has an unknown effect disposition".to_owned(),
+            )
+        })?;
+    if effect == ExternalEffectDisposition::Unspecified {
+        return Err(StorageError::CorruptRecord(
+            "spawn execution evidence has unspecified effect disposition".to_owned(),
+        ));
+    }
+
+    let tx = db.transaction().map_err(map_write_err)?;
+    let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
+    let (_, mut claims, mut previous_lsn) = replay_spawn_acceptance_prestate(&events, &domain)?;
+    let mut sessions = crate::session::SessionRegistry::new(domain.clone())
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let mut session_cursor = 0;
+    for event in &events {
+        let validated = crate::storage::validate_next_replay_event(&domain, session_cursor, event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        sessions
+            .observe(event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        session_cursor = validated.lsn;
+    }
+
+    let mut exact_evidence_id = None;
+    for event in &events {
+        if event.payload.kind != StoredEventKind::SpawnExecutionEvidence as i32 {
+            continue;
+        }
+        let existing =
+            SpawnExecutionEvidence::decode(event.payload.payload.as_slice()).map_err(|error| {
+                StorageError::CorruptRecord(format!(
+                    "cannot decode durable spawn execution evidence: {error}"
+                ))
+            })?;
+        if existing == evidence {
+            exact_evidence_id.get_or_insert_with(|| event.event_id.clone());
+        }
+    }
+
+    let deduplicated = exact_evidence_id.is_some();
+    let mut pending_sources = Vec::<RecordedEvent>::new();
+    let evidence_event_id = if let Some(event_id) = exact_evidence_id {
+        event_id
+    } else {
+        let next_lsn = previous_lsn.checked_add(1).ok_or_else(|| {
+            StorageError::CorruptRecord("spawn execution evidence LSN overflow".to_owned())
+        })?;
+        claims
+            .validate_execution_evidence_candidate(&evidence)
+            .map_err(|error| map_spawn_execution_evidence_error(error, &claims, &command_id))?;
+        let candidate = RecordedEvent {
+            event_id: event_id(domain.clone(), next_lsn),
+            payload: crate::session::encode_spawn_execution_evidence(&evidence),
+        };
+        claims
+            .observe(&candidate)
+            .map_err(|error| map_spawn_execution_evidence_error(error, &claims, &command_id))?;
+        sessions
+            .observe(&candidate)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        previous_lsn = next_lsn;
+        pending_sources.push(candidate.clone());
+        candidate.event_id
+    };
+
+    let record = crate::session::SpawnClaimQuery::claim_for_operation(&claims, &command_id)
+        .ok_or_else(|| StorageError::SpawnExecutionEvidenceConflict {
+            command_id: command_id.value.clone(),
+        })?
+        .clone();
+    let identified_runtime =
+        crate::session::SpawnClaimQuery::identified_runtime_for_operation(&claims, &command_id)
+            .cloned();
+    let mut disposition_event_id = None;
+
+    let target_disposition = match (effect, record.disposition) {
+        (
+            ExternalEffectDisposition::MayExist | ExternalEffectDisposition::Identified,
+            SpawnClaimDisposition::Active,
+        ) => Some(SpawnClaimDisposition::PoisonedPendingReconciliation),
+        (
+            ExternalEffectDisposition::MayExist | ExternalEffectDisposition::Identified,
+            SpawnClaimDisposition::PoisonedPendingReconciliation,
+        ) => None,
+        (
+            ExternalEffectDisposition::ProvedNone,
+            SpawnClaimDisposition::Active | SpawnClaimDisposition::PoisonedPendingReconciliation,
+        ) => Some(SpawnClaimDisposition::ReleasedNoExternalEffect),
+        (_, _) if deduplicated => None,
+        _ => {
+            return Err(StorageError::SpawnExecutionEvidenceConflict {
+                command_id: command_id.value,
+            })
+        }
+    };
+
+    if let Some(target_disposition) = target_disposition {
+        let candidate_release = if target_disposition
+            == SpawnClaimDisposition::ReleasedNoExternalEffect
+        {
+            identified_runtime.as_ref().and_then(|runtime| {
+                let logical_target_id = runtime.logical_target_id.as_ref()?;
+                let external = runtime.external_runtime.as_ref()?;
+                sessions
+                    .logical_targets()
+                    .get(logical_target_id)
+                    .and_then(|target| {
+                        (target.reserved_candidate.as_ref() == Some(external)).then(|| {
+                            StoredEventPayload {
+                                kind: StoredEventKind::SessionState as i32,
+                                payload: SessionStateEvent {
+                                    authority_domain_id: Some(domain.clone()),
+                                    mutation: Some(
+                                        session_state_event::Mutation::LogicalTargetCandidateReleased(
+                                            LogicalTargetCandidateReleased {
+                                                logical_target_id: Some(logical_target_id.clone()),
+                                                external_runtime_ref: Some(external.clone()),
+                                            },
+                                        ),
+                                    ),
+                                }
+                                .encode_to_vec(),
+                            }
+                        })
+                    })
+            })
+        } else {
+            None
+        };
+
+        let candidate_liveness_ids: Vec<Option<EventId>> = if target_disposition
+            == SpawnClaimDisposition::ReleasedNoExternalEffect
+            && record.claim.expected_prior.is_some()
+        {
+            let evidence_lsn = evidence_event_id
+                .lsn
+                .as_ref()
+                .expect("durable evidence id has an LSN")
+                .value;
+            events
+                .iter()
+                .rev()
+                .filter(|event| {
+                    event
+                        .event_id
+                        .lsn
+                        .as_ref()
+                        .is_some_and(|lsn| lsn.value > evidence_lsn)
+                        && event.payload.kind == StoredEventKind::SessionState as i32
+                })
+                .map(|event| Some(event.event_id.clone()))
+                .collect()
+        } else {
+            vec![None]
+        };
+
+        let mut selected = None;
+        for liveness_event_id in candidate_liveness_ids {
+            let mut staged_claims = claims.clone();
+            let mut staged_sessions = sessions.clone();
+            let mut staged_lsn = previous_lsn;
+            let mut staged_sources = Vec::new();
+            if let Some(source) = candidate_release.clone() {
+                staged_lsn = staged_lsn.checked_add(1).ok_or_else(|| {
+                    StorageError::CorruptRecord("spawn candidate-release LSN overflow".to_owned())
+                })?;
+                let candidate = RecordedEvent {
+                    event_id: event_id(domain.clone(), staged_lsn),
+                    payload: source,
+                };
+                staged_claims.observe(&candidate).map_err(|error| {
+                    map_spawn_execution_evidence_error(error, &staged_claims, &command_id)
+                })?;
+                staged_sessions
+                    .observe(&candidate)
+                    .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+                staged_sources.push(candidate);
+            }
+            staged_lsn = staged_lsn.checked_add(1).ok_or_else(|| {
+                StorageError::CorruptRecord("spawn claim disposition LSN overflow".to_owned())
+            })?;
+            let change = SpawnClaimDispositionChanged {
+                claim_operation_id: Some(command_id.clone()),
+                from_disposition: record.disposition as i32,
+                to_disposition: target_disposition as i32,
+                evidence: Some(
+                    if target_disposition == SpawnClaimDisposition::PoisonedPendingReconciliation {
+                        spawn_claim_disposition_changed::Evidence::AmbiguousExternalEffect(
+                            SpawnClaimAmbiguityEvidence {
+                                evidence_event_id: Some(evidence_event_id.clone()),
+                            },
+                        )
+                    } else {
+                        spawn_claim_disposition_changed::Evidence::NoExternalEffectRelease(
+                            SpawnClaimNoEffectRelease {
+                                evidence_event_id: Some(evidence_event_id.clone()),
+                                exact_prior_liveness: record.claim.expected_prior.clone(),
+                                prior_liveness_event_id: liveness_event_id,
+                            },
+                        )
+                    },
+                ),
+            };
+            let candidate = RecordedEvent {
+                event_id: event_id(domain.clone(), staged_lsn),
+                payload: crate::session::encode_spawn_claim_event(&SpawnClaimEvent {
+                    authority_domain_id: Some(domain.clone()),
+                    mutation: Some(spawn_claim_event::Mutation::DispositionChanged(change)),
+                }),
+            };
+            match staged_claims.observe(&candidate) {
+                Ok(()) => {
+                    staged_sessions
+                        .observe(&candidate)
+                        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+                    staged_sources.push(candidate.clone());
+                    selected = Some((staged_sources, candidate.event_id));
+                    break;
+                }
+                Err(_)
+                    if target_disposition == SpawnClaimDisposition::ReleasedNoExternalEffect
+                        && record.claim.expected_prior.is_some() => {}
+                Err(error) => {
+                    return Err(map_spawn_execution_evidence_error(
+                        error,
+                        &staged_claims,
+                        &command_id,
+                    ))
+                }
+            }
+        }
+        if let Some((sources, event_id)) = selected {
+            pending_sources.extend(sources);
+            disposition_event_id = Some(event_id);
+        }
+    }
+
+    for candidate in &pending_sources {
+        let (assigned_lsn, _) = insert_event(&tx, authority_domain_id, &candidate.payload)?;
+        let expected_lsn = candidate
+            .event_id
+            .lsn
+            .as_ref()
+            .expect("staged evidence candidate has an LSN")
+            .value;
+        if assigned_lsn as u64 != expected_lsn {
+            return Err(StorageError::CorruptRecord(format!(
+                "SQLite assigned spawn evidence LSN {assigned_lsn}, expected {expected_lsn}"
+            )));
+        }
+    }
+    tx.commit().map_err(map_write_err)?;
+    Ok(SpawnExecutionEvidenceAppend {
+        evidence_event_id,
+        disposition_event_id,
+        deduplicated,
+    })
+}
+
+fn map_spawn_execution_evidence_error(
+    error: crate::session::SpawnClaimError,
+    claims: &crate::session::SpawnClaimRegistry,
+    attempted: &CommandId,
+) -> StorageError {
+    match error {
+        crate::session::SpawnClaimError::ClaimRuntimeConflict { command_id } => {
+            StorageError::SpawnExecutionEvidenceConflict {
+                command_id: command_id.value,
+            }
+        }
+        crate::session::SpawnClaimError::ExternalRuntimeOwnershipConflict { owner, attempted } => {
+            let owner = crate::session::SpawnClaimQuery::claim_for_operation(claims, &owner)
+                .and_then(|record| record.claim.logical_target_id.as_ref())
+                .map_or_else(|| owner.value, |target| target.value.clone());
+            let attempted_owner =
+                crate::session::SpawnClaimQuery::claim_for_operation(claims, &attempted)
+                    .and_then(|record| record.claim.logical_target_id.as_ref())
+                    .map_or_else(|| attempted.value, |target| target.value.clone());
+            StorageError::DuplicateNativeReference {
+                owner,
+                attempted_owner,
+            }
+        }
+        crate::session::SpawnClaimError::UnknownClaim(_) => {
+            StorageError::SpawnExecutionEvidenceConflict {
+                command_id: attempted.value.clone(),
+            }
+        }
+        other => StorageError::CorruptRecord(other.to_string()),
+    }
+}
+
 fn do_append_spawn_successor_staged_idempotent(
     db: &mut Connection,
     authority_domain_id: &str,
@@ -3371,6 +3713,46 @@ fn do_append_spawn_successor_staged_idempotent(
             "staged successor exact claim disagrees with the durable claim".to_owned(),
         ));
     }
+    let classified_target = staged
+        .classified_target
+        .as_ref()
+        .expect("staged successor validated");
+    if let Some(identified) =
+        crate::session::SpawnClaimQuery::identified_runtime_for_operation(&claims, &command_id)
+    {
+        if identified != classified_target {
+            return Err(StorageError::SpawnExecutionEvidenceConflict {
+                command_id: command_id.value.clone(),
+            });
+        }
+    }
+    if let Some(owner) =
+        crate::session::SpawnClaimQuery::claim_for_external_runtime(&claims, classified_target)
+    {
+        let owner_command = owner
+            .claim
+            .claim_operation_id
+            .as_ref()
+            .expect("durable identified claim validated");
+        if owner_command != &command_id {
+            return Err(StorageError::DuplicateNativeReference {
+                owner: owner
+                    .claim
+                    .logical_target_id
+                    .as_ref()
+                    .expect("durable identified claim validated")
+                    .value
+                    .clone(),
+                attempted_owner: claim
+                    .claim
+                    .logical_target_id
+                    .as_ref()
+                    .expect("durable staged claim validated")
+                    .value
+                    .clone(),
+            });
+        }
+    }
     let report = staged.report.as_ref().expect("staged successor validated");
     let source = staged
         .source_attachment
@@ -3407,6 +3789,9 @@ fn do_append_spawn_successor_staged_idempotent(
         },
         other => StorageError::CorruptRecord(other.to_string()),
     })?;
+    claims
+        .observe(&candidate)
+        .map_err(|error| map_spawn_execution_evidence_error(error, &claims, &command_id))?;
     let (source_lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
     if source_lsn as u64 != previous_lsn.saturating_add(1) {
         return Err(StorageError::CorruptRecord(format!(
@@ -4131,6 +4516,7 @@ fn reject_generic_unaudited_special(payload: &StoredEventPayload) -> Result<(), 
             StoredEventKind::try_from(payload.kind).ok(),
             Some(
                 StoredEventKind::SpawnClaim
+                    | StoredEventKind::SpawnExecutionEvidence
                     | StoredEventKind::SpawnSuccessorEvidenceStaged
                     | StoredEventKind::SpawnPromotionCommitted
                     | StoredEventKind::QuarantinedRuntimeEvidence
@@ -4513,6 +4899,25 @@ impl Storage for RusqliteStorage {
                 accepted: Box::new(accepted),
                 audit,
                 logical_payload,
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_spawn_execution_evidence_reconciled(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        evidence: SpawnExecutionEvidence,
+    ) -> Result<SpawnExecutionEvidenceAppend, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendSpawnExecutionEvidenceReconciled {
+                authority_domain_id: authority_domain_id.value.clone(),
+                evidence: Box::new(evidence),
                 reply: reply_tx,
             })
             .await

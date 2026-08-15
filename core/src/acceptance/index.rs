@@ -8,9 +8,10 @@ use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
     spawn_claim_event, AcceptedOperation, AuthorityDomainId, CommandId, CommandTransition,
-    FailureCode, Observation, ObservationKind, Operation, OperationKind, OperationState,
-    Revocation, RuntimeGenerationRef, SpawnClaimAccepted, SpawnClaimEvent,
-    SpawnPriorWorkDisposition, SpawnPriorWorkEffect, SpawnPromotionCommitted, StoredEventKind,
+    ExternalEffectDisposition, FailureCode, Observation, ObservationKind, Operation, OperationKind,
+    OperationState, Revocation, RuntimeGenerationRef, SpawnClaimAccepted, SpawnClaimDisposition,
+    SpawnClaimEvent, SpawnExecutionEvidence, SpawnPriorWorkDisposition, SpawnPriorWorkEffect,
+    SpawnPromotionCommitted, StoredEventKind,
 };
 use prost::Message;
 
@@ -41,6 +42,10 @@ pub struct CommandIndex {
     /// continuation. Its lifecycle remains reconcilable, but delivery must
     /// never offer it again.
     replacement_quiesce: HashSet<CommandId>,
+    /// A managed spawn has durable evidence reconciling its original external
+    /// attempt. It must never be re-offered, whether the evidence proves no
+    /// effect or reports ambiguity, even after restart replay.
+    spawn_execution_evidence: HashSet<CommandId>,
 }
 
 impl CommandIndex {
@@ -72,13 +77,13 @@ impl CommandIndex {
             // is deliberately deferred to the descendant-completion owner.
             StoredEventKind::Observation => self.apply_observation(event),
             StoredEventKind::SpawnClaim => self.apply_spawn_claim(event),
+            StoredEventKind::SpawnExecutionEvidence => self.apply_spawn_execution_evidence(event),
             StoredEventKind::SpawnPromotionCommitted => self.apply_spawn_promotion(event),
             StoredEventKind::Elicitation
             | StoredEventKind::Grant
             | StoredEventKind::DescendantGrant
             | StoredEventKind::SessionState
             | StoredEventKind::ResourceState
-            | StoredEventKind::SpawnExecutionEvidence
             | StoredEventKind::SpawnSuccessorEvidenceStaged
             | StoredEventKind::QuarantinedRuntimeEvidence
             | StoredEventKind::OperatorRecord
@@ -129,6 +134,7 @@ impl CommandIndex {
     pub fn delivery_is_suppressed(&self, command_id: &CommandId) -> bool {
         self.deferred_spawn_successes.contains(command_id)
             || self.replacement_quiesce.contains(command_id)
+            || self.spawn_execution_evidence.contains(command_id)
     }
 
     /// Derive the complete, stable-order effect list for non-terminal work
@@ -285,15 +291,94 @@ impl CommandIndex {
                 "spawn claim domain disagrees with event domain at LSN {event_lsn}"
             )));
         }
-        let Some(spawn_claim_event::Mutation::Accepted(accepted)) = claim_event.mutation else {
+        match claim_event.mutation {
+            Some(spawn_claim_event::Mutation::Accepted(accepted)) => {
+                // Stage the complete compound event. A malformed later effect cannot
+                // leave the accepted spawn or an earlier supersession half-applied.
+                let mut staged = self.clone();
+                staged.apply_spawn_claim_accepted(accepted, event_domain, event_lsn)?;
+                *self = staged;
+                Ok(())
+            }
+            Some(spawn_claim_event::Mutation::DispositionChanged(change)) => {
+                let command_id = change.claim_operation_id.ok_or_else(|| {
+                    AcceptanceError::CorruptRecord(format!(
+                        "spawn claim disposition at LSN {event_lsn} has no command id"
+                    ))
+                })?;
+                if !self.commands.contains_key(&command_id) {
+                    return Err(AcceptanceError::CorruptLog(format!(
+                        "spawn claim disposition at LSN {event_lsn} references unknown command {command_id:?}"
+                    )));
+                }
+                let to = SpawnClaimDisposition::try_from(change.to_disposition).map_err(|_| {
+                    AcceptanceError::CorruptRecord(format!(
+                        "spawn claim disposition at LSN {event_lsn} has an unknown target"
+                    ))
+                })?;
+                if matches!(
+                    to,
+                    SpawnClaimDisposition::PoisonedPendingReconciliation
+                        | SpawnClaimDisposition::TargetAbandoned
+                ) {
+                    self.spawn_execution_evidence.insert(command_id);
+                }
+                Ok(())
+            }
+            None => Err(AcceptanceError::CorruptRecord(format!(
+                "spawn claim event at LSN {event_lsn} has no mutation"
+            ))),
+        }
+    }
+
+    fn apply_spawn_execution_evidence(
+        &mut self,
+        event: &RecordedEvent,
+    ) -> Result<(), AcceptanceError> {
+        let (event_domain, event_lsn) = event_identity(event)?;
+        let evidence =
+            SpawnExecutionEvidence::decode(event.payload.payload.as_slice()).map_err(|error| {
+                AcceptanceError::CorruptRecord(format!(
+                    "cannot decode spawn execution evidence at LSN {event_lsn}: {error}"
+                ))
+            })?;
+        if evidence.authority_domain_id.as_ref() != Some(event_domain) {
+            return Err(AcceptanceError::CorruptLog(format!(
+                "spawn execution evidence domain disagrees with event domain at LSN {event_lsn}"
+            )));
+        }
+        let command_id = evidence
+            .exact_claim
+            .as_ref()
+            .and_then(|claim| claim.claim_operation_id.as_ref())
+            .filter(|command_id| !command_id.value.is_empty())
+            .ok_or_else(|| {
+                AcceptanceError::CorruptRecord(format!(
+                    "spawn execution evidence at LSN {event_lsn} has no claim command id"
+                ))
+            })?
+            .clone();
+        let Some(record) = self.commands.get(&command_id) else {
+            // Pre-acceptance evidence is durable diagnostic input only. It
+            // cannot suppress a command that does not yet exist.
             return Ok(());
         };
-
-        // Stage the complete compound event. A malformed later effect cannot
-        // leave the accepted spawn or an earlier supersession half-applied.
-        let mut staged = self.clone();
-        staged.apply_spawn_claim_accepted(accepted, event_domain, event_lsn)?;
-        *self = staged;
+        if record.operation.kind != OperationKind::Spawn as i32 {
+            return Ok(());
+        }
+        let disposition = ExternalEffectDisposition::try_from(evidence.external_effect_disposition)
+            .map_err(|_| {
+                AcceptanceError::CorruptRecord(format!(
+                    "spawn execution evidence at LSN {event_lsn} has unknown effect disposition"
+                ))
+            })?;
+        if disposition != ExternalEffectDisposition::Unspecified {
+            // Evidence reports the outcome of the original external attempt.
+            // Whether it proves none or reports ambiguity, that attempt is
+            // reconciled rather than automatically executed again. A released
+            // generation is reused only by a distinct accepted command/key.
+            self.spawn_execution_evidence.insert(command_id);
+        }
         Ok(())
     }
 

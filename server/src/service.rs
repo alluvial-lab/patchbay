@@ -2722,6 +2722,11 @@ pub fn map_storage_error_to_status(error: StorageError) -> Status {
         } => Status::failed_precondition(format!(
             "staged successor for claim {command_id} conflicts with source LSN {existing_lsn}"
         )),
+        StorageError::SpawnExecutionEvidenceConflict { command_id } => {
+            Status::failed_precondition(format!(
+                "spawn execution evidence conflicts with claim {command_id}"
+            ))
+        }
         StorageError::DuplicateNativeReference {
             owner,
             attempted_owner,
