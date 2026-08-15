@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-reconnect-cursor-reconcile
 kind: story
-stage: review
+stage: implementing
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-restart-continuation-orchestration, research-handoff-spawn-cursor-authoritative-replacement-contract]
