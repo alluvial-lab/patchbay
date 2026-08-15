@@ -472,8 +472,207 @@ fn generated_enum_values(proto: &str, enumeration: &str) -> BTreeSet<String> {
         .collect()
 }
 
-#[test]
-fn runtime_ingress_inventory_enumerates_generated_rpc_and_observation_families() {
+fn generated_runtime_ingress_families() -> BTreeSet<String> {
+    let observations_proto = include_str!("../../../contracts/proto/patchbay/observations.proto");
+    let candidate_fields = generated_oneof_fields(
+        observations_proto,
+        "QuarantinedRuntimeEvidence",
+        "candidate",
+    );
+    let observation_kinds = generated_enum_values(observations_proto, "ObservationKind");
+    let mut families = candidate_fields
+        .iter()
+        .filter(|field| field.as_str() != "observation" && field.as_str() != "transcript_status")
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    for kind in observation_kinds {
+        let suffix = kind
+            .strip_prefix("OBSERVATION_KIND_")
+            .expect("ObservationKind uses the generated registry prefix");
+        match suffix {
+            "UNSPECIFIED" => {}
+            "RESULT" => {
+                assert!(
+                    candidate_fields.contains("observation"),
+                    "Result ingress requires the generated Observation quarantine arm"
+                );
+                families.insert("observation".to_owned());
+            }
+            _ => {
+                assert!(
+                    candidate_fields.contains("transcript_status"),
+                    "Event/Status/Delta ingress requires the generated transcript/status quarantine arm"
+                );
+                let family = if suffix == "EVENT" {
+                    "transcript_event".to_owned()
+                } else {
+                    suffix.to_ascii_lowercase()
+                };
+                families.insert(family);
+            }
+        }
+    }
+    families
+}
+
+struct RuntimeIngressInventoryFixture {
+    storage: RusqliteStorage,
+    service: AdapterControlServiceImpl<RusqliteStorage>,
+    attachment_token: String,
+    domain: AuthorityDomainId,
+    runtime_scope: TargetScope,
+    elicitation: Elicitation,
+    ack_operation: Operation,
+    result_operation: Operation,
+}
+
+async fn stale_runtime_ingress_inventory_fixture() -> RuntimeIngressInventoryFixture {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    session_report(SessionConnectivityState::Live),
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("generation one registers");
+
+    let runtime_scope = targeted_operation(domain.clone(), "inventory-scope")
+        .target_scope
+        .expect("runtime scope");
+    let elicitation = Elicitation {
+        elicitation_id: Some(ElicitationId {
+            value: "inventory-runtime-question".into(),
+        }),
+        authority_domain_id: Some(domain.clone()),
+        opener: Some(ActorEndpointRef {
+            actor_id: Some(ActorId {
+                value: adapter_id().value,
+            }),
+            endpoint_id: Some(EndpointId {
+                value: "pi-adapter-endpoint".into(),
+            }),
+            ..ActorEndpointRef::default()
+        }),
+        target_context: Some(runtime_scope.clone()),
+        state: ElicitationState::Opened as i32,
+        ..Elicitation::default()
+    };
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            runtime_elicitation_request(domain.clone(), elicitation.clone()),
+            &attachment_token,
+        ))
+        .await
+        .expect("Current Elicitation opens before its generation becomes stale");
+
+    let ack_operation = targeted_operation(domain.clone(), "inventory-stale-ack");
+    let result_operation = targeted_operation(domain.clone(), "inventory-stale-result");
+    for operation in [&ack_operation, &result_operation] {
+        storage
+            .append(
+                &domain,
+                StoredEventPayload {
+                    kind: StoredEventKind::Operation as i32,
+                    payload: accepted_operation_bytes(operation),
+                },
+            )
+            .await
+            .expect("generation-one command appends");
+    }
+
+    let mut generation_two = session_report(SessionConnectivityState::Live);
+    generation_two.session_generation = Some(Generation { value: 2 });
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    generation_two,
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("generation two supersedes generation one");
+
+    RuntimeIngressInventoryFixture {
+        storage,
+        service,
+        attachment_token,
+        domain,
+        runtime_scope,
+        elicitation,
+        ack_operation,
+        result_operation,
+    }
+}
+
+impl RuntimeIngressInventoryFixture {
+    fn stale_request(&self, family: &str) -> ObservationRequest {
+        match family {
+            "delivery_acknowledgement" => {
+                delivery_acknowledgement(self.domain.clone(), &self.ack_operation)
+            }
+            "elicitation_mutation" => {
+                let mut withdrawn = self.elicitation.clone();
+                withdrawn.state = ElicitationState::Withdrawn as i32;
+                runtime_elicitation_request(self.domain.clone(), withdrawn)
+            }
+            "observation" => lifecycle_observation(
+                self.domain.clone(),
+                &self.result_operation,
+                ObservationKind::Result,
+                FailureCode::Unspecified,
+            ),
+            "session_report" => {
+                let mut stale_report = session_report(SessionConnectivityState::Live);
+                stale_report.source_cursor.as_mut().unwrap().revision = 2;
+                ObservationRequest {
+                    authority_domain_id: Some(self.domain.clone()),
+                    observation: Some(observation_request::Observation::SessionReport(
+                        stale_report,
+                    )),
+                }
+            }
+            "transcript_event" => runtime_fact_request(
+                self.domain.clone(),
+                self.runtime_scope.clone(),
+                ObservationKind::Event,
+                "patchbay.pi.TranscriptEvent.v1",
+            ),
+            "status" => runtime_fact_request(
+                self.domain.clone(),
+                self.runtime_scope.clone(),
+                ObservationKind::Status,
+                "patchbay.pi.DeliveryStatus.v1",
+            ),
+            "delta" => runtime_fact_request(
+                self.domain.clone(),
+                self.runtime_scope.clone(),
+                ObservationKind::Delta,
+                "patchbay.pi.TranscriptDelta.v1",
+            ),
+            generated_but_unmapped => panic!(
+                "generated runtime ingress family {generated_but_unmapped:?} needs a real authenticated fixture"
+            ),
+        }
+    }
+}
+
+#[tokio::test]
+async fn runtime_ingress_inventory_enumerates_generated_rpc_and_observation_families() {
+    use patchbay_contracts::patchbay::quarantined_runtime_evidence::Candidate;
+
     let adapter_proto = include_str!("../../../contracts/proto/patchbay/adapter_control.proto");
     assert_eq!(
         generated_oneof_fields(adapter_proto, "ObservationRequest", "observation"),
@@ -486,18 +685,60 @@ fn runtime_ingress_inventory_enumerates_generated_rpc_and_observation_families()
         "a new adapter ingress arm must be explicitly classified as runtime-generation, resource-generation, or exact-claim fenced"
     );
 
-    let observations_proto = include_str!("../../../contracts/proto/patchbay/observations.proto");
-    assert_eq!(
-        generated_enum_values(observations_proto, "ObservationKind"),
-        BTreeSet::from([
-            "OBSERVATION_KIND_DELTA".to_owned(),
-            "OBSERVATION_KIND_EVENT".to_owned(),
-            "OBSERVATION_KIND_RESULT".to_owned(),
-            "OBSERVATION_KIND_STATUS".to_owned(),
-            "OBSERVATION_KIND_UNSPECIFIED".to_owned(),
-        ]),
-        "a new Observation kind must be assigned an explicit runtime fence and quarantine family"
-    );
+    let fixture = stale_runtime_ingress_inventory_fixture().await;
+    for expected_family in generated_runtime_ingress_families() {
+        let event_id = fixture
+            .service
+            .ingest_observation(authenticated_with_attachment_token(
+                fixture.stale_request(&expected_family),
+                &fixture.attachment_token,
+            ))
+            .await
+            .unwrap_or_else(|error| {
+                panic!("{expected_family} stale authenticated ingress failed: {error}")
+            })
+            .into_inner()
+            .event_id
+            .expect("quarantine event id");
+        let event = fixture
+            .storage
+            .read_after(&fixture.domain, Lsn { value: 0 })
+            .await
+            .expect("inventory prefix reads")
+            .into_iter()
+            .find(|event| event.event_id == event_id)
+            .expect("returned event exists");
+        assert_eq!(
+            event.payload.kind,
+            StoredEventKind::QuarantinedRuntimeEvidence as i32,
+            "generated family {expected_family} must reach the shared fence before any normal projection writer"
+        );
+        let quarantine = patchbay_contracts::patchbay::QuarantinedRuntimeEvidence::decode(
+            event.payload.payload.as_slice(),
+        )
+        .expect("quarantine decodes");
+        let actual_family = match quarantine.candidate.expect("typed candidate") {
+            Candidate::Observation(_) => "observation",
+            Candidate::SessionReport(_) => "session_report",
+            Candidate::DeliveryAcknowledgement(_) => "delivery_acknowledgement",
+            Candidate::TranscriptStatus(evidence) => {
+                match ObservationKind::try_from(
+                    evidence.observation.expect("nested Observation").kind,
+                )
+                .expect("known generated ObservationKind")
+                {
+                    ObservationKind::Event => "transcript_event",
+                    ObservationKind::Status => "status",
+                    ObservationKind::Delta => "delta",
+                    ObservationKind::Result | ObservationKind::Unspecified => {
+                        "unexpected_transcript_status_kind"
+                    }
+                }
+            }
+            Candidate::ElicitationMutation(_) => "elicitation_mutation",
+        };
+        assert_eq!(actual_family, expected_family);
+    }
 }
 
 #[test]
