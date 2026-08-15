@@ -3656,6 +3656,97 @@ async fn ambiguous_spawn_results_with_or_without_ack_poison_the_exact_claim() {
 }
 
 #[tokio::test]
+async fn abnormal_stream_loss_leaves_claim_accepted_after_drop_active_and_redeliverable() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let gate = CoreDecisionGate::default();
+    let service = AdapterControlServiceImpl::new_with_decision_gate(
+        storage.clone(),
+        domain.clone(),
+        evidence_verifier(),
+        gate.clone(),
+    )
+    .await
+    .expect("service initializes");
+    let attachment_token = attach_generation(&service, domain.clone(), 1).await;
+    report_session(
+        &service,
+        domain.clone(),
+        SessionConnectivityState::Live,
+        1,
+        &attachment_token,
+    )
+    .await;
+
+    let mut disappeared = receive_from_start(&service, &attachment_token).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), disappeared.next())
+            .await
+            .is_err(),
+        "the stream is empty before it disappears"
+    );
+
+    let held = gate.acquire().await;
+    drop(disappeared);
+    let accepted = append_replacement_claim(&storage, &domain, "accepted-after-drop").await;
+    drop(held);
+
+    wait_for_connectivity(&storage, &domain, SessionConnectivityState::Stale).await;
+    let claims = session::rebuild_spawn_claims_from_log(&storage, &domain)
+        .await
+        .expect("spawn claims rebuild after disconnect reconciliation");
+    let command_id = accepted
+        .claim
+        .as_ref()
+        .and_then(|claim| claim.claim_operation_id.as_ref())
+        .expect("accepted claim has a command id");
+    let record = claims
+        .claim_for_operation(command_id)
+        .expect("accepted claim remains projected");
+    assert_eq!(record.disposition, SpawnClaimDisposition::Active);
+    assert!(matches!(
+        claims.delivery_fence(
+            accepted
+                .claim
+                .as_ref()
+                .and_then(|claim| claim.expected_prior.as_ref())
+                .expect("replacement claim has an exact prior")
+        ),
+        patchbay_core::session::SpawnDeliveryFence::ReplacementPending { .. }
+    ));
+    let events = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("events after disconnect reconciliation");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event.payload.kind == StoredEventKind::SpawnExecutionEvidence as i32
+            })
+            .count(),
+        0,
+        "the disappeared stream cannot manufacture offer evidence for a later claim"
+    );
+
+    let mut replacement = receive_from_start(&service, &attachment_token).await;
+    let delivery = tokio::time::timeout(Duration::from_secs(1), replacement.next())
+        .await
+        .expect("replacement stream receives the never-offered claim")
+        .expect("replacement stream remains open")
+        .expect("replacement delivery is valid");
+    assert_eq!(
+        delivery
+            .operation
+            .as_ref()
+            .and_then(|operation| operation.command_id.as_ref()),
+        Some(command_id)
+    );
+}
+
+#[tokio::test]
 async fn abnormal_stream_loss_poisons_managed_spawn_and_prevents_redelivery() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId {

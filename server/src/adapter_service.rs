@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -10,8 +10,8 @@ use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, runtime_generation_disposition,
     spawn_claim_event, AcceptedOperation, ActorEndpointRef, ActorId, AdapterDiagnosticReport,
     AdapterDiagnosticReportResult, AdapterId, AdapterSnapshotSupport, AttachRequest, AttachResult,
-    AuthorityDomainId, Delivery, EventId, ExternalEffectDisposition, FailureCode, Generation,
-    Observation, ObservationKind, ObservationRequest, ObservationResult, OperationKind,
+    AuthorityDomainId, CommandId, Delivery, EventId, ExternalEffectDisposition, FailureCode,
+    Generation, Observation, ObservationKind, ObservationRequest, ObservationResult, OperationKind,
     OperationState, ReceiveRequest, RuntimeEvidenceQuarantineReason,
     RuntimeEvidenceSourceAttachment, RuntimeGenerationDisposition, RuntimeGenerationRef,
     SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent, SpawnEvidenceAttachment,
@@ -373,7 +373,7 @@ where
 const DELIVERY_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 
 type DeliveryStream = Pin<Box<dyn Stream<Item = Result<Delivery, Status>> + Send + 'static>>;
-type DisconnectCallback = Box<dyn FnOnce() + Send + 'static>;
+type DisconnectCallback = Box<dyn FnOnce(HashSet<CommandId>) + Send + 'static>;
 
 /// Deferred single-adapter materialization handle.
 ///
@@ -629,6 +629,7 @@ async fn poison_ambiguous_spawn_claims_for_adapter<S: Storage>(
     authority_domain_id: &AuthorityDomainId,
     adapter_id: &AdapterId,
     source_attachment: SpawnEvidenceAttachment,
+    offered_spawn_claims: &HashSet<CommandId>,
 ) -> Result<(), adapter::AdapterError> {
     let claims = session::rebuild_spawn_claims_from_log(storage, authority_domain_id)
         .await
@@ -641,10 +642,13 @@ async fn poison_ambiguous_spawn_claims_for_adapter<S: Storage>(
         .filter_map(|record| {
             let command_id = record.claim.claim_operation_id.as_ref()?;
             let command = commands.get_command(command_id)?;
-            matches!(
+            // Delivered/running is durable offer evidence. Accepted alone is
+            // ambiguous only when this exact lost stream actually emitted it.
+            (matches!(
                 command.state,
-                OperationState::Accepted | OperationState::Delivered | OperationState::Running
-            )
+                OperationState::Delivered | OperationState::Running
+            ) || (command.state == OperationState::Accepted
+                && offered_spawn_claims.contains(command_id)))
             .then(|| (record.claim.clone(), command.state))
         })
         .collect();
@@ -981,6 +985,9 @@ where
 struct DeliveryTail {
     inner: DeliveryStream,
     on_abnormal_disconnect: Option<DisconnectCallback>,
+    /// Exact managed claims emitted by this stream, including offers whose
+    /// delivery acknowledgement never became durable.
+    offered_spawn_claims: HashSet<CommandId>,
 }
 
 impl DeliveryTail {
@@ -988,12 +995,13 @@ impl DeliveryTail {
         Self {
             inner,
             on_abnormal_disconnect: Some(on_abnormal_disconnect),
+            offered_spawn_claims: HashSet::new(),
         }
     }
 
     fn mark_abnormal_disconnect(&mut self) {
         if let Some(callback) = self.on_abnormal_disconnect.take() {
-            callback();
+            callback(std::mem::take(&mut self.offered_spawn_claims));
         }
     }
 }
@@ -1003,6 +1011,17 @@ impl Stream for DeliveryTail {
 
     fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.inner.as_mut().poll_next(context) {
+            Poll::Ready(Some(Ok(delivery))) => {
+                if let Some(command_id) = delivery
+                    .accepted_spawn
+                    .as_ref()
+                    .and_then(|accepted| accepted.claim.as_ref())
+                    .and_then(|claim| claim.claim_operation_id.as_ref())
+                {
+                    self.offered_spawn_claims.insert(command_id.clone());
+                }
+                Poll::Ready(Some(Ok(delivery)))
+            }
             Poll::Ready(None) => {
                 self.mark_abnormal_disconnect();
                 Poll::Ready(None)
@@ -1011,7 +1030,7 @@ impl Stream for DeliveryTail {
                 self.mark_abnormal_disconnect();
                 result
             }
-            result => result,
+            Poll::Pending => Poll::Pending,
         }
     }
 }
@@ -1910,7 +1929,7 @@ where
         let core_generation = self.core_generation;
         #[cfg(feature = "conformance-fault-injection")]
         let conformance_fault = self.conformance_fault;
-        let on_abnormal_disconnect: DisconnectCallback = Box::new(move || {
+        let on_abnormal_disconnect: DisconnectCallback = Box::new(move |offered_spawn_claims| {
             let task = async move {
                 // The shared decision gate prevents revocation from planning
                 // against a projection that disconnect reconciliation can
@@ -1937,6 +1956,7 @@ where
                                 &stale_domain,
                                 &stale_adapter,
                                 stale_spawn_source,
+                                &offered_spawn_claims,
                             )
                             .await;
                             let failed = adapter::fail_running_commands_for_adapter(

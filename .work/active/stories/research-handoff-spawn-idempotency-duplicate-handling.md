@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-idempotency-duplicate-handling
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-registration, research-handoff-spawn-crash-external-effect-evidence-contract]
@@ -150,3 +150,26 @@ Three required claim-breaking probes were applied one at a time, each focused or
 - Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 23/23 tests.
 - Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 38/38 tests including the real core/adapter restart e2e.
 - `cargo fmt --all -- --check` and `git diff --check`: **PASS**.
+
+### Fix round 3 — 2026-08-15 exact lost-stream offer evidence
+
+- Execution capability: `openai-codex/gpt-5.6-sol`; direct-read implementation over the one review-confirmed disconnect race. Review weight: `thorough`, supplied by the autopilot caller.
+- The delivery tail now records the exact managed-spawn claim ids it actually emits. Abnormal-loss reconciliation poisons durable `Delivered`/`Running` claims and `Accepted` claims present in that exact lost-stream offer set; an `Accepted` claim that arrived only after the stream disappeared remains active with its continuation fence retained.
+- The barrier-controlled regression drops an empty stream while holding the shared decision gate, accepts the claim only after the drop, waits for disconnect reconciliation to finish, and proves active disposition, zero execution-evidence events, retained fence, and delivery on a replacement stream. The existing accepted-and-actually-offered case remains poisoned and redelivery-suppressed.
+- `core/src/storage/rusqlite.rs` was inspected but needed no final change: the writer already rebuilds and validates the exact durable claim inside its transaction. Exact per-stream offer evidence exists at the delivery boundary, so excluding never-offered claims before invoking that writer avoids manufacturing durable ambiguity while preserving its atomic checks.
+- Files changed: `server/src/adapter_service.rs`, `server/src/adapter_service/tests.rs`, and this story file. No protobuf, generated binding, `core/src/session/registry.rs`, or foundation document was changed by this round.
+- Simplification: one per-tail `HashSet<CommandId>` is consumed by the existing disconnect callback; no new protocol state, persistence record, or generalized tracking layer was introduced. Design discrepancies: none. Adjacent issues parked: none.
+
+#### Fix-round-3 mutation evidence
+
+Every mutant was applied alone, its focused oracle failed with exit 101, and its file was restored before the next probe. The new regression killed unconditional `Accepted` disconnect poisoning at `left: PoisonedPendingReconciliation, right: Active`.
+
+The 12 prior kills were also reconfirmed: old failure-only identified-launch poisoning; removal of `Running` and removal of `Accepted` from ambiguous-Result eligibility; false poison of handshake progress and successful identified progress; omission of identified-runtime replay reservation; bypass of logical-target and claim-level external-runtime ownership; release on terminal state and on terminal-state silence; omission of execution-evidence delivery suppression; and clearing the continuation fence on poison. The effect-before-ack and actual-`Running` oracles remained non-vacuous.
+
+#### Fix-round-3 verification
+
+- Verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS**, including 39 spawn-claim tests, 31 runtime-evidence/promotion tests, 78 server unit tests, all workspace integration/property tests, doctests, and warnings-denied clippy.
+- Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; 55 vectors, 17 promoted vectors, 22 implementation checks, and 38 mutation witnesses.
+- Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 23/23 tests.
+- Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 38/38 tests including the real core/adapter restart e2e.
+- `cargo fmt --all -- --check`, `git diff --check`, generated-contract diff, and final focused abnormal-stream-loss regressions: **PASS**.
