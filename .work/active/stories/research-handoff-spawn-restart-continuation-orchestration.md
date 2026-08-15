@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-restart-continuation-orchestration
 kind: story
-stage: review
+stage: done
 tags: [adapter, protocol, security]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-completion-promotion-driver, deployment-authority-workspace-scoped-revocable-keys]
