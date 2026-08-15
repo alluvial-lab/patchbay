@@ -1,3 +1,11 @@
 [workspace]
 members = ["contracts/rust", "core", "server", "patchbay-test-support"]
 resolver = "2"
+
+# Disk-footprint guard #4 (2026-08-15): full DWARF debuginfo is why the deps
+# cache held ~26G (62M workspace rlibs, larger test binaries). Line-tables-only
+# keeps line-numbered backtraces and drops variable inspection — nobody debugs
+# patchbay interactively (agent verification is test/backtrace driven). If
+# interactive debugging is ever needed: revert this line and `cargo clean`.
+[profile.dev]
+debug = "line-tables-only"
