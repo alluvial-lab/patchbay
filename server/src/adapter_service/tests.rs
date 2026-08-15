@@ -472,7 +472,13 @@ fn generated_enum_values(proto: &str, enumeration: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn generated_runtime_ingress_families() -> BTreeSet<String> {
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum RuntimeIngressFamily {
+    CandidateArm(String),
+    ObservationKind(String),
+}
+
+fn generated_runtime_ingress_families() -> BTreeSet<RuntimeIngressFamily> {
     let observations_proto = include_str!("../../../contracts/proto/patchbay/observations.proto");
     let candidate_fields = generated_oneof_fields(
         observations_proto,
@@ -482,36 +488,36 @@ fn generated_runtime_ingress_families() -> BTreeSet<String> {
     let observation_kinds = generated_enum_values(observations_proto, "ObservationKind");
     let mut families = candidate_fields
         .iter()
-        .filter(|field| field.as_str() != "observation" && field.as_str() != "transcript_status")
         .cloned()
+        .map(RuntimeIngressFamily::CandidateArm)
         .collect::<BTreeSet<_>>();
 
     for kind in observation_kinds {
         let suffix = kind
             .strip_prefix("OBSERVATION_KIND_")
             .expect("ObservationKind uses the generated registry prefix");
-        match suffix {
-            "UNSPECIFIED" => {}
+        let family = match suffix {
+            "UNSPECIFIED" => continue,
             "RESULT" => {
                 assert!(
                     candidate_fields.contains("observation"),
                     "Result ingress requires the generated Observation quarantine arm"
                 );
-                families.insert("observation".to_owned());
+                "result".to_owned()
             }
             _ => {
                 assert!(
                     candidate_fields.contains("transcript_status"),
                     "Event/Status/Delta ingress requires the generated transcript/status quarantine arm"
                 );
-                let family = if suffix == "EVENT" {
+                if suffix == "EVENT" {
                     "transcript_event".to_owned()
                 } else {
                     suffix.to_ascii_lowercase()
-                };
-                families.insert(family);
+                }
             }
-        }
+        };
+        families.insert(RuntimeIngressFamily::ObservationKind(family));
     }
     families
 }
@@ -618,23 +624,28 @@ async fn stale_runtime_ingress_inventory_fixture() -> RuntimeIngressInventoryFix
 }
 
 impl RuntimeIngressInventoryFixture {
-    fn stale_request(&self, family: &str) -> ObservationRequest {
-        match family {
-            "delivery_acknowledgement" => {
+    fn stale_request(&self, family: &RuntimeIngressFamily) -> ObservationRequest {
+        let name = match family {
+            RuntimeIngressFamily::CandidateArm(name)
+            | RuntimeIngressFamily::ObservationKind(name) => name.as_str(),
+        };
+        match (family, name) {
+            (RuntimeIngressFamily::CandidateArm(_), "delivery_acknowledgement") => {
                 delivery_acknowledgement(self.domain.clone(), &self.ack_operation)
             }
-            "elicitation_mutation" => {
+            (RuntimeIngressFamily::CandidateArm(_), "elicitation_mutation") => {
                 let mut withdrawn = self.elicitation.clone();
                 withdrawn.state = ElicitationState::Withdrawn as i32;
                 runtime_elicitation_request(self.domain.clone(), withdrawn)
             }
-            "observation" => lifecycle_observation(
+            (RuntimeIngressFamily::CandidateArm(_), "observation")
+            | (RuntimeIngressFamily::ObservationKind(_), "result") => lifecycle_observation(
                 self.domain.clone(),
                 &self.result_operation,
                 ObservationKind::Result,
                 FailureCode::Unspecified,
             ),
-            "session_report" => {
+            (RuntimeIngressFamily::CandidateArm(_), "session_report") => {
                 let mut stale_report = session_report(SessionConnectivityState::Live);
                 stale_report.source_cursor.as_mut().unwrap().revision = 2;
                 ObservationRequest {
@@ -644,26 +655,29 @@ impl RuntimeIngressInventoryFixture {
                     )),
                 }
             }
-            "transcript_event" => runtime_fact_request(
-                self.domain.clone(),
-                self.runtime_scope.clone(),
-                ObservationKind::Event,
-                "patchbay.pi.TranscriptEvent.v1",
-            ),
-            "status" => runtime_fact_request(
+            (RuntimeIngressFamily::CandidateArm(_), "transcript_status")
+            | (RuntimeIngressFamily::ObservationKind(_), "transcript_event") => {
+                runtime_fact_request(
+                    self.domain.clone(),
+                    self.runtime_scope.clone(),
+                    ObservationKind::Event,
+                    "patchbay.pi.TranscriptEvent.v1",
+                )
+            }
+            (RuntimeIngressFamily::ObservationKind(_), "status") => runtime_fact_request(
                 self.domain.clone(),
                 self.runtime_scope.clone(),
                 ObservationKind::Status,
                 "patchbay.pi.DeliveryStatus.v1",
             ),
-            "delta" => runtime_fact_request(
+            (RuntimeIngressFamily::ObservationKind(_), "delta") => runtime_fact_request(
                 self.domain.clone(),
                 self.runtime_scope.clone(),
                 ObservationKind::Delta,
                 "patchbay.pi.TranscriptDelta.v1",
             ),
             generated_but_unmapped => panic!(
-                "generated runtime ingress family {generated_but_unmapped:?} needs a real authenticated fixture"
+                "generated runtime ingress family {generated_but_unmapped:?} needs a distinct real authenticated fixture"
             ),
         }
     }
@@ -695,7 +709,7 @@ async fn runtime_ingress_inventory_enumerates_generated_rpc_and_observation_fami
             ))
             .await
             .unwrap_or_else(|error| {
-                panic!("{expected_family} stale authenticated ingress failed: {error}")
+                panic!("{expected_family:?} stale authenticated ingress failed: {error}")
             })
             .into_inner()
             .event_id
@@ -711,31 +725,45 @@ async fn runtime_ingress_inventory_enumerates_generated_rpc_and_observation_fami
         assert_eq!(
             event.payload.kind,
             StoredEventKind::QuarantinedRuntimeEvidence as i32,
-            "generated family {expected_family} must reach the shared fence before any normal projection writer"
+            "generated family {expected_family:?} must reach the shared fence before any normal projection writer"
         );
         let quarantine = patchbay_contracts::patchbay::QuarantinedRuntimeEvidence::decode(
             event.payload.payload.as_slice(),
         )
         .expect("quarantine decodes");
-        let actual_family = match quarantine.candidate.expect("typed candidate") {
-            Candidate::Observation(_) => "observation",
-            Candidate::SessionReport(_) => "session_report",
-            Candidate::DeliveryAcknowledgement(_) => "delivery_acknowledgement",
-            Candidate::TranscriptStatus(evidence) => {
-                match ObservationKind::try_from(
-                    evidence.observation.expect("nested Observation").kind,
-                )
-                .expect("known generated ObservationKind")
+        let candidate = quarantine.candidate.expect("typed candidate");
+        let actual_family = match &expected_family {
+            RuntimeIngressFamily::CandidateArm(_) => RuntimeIngressFamily::CandidateArm(
+                match candidate {
+                    Candidate::Observation(_) => "observation",
+                    Candidate::SessionReport(_) => "session_report",
+                    Candidate::DeliveryAcknowledgement(_) => "delivery_acknowledgement",
+                    Candidate::TranscriptStatus(_) => "transcript_status",
+                    Candidate::ElicitationMutation(_) => "elicitation_mutation",
+                }
+                .to_owned(),
+            ),
+            RuntimeIngressFamily::ObservationKind(_) => {
+                let observation = match candidate {
+                    Candidate::Observation(observation) => observation,
+                    Candidate::TranscriptStatus(evidence) => {
+                        evidence.observation.expect("nested Observation")
+                    }
+                    other => panic!(
+                        "ObservationKind inventory produced non-Observation candidate {other:?}"
+                    ),
+                };
+                let name = match ObservationKind::try_from(observation.kind)
+                    .expect("known generated ObservationKind")
                 {
                     ObservationKind::Event => "transcript_event",
                     ObservationKind::Status => "status",
                     ObservationKind::Delta => "delta",
-                    ObservationKind::Result | ObservationKind::Unspecified => {
-                        "unexpected_transcript_status_kind"
-                    }
-                }
+                    ObservationKind::Result => "result",
+                    ObservationKind::Unspecified => "unexpected_unspecified_kind",
+                };
+                RuntimeIngressFamily::ObservationKind(name.to_owned())
             }
-            Candidate::ElicitationMutation(_) => "elicitation_mutation",
         };
         assert_eq!(actual_family, expected_family);
     }

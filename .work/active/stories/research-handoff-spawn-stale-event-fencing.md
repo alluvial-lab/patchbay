@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-stale-event-fencing
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, security, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-generation-monotonicity-tombstoning]
@@ -78,6 +78,17 @@ Quarantine carries the original typed candidate, exact classified/current/claim 
 - Tests added/changed: upgraded `runtime_ingress_inventory_enumerates_generated_rpc_and_observation_families` from schema-name comparison to the generated-inventory-driven authenticated behavioral oracle. The existing `every_runtime_ingress_family_uses_one_fence_and_only_outer_quarantine` integration oracle remains unchanged and passes.
 - Full verification passed: (1) `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`; (2) `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build` (55 vectors, 17 promoted, 22 implementation checks, 38 killed mutation witnesses, 54 model-promotion blocks); (3) `cd operator-domain && npm run build && npm test` (23/23); (4) `cd pi-adapter && npm test` (38/38).
 - Simplification/discrepancies/adjacent issues: no production abstraction or behavior changed; no design discrepancy and no adjacent issue was parked.
+
+### Fix round 2 — namespace-qualified ingress enumeration
+
+- Execution capability: `openai-codex/gpt-5.6-sol`; direct-read implementation remained the safest cohesive path for this single test-oracle correction. Review weight remains `thorough` from the autopilot caller.
+- Files changed: `server/src/adapter_service/tests.rs` plus this story record. No production, protocol, or generated-contract file changed.
+- Replaced the flattened `BTreeSet<String>` inventory with namespace-qualified `RuntimeIngressFamily::CandidateArm(name)` and `RuntimeIngressFamily::ObservationKind(name)` identities. Every generated quarantine-candidate arm now receives its own real authenticated ingress run and exact typed-candidate assertion; admitted Observation kinds are enumerated separately beneath the generated `observation` or `transcript_status` arms.
+- Judgment rationale: preserving both registry namespaces is simpler and stronger than a merged-size assertion. A future direct `status` candidate and the existing Status Observation kind remain two independently exercised identities, while wrapper arms (`observation`, `transcript_status`) are themselves exercised in addition to their kind expansions.
+- Mutation evidence: temporarily re-injected `RuntimeTranscriptStatusEvidence status = 10` into the candidate oneof; the focused inventory oracle failed with exit 101 on unmapped `CandidateArm("status")` instead of reusing/skipping `ObservationKind("status")`. Re-injected the pass-1 Elicitation bypass (`runtime_target.is_some() && prepared_elicitation.is_none()`); the same oracle failed with exit 101 because `CandidateArm("elicitation_mutation")` wrote normal Elicitation kind `3` instead of outer quarantine kind `19`. Each mutant was applied alone, reverted with `git restore`, and followed by clean diff/status checks.
+- Clean focused evidence: both `runtime_ingress_inventory_enumerates_generated_rpc_and_observation_families` and `every_runtime_ingress_family_uses_one_fence_and_only_outer_quarantine` pass.
+- Full verification passed: (1) `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`; (2) `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build` (55 vectors, 17 promoted, 22 implementation checks, 38 killed mutation witnesses, 54 model-promotion blocks); (3) `cd operator-domain && npm run build && npm test` (23/23); (4) `cd pi-adapter && npm test` (38/38).
+- Simplification/discrepancies/adjacent issues: removed cross-namespace deduplication as a representable state; no design change, no discrepancy, no residual concern, and no adjacent issue parked.
 
 ## Ordering constraint
 
