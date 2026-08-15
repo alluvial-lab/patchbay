@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-generation-monotonicity-tombstoning
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification, security]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-registration]
@@ -72,3 +72,12 @@ Consumes staged claimed-successor evidence. The stale fence implements every ing
 - Formal inspection artifact: regenerated `specs/seed/session_generation.emitted.tla` from the `session_generation_promotion` main module with Quint 0.32.0, `--verbosity 0`, and the `--out` compile path; the committed TLA+ contains no checker diagnostics or absolute output path.
 - Verification: all four required groups pass on the final integrated Unit 4 + Unit 6 tree: `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`; contracts drift/vector/model/build (55 vectors, 22 implementation checks, 38 mutation witnesses); operator-domain build/tests (23/23); and Pi adapter tests (38/38).
 - Simplification/discrepancies: no protocol, generated-contract, or model-source change; the fix extends the existing checkpoint validation and recovery fixtures rather than adding a second hydration/replay path. No adjacent issues were parked.
+
+### Fix round 2 — managed-lineage-keyed same-runtime symmetry
+
+- Execution capability: `openai-codex/gpt-5.6-sol` (caller-selected for the security-critical recovery boundary); review weight: `thorough` (autopilot caller). Direct-read implementation was sufficient because the material and write ownership were isolated to `core/src/session/registry.rs`.
+- Managed/legacy discrimination: checkpoint hydration now classifies a session tombstone as managed from either its exact retained logical owner or a logical target's current adapter/deployment/runtime slot. A same-runtime N→N+1 checkpoint therefore cannot erase the logical tombstone and fall through the legacy path. Session-only legacy lineages still hydrate when neither managed marker exists.
+- Symmetry/recovery evidence: new same-runtime registry regressions start from one valid complete promotion checkpoint, reject removal of either tombstone projection, assert retained reverse ownership for N and N+1, and preserve a genuine legacy session-only checkpoint. These semantic rejections feed the existing production checkpoint recovery path, whose focused `complete_checkpoint_round_trips_tombstones_source_cursor_and_tail` regression proves deterministic LSN-0 fallback and convergence with full replay; the changed-runtime fixture remains valid.
+- Mutation evidence: deleting the current-slot managed discriminator reintroduced the pass-2 reviewer probe and `same_runtime_managed_checkpoint_rejects_missing_logical_tombstone` failed at the expected rejection (exit 101). Suppressing the managed-owner branch made `promotion_checkpoint_retains_changed_runtime_tombstone_and_reverse_reservation` fail (exit 101). Each mutant was applied alone and reverted with `git restore`; focused clean tests passed after restoration.
+- Verification: all four prescribed groups pass: `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`; contracts drift/vector/model/build (55 vectors, 22 implementation checks, 38 mutation witnesses); operator-domain build/tests (23/23); and Pi adapter tests (38/38).
+- Simplification/discrepancies: reused the existing logical-target registry markers, symmetric counterpart validation, and server fallback path; no protocol, recovery-path, generated artifact, Unit 6 file, or foundation-doc change was needed. Adjacent issues parked: none.
