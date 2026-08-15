@@ -15,6 +15,7 @@ pub mod replay;
 pub mod resolver;
 pub mod runtime_evidence;
 pub mod spawn_claim;
+pub mod spawn_orchestration;
 pub mod state;
 
 pub use events::SessionStateEvent;
@@ -49,6 +50,11 @@ pub use spawn_claim::{
     validate_spawn_claim_accepted, SpawnClaimError, SpawnClaimKey, SpawnClaimQuery,
     SpawnClaimRecord, SpawnClaimRegistry, SpawnClaimability, SpawnDeliveryFence,
     REPLACEMENT_PENDING_REASON,
+};
+pub use spawn_orchestration::{
+    phase_outcome, runtime_matches_claim, validate_continuation_prior_quiesced, CandidateOutcome,
+    ClaimFenceOutcome, ContinuationContextStatus, PriorRuntimeOutcome, SpawnOrchestrationError,
+    SpawnPhaseOutcome,
 };
 pub use state::{
     allowed_activity_transition, allowed_connectivity_transition, effective_connectivity,

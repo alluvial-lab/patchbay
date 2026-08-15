@@ -2550,8 +2550,16 @@ fn subscription_scope() -> patchbay_contracts::patchbay::TargetScope {
     }
 }
 
-fn operator_facing_subscribe_event(event: RecordedEvent) -> Option<SubscribeEvent> {
+fn operator_facing_subscribe_event(mut event: RecordedEvent) -> Option<SubscribeEvent> {
     let kind = StoredEventKind::try_from(event.payload.kind).ok()?;
+    if kind == StoredEventKind::Operation {
+        redact_spawn_operation_event_for_operator(&mut event)?;
+    } else if matches!(
+        kind,
+        StoredEventKind::SpawnClaim | StoredEventKind::SpawnPromotionCommitted
+    ) {
+        redact_spawn_event_for_operator(&mut event, kind)?;
+    }
     matches!(
         kind,
         StoredEventKind::Operation
@@ -2561,11 +2569,84 @@ fn operator_facing_subscribe_event(event: RecordedEvent) -> Option<SubscribeEven
             | StoredEventKind::ResourceState
             | StoredEventKind::CommandTransition
             | StoredEventKind::SecurityLockdown
+            | StoredEventKind::SpawnClaim
+            | StoredEventKind::SpawnPromotionCommitted
     )
     .then_some(SubscribeEvent {
         event_id: Some(event.event_id),
         payload: Some(event.payload),
     })
+}
+
+fn redact_spawn_operation_event_for_operator(event: &mut RecordedEvent) -> Option<()> {
+    let mut accepted =
+        patchbay_contracts::patchbay::AcceptedOperation::decode(event.payload.payload.as_slice())
+            .ok()?;
+    if accepted.operation.as_ref()?.kind
+        == patchbay_contracts::patchbay::OperationKind::Spawn as i32
+    {
+        let operation = accepted.operation.as_mut()?;
+        let payload = operation.payload.as_mut()?;
+        redact_spawn_payload_for_operator(payload)?;
+        event.payload.payload = accepted.encode_to_vec();
+    }
+    Some(())
+}
+
+/// Operator surfaces need the accepted restart and atomic promotion envelopes
+/// to construct exact continuation actions and show canonical lifecycle state.
+/// Adapter-local payload bytes and deployment-authority handles remain behind
+/// the delivery boundary and are removed from this derived stream projection.
+fn redact_spawn_event_for_operator(event: &mut RecordedEvent, kind: StoredEventKind) -> Option<()> {
+    match kind {
+        StoredEventKind::SpawnClaim => {
+            let mut envelope = patchbay_contracts::patchbay::SpawnClaimEvent::decode(
+                event.payload.payload.as_slice(),
+            )
+            .ok()?;
+            if let Some(patchbay_contracts::patchbay::spawn_claim_event::Mutation::Accepted(
+                accepted,
+            )) = envelope.mutation.as_mut()
+            {
+                redact_accepted_spawn_for_operator(accepted)?;
+            }
+            event.payload.payload = envelope.encode_to_vec();
+        }
+        StoredEventKind::SpawnPromotionCommitted => {
+            let mut promotion = patchbay_contracts::patchbay::SpawnPromotionCommitted::decode(
+                event.payload.payload.as_slice(),
+            )
+            .ok()?;
+            redact_accepted_spawn_for_operator(promotion.accepted_claim.as_mut()?)?;
+            event.payload.payload = promotion.encode_to_vec();
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+fn redact_accepted_spawn_for_operator(
+    accepted: &mut patchbay_contracts::patchbay::SpawnClaimAccepted,
+) -> Option<()> {
+    let operation = accepted.accepted_operation.as_mut()?.operation.as_mut()?;
+    redact_spawn_payload_for_operator(operation.payload.as_mut()?)
+}
+
+fn redact_spawn_payload_for_operator(
+    payload: &mut patchbay_contracts::patchbay::PayloadEnvelope,
+) -> Option<()> {
+    if payload.content_type != PayloadContentType::Protobuf as i32
+        || payload.schema_ref != patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA
+    {
+        return None;
+    }
+    let mut request =
+        patchbay_contracts::patchbay::SpawnRequest::decode(payload.payload.as_slice()).ok()?;
+    let target = request.target_spec.as_mut()?;
+    target.adapter_payload = None;
+    target.deployment_authority_ref.clear();
+    payload.payload = request.encode_to_vec();
+    Some(())
 }
 
 fn issuer_to_endpoint_ref(issuer: &MetadataIssuerContext) -> ActorEndpointRef {

@@ -265,22 +265,36 @@ pub fn adapter_stale_events(
     registry.require_authority_domain(authority_domain_id)?;
     Ok(registry
         .sessions()
-        .filter(|record| {
-            record.identity.adapter_id == *adapter_id
-                && record.state.connectivity() != SessionConnectivityState::Stale
-        })
-        .map(|record| {
-            events::encode(&events::connectivity_changed(
-                authority_domain_id.clone(),
-                SessionConnectivityChanged {
-                    adapter_id: Some(record.identity.adapter_id.clone()),
-                    deployment_scope: record.identity.deployment_scope.clone(),
-                    runtime_session_id: Some(record.identity.runtime_session_id.clone()),
-                    session_generation: Some(record.identity.session_generation),
-                    from: record.state.connectivity,
-                    to: SessionConnectivityState::Stale as i32,
-                },
-            ))
+        .filter(|record| record.identity.adapter_id == *adapter_id)
+        .flat_map(|record| {
+            let mut degraded = Vec::with_capacity(2);
+            if record.state.connectivity() != SessionConnectivityState::Stale {
+                degraded.push(events::encode(&events::connectivity_changed(
+                    authority_domain_id.clone(),
+                    SessionConnectivityChanged {
+                        adapter_id: Some(record.identity.adapter_id.clone()),
+                        deployment_scope: record.identity.deployment_scope.clone(),
+                        runtime_session_id: Some(record.identity.runtime_session_id.clone()),
+                        session_generation: Some(record.identity.session_generation),
+                        from: record.state.connectivity,
+                        to: SessionConnectivityState::Stale as i32,
+                    },
+                )));
+            }
+            if record.state.activity() != SessionActivityState::Unknown {
+                degraded.push(events::encode(&events::activity_changed(
+                    authority_domain_id.clone(),
+                    patchbay_contracts::patchbay::SessionActivityChanged {
+                        adapter_id: Some(record.identity.adapter_id.clone()),
+                        deployment_scope: record.identity.deployment_scope.clone(),
+                        runtime_session_id: Some(record.identity.runtime_session_id.clone()),
+                        session_generation: Some(record.identity.session_generation),
+                        from: record.state.activity,
+                        to: SessionActivityState::Unknown as i32,
+                    },
+                )));
+            }
+            degraded
         })
         .collect())
 }

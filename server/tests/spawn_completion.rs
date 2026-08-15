@@ -12,16 +12,17 @@ use patchbay_contracts::patchbay::{
     AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
     AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
     AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
-    DescendantGrantProvenance, DeviceId, EndpointId, EventId, FailureCode, FreshSpawn, Generation,
-    Grant, GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LogicalTargetCreated,
-    LogicalTargetId, Lsn, Observation, ObservationKind, ObservationRequest, Operation,
-    OperationKind, OperationState, OperatorRecord, PayloadContentType, PayloadEnvelope,
-    PrincipalEnrollment, ReceiveRequest, ResourceId, ResourceIdentity, ResourceKind, Revocation,
-    RuntimeSessionId, SessionActivityState, SessionConnectivityState, SessionRegistered,
-    SessionStateEvent, SpawnClaimAccepted, SpawnClaimEvent, SpawnGenerationClaim,
-    SpawnPromotionCommitted, SpawnRequest, SpawnTargetSpec, StoredEventKind, StoredEventPayload,
-    SubmissionOutcome, SubmitRequest, TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
-    VerifyOperatorPasswordRequest,
+    DescendantGrantProvenance, DeviceId, EndpointId, EventId, ExternalEffectDisposition,
+    ExternalRuntimeRef, FailureCode, FreshSpawn, Generation, Grant, GrantId, GrantProvenance,
+    GrantRevocationPolicy, IdempotencyKey, LogicalTargetCreated, LogicalTargetId, Lsn, Observation,
+    ObservationKind, ObservationRequest, Operation, OperationKind, OperationState, OperatorRecord,
+    PayloadContentType, PayloadEnvelope, PrincipalEnrollment, ReceiveRequest, ResourceId,
+    ResourceIdentity, ResourceKind, Revocation, RuntimeGenerationRef, RuntimeSessionId,
+    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionStateEvent,
+    SpawnClaimAccepted, SpawnClaimEvent, SpawnExecutionEvidence, SpawnExecutionPhase,
+    SpawnGenerationClaim, SpawnPromotionCommitted, SpawnRequest, SpawnTargetSpec, StoredEventKind,
+    StoredEventPayload, SubmissionOutcome, SubmitRequest, TargetScope, TargetScopeKind, TimeWindow,
+    TypedCorrelation, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
     acceptance::SPAWN_REQUEST_SCHEMA,
@@ -742,6 +743,91 @@ fn spawn_result(failure_code: FailureCode) -> Observation {
     }
 }
 
+fn managed_claim() -> SpawnGenerationClaim {
+    SpawnGenerationClaim {
+        authority_domain_id: Some(domain()),
+        claim_operation_id: Some(command_id()),
+        logical_target_id: Some(LogicalTargetId {
+            value: "logical-spawn-1".to_owned(),
+        }),
+        expected_prior: None,
+        claimed_generation: Some(Generation { value: 1 }),
+    }
+}
+
+async fn report_progress<S>(
+    service: &AdapterControlServiceImpl<S>,
+    token: &str,
+    phase: SpawnExecutionPhase,
+) -> EventId
+where
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
+{
+    report_progress_for_claim(service, token, phase, managed_claim()).await
+}
+
+async fn report_progress_for_claim<S>(
+    service: &AdapterControlServiceImpl<S>,
+    token: &str,
+    phase: SpawnExecutionPhase,
+    exact_claim: SpawnGenerationClaim,
+) -> EventId
+where
+    S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
+{
+    service
+        .ingest_observation(authenticated(
+            ObservationRequest {
+                authority_domain_id: Some(domain()),
+                observation: Some(observation_request::Observation::SpawnExecutionEvidence(
+                    SpawnExecutionEvidence {
+                        authority_domain_id: Some(domain()),
+                        exact_claim: Some(exact_claim.clone()),
+                        phase: phase as i32,
+                        external_effect_disposition: ExternalEffectDisposition::Identified as i32,
+                        failure_code: FailureCode::Unspecified as i32,
+                        external_runtime: Some(RuntimeGenerationRef {
+                            logical_target_id: exact_claim.logical_target_id,
+                            external_runtime: Some(ExternalRuntimeRef {
+                                adapter_id: adapter_scope().adapter_id,
+                                deployment_scope: "machine-a".to_owned(),
+                                runtime_session_id: session_scope().runtime_session_id,
+                                generation: Some(Generation { value: 1 }),
+                            }),
+                        }),
+                        ..SpawnExecutionEvidence::default()
+                    },
+                )),
+            },
+            token,
+        ))
+        .await
+        .unwrap()
+        .into_inner()
+        .event_id
+        .expect("spawn progress evidence has a durable event id")
+}
+
+fn durable_claim(events: &[RecordedEvent]) -> SpawnGenerationClaim {
+    events
+        .iter()
+        .filter(|event| event.payload.kind == StoredEventKind::SpawnClaim as i32)
+        .filter_map(|event| SpawnClaimEvent::decode(event.payload.payload.as_slice()).ok())
+        .find_map(|event| match event.mutation {
+            Some(spawn_claim_event::Mutation::Accepted(accepted))
+                if accepted
+                    .claim
+                    .as_ref()
+                    .and_then(|claim| claim.claim_operation_id.as_ref())
+                    == Some(&command_id()) =>
+            {
+                accepted.claim
+            }
+            _ => None,
+        })
+        .expect("managed spawn has one durable exact claim")
+}
+
 async fn report_successful_spawn<S>(service: &AdapterControlServiceImpl<S>, token: &str) -> EventId
 where
     S: Storage + CoreGenerationStore + Clone + Send + Sync + 'static,
@@ -1049,8 +1135,16 @@ async fn seed_ready_managed_promotion(storage: &AuditedStorage<RusqliteStorage>)
         let _guard = gate.acquire().await;
         seed_adapter_scoped_spawn(storage).await;
     }
-    report_successful_spawn(&service, &token).await;
+    report_progress(&service, &token, SpawnExecutionPhase::ExternalIdentityKnown).await;
+    report_progress(&service, &token, SpawnExecutionPhase::HandshakeReconciling).await;
     report_session(&service, &token, 1, Some(correlation())).await;
+    report_successful_spawn(&service, &token).await;
+    report_progress(
+        &service,
+        &token,
+        SpawnExecutionPhase::SuccessEvidenceReported,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1569,6 +1663,8 @@ async fn run_live_adapter_case(
         let _guard = gate.acquire().await;
         seed_adapter_scoped_spawn(&storage).await;
     }
+    report_progress(&service, &token, SpawnExecutionPhase::ExternalIdentityKnown).await;
+    report_progress(&service, &token, SpawnExecutionPhase::HandshakeReconciling).await;
     if report_first {
         report_session(&service, &token, 1, Some(correlation())).await;
         assert_eq!(completion_counts(&all_events(&storage).await), (0, 0, 0));
@@ -1578,6 +1674,12 @@ async fn run_live_adapter_case(
         assert_eq!(completion_counts(&all_events(&storage).await), (0, 0, 0));
         report_session(&service, &token, 1, Some(correlation())).await;
     }
+    report_progress(
+        &service,
+        &token,
+        SpawnExecutionPhase::SuccessEvidenceReported,
+    )
+    .await;
 
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         loop {
@@ -1625,6 +1727,8 @@ async fn managed_evidence_retries_complete_once_and_restart_as_a_replayable_pref
         seed_adapter_scoped_spawn(&storage).await;
     }
 
+    report_progress(&service, &token, SpawnExecutionPhase::ExternalIdentityKnown).await;
+    report_progress(&service, &token, SpawnExecutionPhase::HandshakeReconciling).await;
     let earliest_result = report_successful_spawn(&service, &token).await;
     let result_retry_before_staging = report_successful_spawn(&service, &token).await;
     assert_eq!(
@@ -1654,6 +1758,12 @@ async fn managed_evidence_retries_complete_once_and_restart_as_a_replayable_pref
     );
     let result_retry_after_staging = report_successful_spawn(&service, &token).await;
     assert_eq!(result_retry_after_staging, earliest_result);
+    report_progress(
+        &service,
+        &token,
+        SpawnExecutionPhase::SuccessEvidenceReported,
+    )
+    .await;
 
     let before_completion = all_events(&storage).await;
     assert_eq!(
@@ -2114,6 +2224,7 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
     // Claim acceptance is the preceding contract leaf; seed its durable output
     // explicitly so this integration remains scoped to Leaf 6.
     seed_spawn_claim(&storage).await;
+    let integration_claim = durable_claim(&all_events(&storage).await);
 
     let incompatible_targets = [
         ("spawn-existing-runtime", session_scope()),
@@ -2191,6 +2302,20 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
     assert_eq!(delivered_operation.kind, OperationKind::Spawn as i32);
     assert_eq!(delivered_operation.target_scope, Some(adapter_scope()));
     acknowledge_delivery(&adapter_service, &token, &delivered_operation).await;
+    report_progress_for_claim(
+        &adapter_service,
+        &token,
+        SpawnExecutionPhase::ExternalIdentityKnown,
+        integration_claim.clone(),
+    )
+    .await;
+    report_progress_for_claim(
+        &adapter_service,
+        &token,
+        SpawnExecutionPhase::HandshakeReconciling,
+        integration_claim.clone(),
+    )
+    .await;
     let deferred_source = report_successful_spawn(&adapter_service, &token).await;
 
     let deferred_audits = storage
@@ -2241,6 +2366,13 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
     assert!(deferred_inspection.terminal_event_id.is_none());
 
     report_session(&adapter_service, &token, 1, Some(correlation())).await;
+    report_progress_for_claim(
+        &adapter_service,
+        &token,
+        SpawnExecutionPhase::SuccessEvidenceReported,
+        integration_claim,
+    )
+    .await;
 
     tokio::select! {
         result = &mut driver_task => panic!("spawn completion driver exited early: {result:?}"),

@@ -134,6 +134,9 @@ export function createCockpitShell(
         filter = value;
         render();
       },
+      spawn: options.actions?.spawn
+        ? (adapterId) => options.actions!.spawn!(adapterId)
+        : undefined,
     });
     const main = document.createElement("section");
     main.className = "main";
@@ -536,6 +539,7 @@ function capitalize(value: string): string {
 interface SidebarActions {
   select(session: SessionView): void;
   filter(value: string): void;
+  spawn?(adapterId: string): void | Promise<void>;
 }
 
 function renderSidebar(
@@ -553,8 +557,24 @@ function renderSidebar(
   header.append(textElement(document, "span", "nav-bar__brand", "Patchbay · Sessions"));
   const headerActions = document.createElement("div");
   headerActions.className = "sidebar__actions";
+  const knownAdapters = [...new Set([
+    ...model.adapters.keys(),
+    ...[...model.sessions.values()].map((session) => session.identity.adapterId),
+  ])].sort();
+  const spawn = iconActionButton(
+    document,
+    "plus",
+    knownAdapters.length === 1 && actions.spawn
+      ? `Spawn session on ${knownAdapters[0]}`
+      : knownAdapters.length === 1
+        ? "Spawn session unavailable"
+        : "Spawn requires exactly one selected adapter",
+    knownAdapters.length === 1 && actions.spawn
+      ? () => actions.spawn!(knownAdapters[0]!)
+      : undefined,
+  );
   headerActions.append(
-    unavailableIconButton(document, "plus", "Spawn session unavailable"),
+    spawn,
     unavailableIconButton(document, "link", "Attach session unavailable"),
   );
   header.append(headerActions);
@@ -590,6 +610,23 @@ function renderSidebar(
     }),
   );
   return sidebar;
+}
+
+function iconActionButton(
+  document: Document,
+  icon: IconName,
+  label: string,
+  action: (() => void | Promise<void>) | undefined,
+): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.className = "btn btn-ghost btn--sm btn--icon-only";
+  button.type = "button";
+  button.disabled = !action;
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  button.append(renderIcon(document, icon));
+  if (action) button.addEventListener("click", () => void action());
+  return button;
 }
 
 function unavailableIconButton(document: Document, icon: IconName, label: string): HTMLButtonElement {

@@ -1,3 +1,5 @@
+import { fromBinary } from "@bufbuild/protobuf";
+import { continuationContextExplanation } from "@patchbay/operator-domain";
 import {
   AdapterDiagnosticSeverity,
   FailureCode,
@@ -5,6 +7,7 @@ import {
   OperationKind,
   PayloadContentType,
   SessionActivityState,
+  SpawnRequestSchema,
   type SubmissionResult,
 } from "@patchbay/contracts";
 
@@ -47,6 +50,8 @@ import {
 type SessionCommandActionView = Omit<CommandView, "target"> & { target?: SessionIdentity };
 
 export interface SessionDetailActions {
+  spawn?(adapterId: string): void | Promise<void>;
+  restart?(session: SessionView): void | Promise<void>;
   send?(session: SessionView, text: string): void | Promise<void>;
   attach?(session: SessionView): void | Promise<void>;
   cancel?(command: SessionCommandActionView): void | Promise<void>;
@@ -91,7 +96,15 @@ export function renderSessionDetail(
   detail.dataset.mobileBottomTarget = "session-detail";
   if (session) detail.dataset.sessionKey = sessionKey(session.identity);
 
-  const header = renderHeader(document, model, session, options.onBack, options.showToolCalls);
+  const header = renderHeader(
+    document,
+    model,
+    session,
+    options.onBack,
+    options.showToolCalls,
+    options.actions,
+    options.lockdownActive,
+  );
   const runtimeContext = session?.resourceLinkage
     ? renderRuntimeResourceLink(document, {
         resource: model.resources.get(resourceKey(session.resourceLinkage.usageResource)),
@@ -132,6 +145,8 @@ function renderHeader(
   session: SessionView | undefined,
   onBack: (() => void) | undefined,
   showToolCalls = true,
+  actions?: SessionDetailActions,
+  lockdownActive = false,
 ): HTMLElement {
   const header = document.createElement("header");
   header.className = "session-detail__header nav-bar";
@@ -142,6 +157,13 @@ function renderHeader(
     header.append(textElement(document, "span", "session-row__identity", formatSessionIdentity(session.identity)));
     header.append(textElement(document, "span", "session-row__context", session.model ?? "Model unknown"));
     header.append(renderSessionStatus(document, session, showToolCalls));
+    const restart = iconButton(document, "plus", "Restart as spawn continuation", "btn btn-secondary btn--sm");
+    restart.disabled = lockdownActive || !stableTarget(session) || !session.logicalTargetId || !actions?.restart;
+    restart.title = restart.disabled
+      ? "Restart unavailable until a managed logical target is reconciled"
+      : "Restart as a new spawn Operation with exact continuation identity";
+    restart.addEventListener("click", () => void actions?.restart?.(session));
+    header.append(restart);
     const adapter = model.adapters.get(session.identity.adapterId);
     if (adapter) {
       header.append(renderAdapterStatus(document, adapter));
@@ -404,8 +426,30 @@ export function renderInstructionCard(
   const delivery = document.createElement("div");
   delivery.className = "instruction-card__delivery";
   delivery.append(renderOperationDelivery(document, command, actions, lockdownActive));
-  card.append(header, body, meta, delivery);
+  card.append(header, body, meta);
+  if (isSpawnContinuation(command)) {
+    card.append(textElement(
+      document,
+      "p",
+      "instruction-card__meta continuation-context",
+      `Context: unknown — ${continuationContextExplanation("unknown")}`,
+    ));
+  }
+  card.append(delivery);
   return card;
+}
+
+function isSpawnContinuation(command: CommandView): boolean {
+  if (command.operation.kind !== OperationKind.SPAWN) return false;
+  const payload = command.operation.payload;
+  if (!payload
+      || payload.contentType !== PayloadContentType.PROTOBUF
+      || payload.schemaRef !== "patchbay.SpawnRequest") return false;
+  try {
+    return fromBinary(SpawnRequestSchema, payload.payload).intent.case === "continuation";
+  } catch {
+    return false;
+  }
 }
 
 function commandTargetLabel(command: CommandView): string {

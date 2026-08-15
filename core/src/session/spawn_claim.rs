@@ -31,7 +31,11 @@ use crate::{
     storage::{validate_next_replay_event, RecordedEvent, Storage},
 };
 
-use super::{external_runtime_key, LogicalTargetError};
+use super::{
+    external_runtime_key,
+    spawn_orchestration::{phase_outcome, SpawnCompletionPhaseRecord},
+    LogicalTargetError,
+};
 
 pub const REPLACEMENT_PENDING_REASON: &str = "replacement_pending";
 
@@ -150,6 +154,7 @@ pub struct SpawnClaimRegistry {
     identified_runtime_by_claim: HashMap<CommandId, RuntimeGenerationRef>,
     external_runtime_claims: HashMap<super::ExternalRuntimeKey, CommandId>,
     prior_work_effects: HashMap<CommandId, Vec<SpawnPriorWorkEffect>>,
+    completion_phases: HashMap<CommandId, SpawnCompletionPhaseRecord>,
 }
 
 impl SpawnClaimRegistry {
@@ -164,6 +169,7 @@ impl SpawnClaimRegistry {
             identified_runtime_by_claim: HashMap::new(),
             external_runtime_claims: HashMap::new(),
             prior_work_effects: HashMap::new(),
+            completion_phases: HashMap::new(),
         })
     }
 
@@ -216,6 +222,22 @@ impl SpawnClaimRegistry {
         self.prior_work_effects
             .get(command_id)
             .map_or(&[], Vec::as_slice)
+    }
+
+    /// Completion readiness requires the complete generic phase spine and the
+    /// exact staged runtime. Result/lifecycle/authority remain separate
+    /// prerequisites owned by the promotion producer and completion driver.
+    #[must_use]
+    pub fn completion_phases_ready(
+        &self,
+        command_id: &CommandId,
+        runtime: &RuntimeGenerationRef,
+    ) -> bool {
+        self.records.get(command_id).is_some_and(|record| {
+            self.completion_phases
+                .get(command_id)
+                .is_some_and(|phases| phases.is_ready(runtime, record.latest_disposition_lsn))
+        })
     }
 
     /// Fold one exact durable-log successor. Failed validation is atomic.
@@ -281,7 +303,7 @@ impl SpawnClaimRegistry {
                         "cannot decode staged spawn successor at LSN {event_lsn}: {error}"
                     ))
                 })?;
-            next.apply_staged_successor(staged)?;
+            next.apply_staged_successor(staged, event_lsn)?;
         } else if kind == StoredEventKind::SpawnPromotionCommitted {
             let promotion = SpawnPromotionCommitted::decode(event.payload.payload.as_slice())
                 .map_err(|error| {
@@ -357,6 +379,8 @@ impl SpawnClaimRegistry {
         self.exclusive_claims.insert(key, command_id.clone());
         self.prior_work_effects
             .insert(command_id.clone(), accepted.prior_work_effects);
+        self.completion_phases
+            .insert(command_id.clone(), SpawnCompletionPhaseRecord::default());
         self.records.insert(
             command_id,
             SpawnClaimRecord {
@@ -412,16 +436,29 @@ impl SpawnClaimRegistry {
             // while the authenticated ingress rejects it before new durability.
             return Ok(());
         }
-        if required_external_effect_disposition(evidence.external_effect_disposition)?
-            == ExternalEffectDisposition::Identified
-        {
-            self.reserve_identified_runtime(
-                &command_id,
-                evidence
-                    .external_runtime
-                    .as_ref()
-                    .expect("identified evidence contract validated"),
-            )?;
+        let effect = required_external_effect_disposition(evidence.external_effect_disposition)?;
+        if effect == ExternalEffectDisposition::Identified {
+            let runtime = evidence
+                .external_runtime
+                .as_ref()
+                .expect("identified evidence contract validated");
+            self.reserve_identified_runtime(&command_id, runtime)?;
+            let phase = required_execution_phase(evidence.phase)?;
+            let failure = FailureCode::try_from(evidence.failure_code)
+                .expect("execution evidence contract validated failure");
+            if failure == FailureCode::Unspecified
+                && matches!(
+                    phase,
+                    SpawnExecutionPhase::ExternalIdentityKnown
+                        | SpawnExecutionPhase::HandshakeReconciling
+                        | SpawnExecutionPhase::SuccessEvidenceReported
+                )
+            {
+                self.completion_phases
+                    .get_mut(&command_id)
+                    .expect("accepted claim initialized completion phases")
+                    .observe_progress(phase, runtime.clone(), event_lsn);
+            }
         }
         Ok(())
     }
@@ -429,6 +466,7 @@ impl SpawnClaimRegistry {
     fn apply_staged_successor(
         &mut self,
         staged: SpawnSuccessorEvidenceStaged,
+        event_lsn: u64,
     ) -> Result<(), SpawnClaimError> {
         super::validate_staged_successor(&staged)
             .map_err(|error| corrupt_log(error.to_string()))?;
@@ -460,7 +498,12 @@ impl SpawnClaimRegistry {
             .as_ref()
             .expect("staged successor validated")
             .clone();
-        self.reserve_identified_runtime(command_id, &runtime)
+        self.reserve_identified_runtime(command_id, &runtime)?;
+        self.completion_phases
+            .get_mut(command_id)
+            .expect("accepted claim initialized completion phases")
+            .observe_staged(runtime, event_lsn);
+        Ok(())
     }
 
     fn reserve_identified_runtime(
@@ -546,14 +589,16 @@ impl SpawnClaimRegistry {
             &promotion,
             event_lsn,
         )?;
-        validate_promoted_runtime(
-            &self.authority_domain_id,
-            &record.claim,
-            promotion
-                .promoted_runtime
-                .as_ref()
-                .expect("promotion envelope validated"),
-        )?;
+        let promoted_runtime = promotion
+            .promoted_runtime
+            .as_ref()
+            .expect("promotion envelope validated");
+        validate_promoted_runtime(&self.authority_domain_id, &record.claim, promoted_runtime)?;
+        if !self.completion_phases_ready(&command_id, promoted_runtime) {
+            return Err(corrupt_log(
+                "promotion omits the ordered identity/handshake/staged/success phase spine",
+            ));
+        }
         let key = claim_key(&record.claim)?;
         if self.exclusive_claims.get(&key) != Some(&command_id) {
             return Err(corrupt_log("promoted claim did not own its exclusive key"));
@@ -1513,21 +1558,16 @@ pub(crate) fn execution_evidence_poisons_claim(
     disposition: ExternalEffectDisposition,
     failure: FailureCode,
 ) -> bool {
-    match disposition {
-        ExternalEffectDisposition::MayExist => poison_failure(failure as i32),
-        ExternalEffectDisposition::Identified => match phase {
-            SpawnExecutionPhase::LaunchAttempted => true,
-            SpawnExecutionPhase::ExternalIdentityKnown
-            | SpawnExecutionPhase::HandshakeReconciling
-            | SpawnExecutionPhase::SuccessEvidenceReported => failure != FailureCode::Unspecified,
-            SpawnExecutionPhase::Unspecified
-            | SpawnExecutionPhase::AcceptedNotOffered
-            | SpawnExecutionPhase::Offered
-            | SpawnExecutionPhase::QuiescingPrior
-            | SpawnExecutionPhase::PriorTerminated => false,
-        },
-        ExternalEffectDisposition::Unspecified | ExternalEffectDisposition::ProvedNone => false,
-    }
+    phase_outcome(
+        phase,
+        disposition,
+        failure,
+        matches!(
+            phase,
+            SpawnExecutionPhase::QuiescingPrior | SpawnExecutionPhase::PriorTerminated
+        ),
+    )
+    .is_ok_and(|outcome| outcome.claim == super::spawn_orchestration::ClaimFenceOutcome::Poisoned)
 }
 
 fn validate_no_effect_proof(

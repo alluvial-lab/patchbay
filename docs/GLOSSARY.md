@@ -48,6 +48,14 @@ A new lifetime of an entity that retains its identity. Patchbay uses generation 
 
 The four scopes share the concept (a new lifetime) but differ in who can observe the restart, so they differ in assigner. The qualifier (core / runtime-session / operator-session / adapter) is the collision-protection discipline.
 
+## Logical target
+
+A core-owned stable identity that binds a managed spawn lineage across runtime-session generations. It has one current generation, at most one reserved successor, and retained tombstones. Intentional restart names both the logical target and exact current external runtime in a new spawn continuation; only atomic promotion moves current from N to N+1.
+
+## Restart as continuation
+
+An intentional replacement expressed as a new `spawn` Operation with a new command/idempotency key and exact continuation prior. The generic core owns claim/fence/evidence/promotion semantics; the adapter owns how it terminates, replaces, and reconciles the runtime. Adapter-native context status is `resumed`, `new_context`, or `unknown` and never guarantees arbitrary process-state restoration.
+
 ## Session report source cursor
 
 Adapter-authenticated ordering evidence for one complete runtime-session report: `(adapter_generation, revision)` inside one runtime-session generation. The positive adapter-assigned revision increases strictly within the current producer epoch; a newer authenticated adapter generation or runtime-session generation may restart it. The cursor is durably restored in the session projection and snapshot. It is not a core log cursor, LSN/revision, timestamp, or bearer credential.

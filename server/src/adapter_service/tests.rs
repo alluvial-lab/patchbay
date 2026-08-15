@@ -2617,6 +2617,21 @@ async fn exact_continuation_report_stages_n_plus_one_without_publishing_it() {
             .expect("logical-target prior appends");
     }
     let accepted = append_replacement_claim(&storage, &domain, "managed-continuation").await;
+    let mut quiesced_prior = session_report(SessionConnectivityState::Offline);
+    quiesced_prior.activity = SessionActivityState::Unknown as i32;
+    quiesced_prior.source_cursor.as_mut().unwrap().revision = 2;
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    quiesced_prior,
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("continuation prior becomes explicitly quiescent before successor staging");
     let command_id = accepted
         .claim
         .as_ref()

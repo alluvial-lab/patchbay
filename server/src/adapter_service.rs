@@ -1671,6 +1671,8 @@ where
                     let claim_record = correlated_claim.ok_or_else(|| {
                         Status::internal("managed successor report lost its durable claim")
                     })?;
+                    session::validate_continuation_prior_quiesced(&rebuilt, &claim_record.claim)
+                        .map_err(|error| Status::failed_precondition(error.to_string()))?;
                     let staged = staged_successor_for_claim(
                         &domain,
                         report,

@@ -1348,15 +1348,17 @@ mod tests {
             runtime_generation_disposition, spawn_claim_event, spawn_request, typed_correlation,
             AcceptedOperation, ActorEndpointRef, AdapterCapability, AdapterId, AdapterRegistration,
             AdapterSnapshotSupport, AdapterTargetCategory, AuditEventKind, CommandTransition,
-            DescendantGrant, DescendantGrantProvenance, EndpointId, ExternalRuntimeRef,
-            FailureCode, FreshSpawn, Grant, GrantId, GrantProvenance, GrantRevocationPolicy,
-            LogicalTargetCreated, LogicalTargetId, Observation, ObservationKind, Operation,
-            OperationState, PayloadContentType, PayloadEnvelope, RuntimeEvidenceSourceAttachment,
-            RuntimeGenerationClaimedSuccessor, RuntimeGenerationDisposition, RuntimeGenerationRef,
-            RuntimeSessionId, SessionActivityState, SessionConnectivityState, SessionReport,
+            DescendantGrant, DescendantGrantProvenance, EndpointId, ExternalEffectDisposition,
+            ExternalRuntimeRef, FailureCode, FreshSpawn, Grant, GrantId, GrantProvenance,
+            GrantRevocationPolicy, LogicalTargetCreated, LogicalTargetId, Observation,
+            ObservationKind, Operation, OperationState, PayloadContentType, PayloadEnvelope,
+            RuntimeEvidenceSourceAttachment, RuntimeGenerationClaimedSuccessor,
+            RuntimeGenerationDisposition, RuntimeGenerationRef, RuntimeSessionId,
+            SessionActivityState, SessionConnectivityState, SessionReport,
             SessionReportSourceCursor, SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent,
-            SpawnGenerationClaim, SpawnPromotionAuthorityEvidence, SpawnPromotionCommitted,
-            SpawnPromotionLifecycleEvidence, SpawnPromotionResultEvidence,
+            SpawnEvidenceAttachment, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer,
+            SpawnExecutionPhase, SpawnGenerationClaim, SpawnPromotionAuthorityEvidence,
+            SpawnPromotionCommitted, SpawnPromotionLifecycleEvidence, SpawnPromotionResultEvidence,
             SpawnPromotionStagedEvidence, SpawnRequest, SpawnSuccessorEvidenceStaged,
             SpawnTargetSpec, TargetScope, TypedCorrelation,
         };
@@ -1544,6 +1546,25 @@ mod tests {
             }),
             ..Observation::default()
         };
+        let progress = |phase| StoredEventPayload {
+            kind: StoredEventKind::SpawnExecutionEvidence as i32,
+            payload: SpawnExecutionEvidence {
+                authority_domain_id: Some(domain.clone()),
+                exact_claim: Some(claim.clone()),
+                phase: phase as i32,
+                external_effect_disposition: ExternalEffectDisposition::Identified as i32,
+                producer: SpawnExecutionEvidenceProducer::CurrentAdapter as i32,
+                source_attachment: Some(SpawnEvidenceAttachment {
+                    adapter_id: Some(adapter.clone()),
+                    adapter_generation: Some(Generation { value: 3 }),
+                    attachment_event_id: Some(event_id(1)),
+                }),
+                failure_code: FailureCode::Unspecified as i32,
+                no_external_effect_proof: None,
+                external_runtime: Some(promoted.clone()),
+            }
+            .encode_to_vec(),
+        };
         let prefix = vec![
             StoredEventPayload {
                 kind: StoredEventKind::Observation as i32,
@@ -1601,17 +1622,29 @@ mod tests {
                 payload: transition(OperationState::Delivered, OperationState::Running)
                     .encode_to_vec(),
             },
+            progress(SpawnExecutionPhase::ExternalIdentityKnown),
+            progress(SpawnExecutionPhase::HandshakeReconciling),
+            encode_staged_successor(&staged),
             StoredEventPayload {
                 kind: StoredEventKind::Observation as i32,
                 payload: result.encode_to_vec(),
             },
-            encode_staged_successor(&staged),
+            progress(SpawnExecutionPhase::SuccessEvidenceReported),
         ];
         let storage = patchbay_core::storage::RusqliteStorage::open_in_memory().unwrap();
         let mut expected_lsn = 1;
         for payload in prefix {
             let source_lsn = expected_lsn;
-            let appended = if payload.kind == StoredEventKind::SpawnSuccessorEvidenceStaged as i32 {
+            let appended = if payload.kind == StoredEventKind::SpawnExecutionEvidence as i32 {
+                storage
+                    .append_spawn_execution_evidence_reconciled(
+                        &domain,
+                        SpawnExecutionEvidence::decode(payload.payload.as_slice()).unwrap(),
+                    )
+                    .await
+                    .unwrap()
+                    .evidence_event_id
+            } else if payload.kind == StoredEventKind::SpawnSuccessorEvidenceStaged as i32 {
                 storage
                     .append_spawn_successor_staged_idempotent(
                         &domain,
@@ -1703,7 +1736,7 @@ mod tests {
             expected_lsn += 1;
         }
         let live = ProjectionState::rebuild(&storage, &domain).await.unwrap();
-        assert_eq!(live.current_lsn().await, 10);
+        assert_eq!(live.current_lsn().await, 13);
         assert_eq!(live.current_runtime_session_count().await, 0);
 
         let timestamp = Timestamp {
@@ -1731,7 +1764,7 @@ mod tests {
                 },
             ],
             successful_result: Some(SpawnPromotionResultEvidence {
-                event_id: Some(event_id(8)),
+                event_id: Some(event_id(11)),
                 command_id: Some(command.clone()),
                 target_scope: operation.target_scope,
                 failure_code: FailureCode::Unspecified as i32,
@@ -1795,7 +1828,7 @@ mod tests {
             .unwrap();
 
         live.catch_up(&storage, &domain).await.unwrap();
-        assert_eq!(live.current_lsn().await, 12);
+        assert_eq!(live.current_lsn().await, 15);
         assert_eq!(live.current_runtime_session_count().await, 1);
         assert!(live
             .grant_check
@@ -1826,7 +1859,7 @@ mod tests {
         );
 
         let restarted = ProjectionState::rebuild(&storage, &domain).await.unwrap();
-        assert_eq!(restarted.current_lsn().await, 12);
+        assert_eq!(restarted.current_lsn().await, 15);
         assert_eq!(restarted.current_runtime_session_count().await, 1);
         assert!(restarted
             .grant_check

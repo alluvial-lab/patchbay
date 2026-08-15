@@ -25,6 +25,7 @@ import { loginCommand } from "./commands/login.js";
 import { lockdownEnterCommand, lockdownExitCommand } from "./commands/lockdown.js";
 import { logoutCommand } from "./commands/logout.js";
 import { sessionHealthCommand } from "./commands/session-health.js";
+import { restartCommand, spawnCommand } from "./commands/spawn.js";
 import { setupCommand } from "./commands/setup.js";
 import { resourceInspectCommand, resourceQueryCommand } from "./commands/resources.js";
 
@@ -54,6 +55,8 @@ const COMMAND_OPTION_GRAMMAR: Record<string, { flags: readonly string[]; values:
   "session-health": { flags: ["json"], values: [] },
   "resource-query": { flags: ["json", "replay-events"], values: ["adapter-id", "provider"] },
   "resource-inspect": { flags: ["json", "replay-events"], values: [] },
+  spawn: { flags: ["json"], values: ["idempotency-key", "command-id", "deployment-authority-ref"] },
+  restart: { flags: ["json"], values: ["idempotency-key", "command-id", "deployment-authority-ref"] },
   instruct: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   cancel: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   interrupt: { flags: ["json"], values: ["idempotency-key", "command-id"] },
@@ -79,6 +82,7 @@ const VALUE_OPTIONS = new Set([
   "device-id",
   "idempotency-key",
   "command-id",
+  "deployment-authority-ref",
   "grant-id",
   "kind",
   "actor-id",
@@ -210,6 +214,40 @@ export async function run(
           makeControlClient(config.coreAddr, config.coreSecret, store),
           config.authorityDomainId,
           { identity: parsed.positionals[0]!, replayEvents: parsed.flags.has("replay-events"), json },
+          output,
+        );
+
+      case "spawn":
+        requirePositionals(command, parsed.positionals, 1, 2);
+        return await spawnCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          store,
+          config.authorityDomainId,
+          {
+            adapterId: parsed.positionals[0]!,
+            shape: parsed.positionals[1] ?? "session",
+            deploymentAuthorityRef: parsed.options.get("deployment-authority-ref"),
+            json,
+            idempotencyKey: parsed.options.get("idempotency-key"),
+            commandId: parsed.options.get("command-id"),
+          },
+          output,
+        );
+
+      case "restart":
+        requirePositionals(command, parsed.positionals, 1, 2);
+        return await restartCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          store,
+          config.authorityDomainId,
+          {
+            target: parsed.positionals[0]!,
+            shape: parsed.positionals[1] ?? "session",
+            deploymentAuthorityRef: parsed.options.get("deployment-authority-ref"),
+            json,
+            idempotencyKey: parsed.options.get("idempotency-key"),
+            commandId: parsed.options.get("command-id"),
+          },
           output,
         );
 
@@ -479,6 +517,10 @@ export function usage(): string {
     "  resource-inspect <adapter=...;resource-kind=...;resource=...> [--replay-events] [--json]",
     "      Inspect one canonical resource wrapper and its shared safe summary.",
     "      --replay-events additionally requires authority-domain query authority.",
+    "  spawn <adapter-id> [shape] [--deployment-authority-ref REF] [--idempotency-key K] [--command-id ID] [--json]",
+    "      Submit a fresh spawn Operation to one explicit adapter.",
+    "  restart <target> [shape] [--deployment-authority-ref REF] [--idempotency-key K] [--command-id ID] [--json]",
+    "      Submit restart as a new spawn Operation with the exact current managed continuation.",
     "  instruct <target> <prompt|-> [--idempotency-key K] [--command-id ID] [--json]",
     "      Submit an instruction; '-' reads the prompt from stdin.",
     "  cancel <command-id> [--idempotency-key K] [--command-id ID] [--json]",

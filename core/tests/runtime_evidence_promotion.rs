@@ -459,6 +459,18 @@ fn transition(from: OperationState, to: OperationState) -> CommandTransition {
     }
 }
 
+fn progress_event(lsn: u64, phase: SpawnExecutionPhase) -> RecordedEvent {
+    recorded(
+        lsn,
+        patchbay_core::session::encode_spawn_execution_evidence(&identified_evidence(
+            &accepted_claim(),
+            external(1),
+            phase,
+            FailureCode::Unspecified,
+        )),
+    )
+}
+
 fn unstamped_promotion() -> SpawnPromotionCommitted {
     let promoted = patchbay_contracts::patchbay::RuntimeGenerationRef {
         logical_target_id: Some(LogicalTargetId {
@@ -489,7 +501,7 @@ fn unstamped_promotion() -> SpawnPromotionCommitted {
             },
         ],
         successful_result: Some(SpawnPromotionResultEvidence {
-            event_id: Some(event_id(8)),
+            event_id: Some(event_id(11)),
             command_id: Some(command()),
             target_scope: accepted_operation()
                 .operation
@@ -501,7 +513,7 @@ fn unstamped_promotion() -> SpawnPromotionCommitted {
             }),
         }),
         staged_successor: Some(SpawnPromotionStagedEvidence {
-            event_id: Some(event_id(9)),
+            event_id: Some(event_id(10)),
             staged: Some(staged()),
         }),
         promoted_runtime: Some(promoted.clone()),
@@ -759,21 +771,31 @@ fn valid_prefix() -> Vec<RecordedEvent> {
                     .encode_to_vec(),
             },
         ),
+        progress_event(8, SpawnExecutionPhase::ExternalIdentityKnown),
+        progress_event(9, SpawnExecutionPhase::HandshakeReconciling),
+        recorded(10, encode_staged_successor(&staged())),
         recorded(
-            8,
+            11,
             StoredEventPayload {
                 kind: StoredEventKind::Observation as i32,
                 payload: successful_result().encode_to_vec(),
             },
         ),
-        recorded(9, encode_staged_successor(&staged())),
+        progress_event(12, SpawnExecutionPhase::SuccessEvidenceReported),
     ]
 }
 
 async fn append_prefix(storage: &RusqliteStorage, prefix: Vec<RecordedEvent>) {
     for event in prefix {
-        let appended = if event.payload.kind == StoredEventKind::SpawnSuccessorEvidenceStaged as i32
-        {
+        let appended = if event.payload.kind == StoredEventKind::SpawnExecutionEvidence as i32 {
+            let evidence = SpawnExecutionEvidence::decode(event.payload.payload.as_slice())
+                .expect("spawn progress fixture decodes");
+            storage
+                .append_spawn_execution_evidence_reconciled(&domain(), evidence)
+                .await
+                .expect("spawn progress fixture appends through its dedicated boundary")
+                .evidence_event_id
+        } else if event.payload.kind == StoredEventKind::SpawnSuccessorEvidenceStaged as i32 {
             let staged = SpawnSuccessorEvidenceStaged::decode(event.payload.payload.as_slice())
                 .expect("staged fixture decodes");
             storage
@@ -933,6 +955,30 @@ async fn append_production_promotion_prefix(storage: &RusqliteStorage) {
     let mut prefix = valid_prefix();
     prefix.truncate(7);
     append_prefix(storage, prefix).await;
+    for phase in [
+        SpawnExecutionPhase::ExternalIdentityKnown,
+        SpawnExecutionPhase::HandshakeReconciling,
+    ] {
+        storage
+            .append_spawn_execution_evidence_reconciled(
+                &domain(),
+                identified_evidence(
+                    &accepted_claim(),
+                    external(1),
+                    phase,
+                    FailureCode::Unspecified,
+                ),
+            )
+            .await
+            .expect("pre-staging progress evidence commits");
+    }
+    assert_eq!(
+        storage
+            .append_spawn_successor_staged_idempotent(&domain(), staged())
+            .await
+            .expect("staged successor commits after handshake"),
+        event_id(10)
+    );
     let deferred = storage
         .append_spawn_result_deferred_audited(
             &domain(),
@@ -941,25 +987,24 @@ async fn append_production_promotion_prefix(storage: &RusqliteStorage) {
         )
         .await
         .expect("qualifying spawn Result commits through the dedicated boundary");
-    assert_eq!(deferred.source_event_id, event_id(8));
-    assert_eq!(deferred.audit_event_id, event_id(9));
-    assert_eq!(
-        storage
-            .append_spawn_successor_staged_idempotent(&domain(), staged())
-            .await
-            .expect("staged successor commits after deferred evidence"),
-        event_id(10)
-    );
+    assert_eq!(deferred.source_event_id, event_id(11));
+    assert_eq!(deferred.audit_event_id, event_id(12));
+    storage
+        .append_spawn_execution_evidence_reconciled(
+            &domain(),
+            identified_evidence(
+                &accepted_claim(),
+                external(1),
+                SpawnExecutionPhase::SuccessEvidenceReported,
+                FailureCode::Unspecified,
+            ),
+        )
+        .await
+        .expect("post-staging success evidence commits");
 }
 
 fn production_unstamped_promotion() -> SpawnPromotionCommitted {
-    let mut promotion = unstamped_promotion();
-    promotion
-        .staged_successor
-        .as_mut()
-        .expect("promotion has staged evidence")
-        .event_id = Some(event_id(10));
-    promotion
+    unstamped_promotion()
 }
 
 #[tokio::test]
@@ -985,7 +1030,7 @@ async fn successful_identified_evidence_stays_active_and_reaches_original_claim_
     let evidence = identified_evidence(
         &accepted_claim(),
         external(1),
-        SpawnExecutionPhase::SuccessEvidenceReported,
+        SpawnExecutionPhase::ExternalIdentityKnown,
         FailureCode::Unspecified,
     );
     let first = storage
@@ -1040,13 +1085,37 @@ async fn successful_identified_evidence_stays_active_and_reaches_original_claim_
         .expect("identified evidence retry survives restart");
     assert!(restart_retry.deduplicated);
     assert_eq!(restart_retry.evidence_event_id, first.evidence_event_id);
+    storage
+        .append_spawn_execution_evidence_reconciled(
+            &domain(),
+            identified_evidence(
+                &accepted_claim(),
+                external(1),
+                SpawnExecutionPhase::HandshakeReconciling,
+                FailureCode::Unspecified,
+            ),
+        )
+        .await
+        .expect("handshake evidence commits");
     assert_eq!(
         storage
             .append_spawn_successor_staged_idempotent(&domain(), staged())
             .await
             .expect("the original claim stages its matching successor"),
-        event_id(11)
+        event_id(12)
     );
+    storage
+        .append_spawn_execution_evidence_reconciled(
+            &domain(),
+            identified_evidence(
+                &accepted_claim(),
+                external(1),
+                SpawnExecutionPhase::SuccessEvidenceReported,
+                FailureCode::Unspecified,
+            ),
+        )
+        .await
+        .expect("success evidence commits after staging");
     let staged_retry = storage
         .append_spawn_execution_evidence_reconciled(&domain(), evidence)
         .await
@@ -1134,16 +1203,19 @@ async fn identified_evidence_respects_current_and_reserved_logical_target_owners
 
 #[test]
 fn promotion_producer_keeps_earliest_exact_success_result_retry_on_both_sides_of_staging() {
-    let mut retry_before_staging = valid_prefix();
-    let stage = retry_before_staging.pop().expect("stage fixture");
-    retry_before_staging.push(recorded(
-        9,
-        StoredEventPayload {
-            kind: StoredEventKind::Observation as i32,
-            payload: successful_result().encode_to_vec(),
-        },
-    ));
-    retry_before_staging.push(recorded(10, stage.payload));
+    let base = valid_prefix();
+    let mut retry_before_staging = base[..9].to_vec();
+    for lsn in [10, 11] {
+        retry_before_staging.push(recorded(
+            lsn,
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: successful_result().encode_to_vec(),
+            },
+        ));
+    }
+    retry_before_staging.push(recorded(12, base[9].payload.clone()));
+    retry_before_staging.push(recorded(13, base[11].payload.clone()));
 
     let promotion = next_spawn_promotion(
         &domain(),
@@ -1160,7 +1232,7 @@ fn promotion_producer_keeps_earliest_exact_success_result_retry_on_both_sides_of
             .successful_result
             .as_ref()
             .and_then(|result| result.event_id.as_ref()),
-        Some(&event_id(8)),
+        Some(&event_id(10)),
         "the earliest exact Result is the deterministic promotion evidence"
     );
     assert_eq!(
@@ -1168,12 +1240,12 @@ fn promotion_producer_keeps_earliest_exact_success_result_retry_on_both_sides_of
             .staged_successor
             .as_ref()
             .and_then(|stage| stage.event_id.as_ref()),
-        Some(&event_id(10))
+        Some(&event_id(12))
     );
 
     let mut retry_after_staging = valid_prefix();
     retry_after_staging.push(recorded(
-        10,
+        13,
         StoredEventPayload {
             kind: StoredEventKind::Observation as i32,
             payload: successful_result().encode_to_vec(),
@@ -1194,14 +1266,14 @@ fn promotion_producer_keeps_earliest_exact_success_result_retry_on_both_sides_of
             .successful_result
             .as_ref()
             .and_then(|result| result.event_id.as_ref()),
-        Some(&event_id(8))
+        Some(&event_id(11))
     );
     assert_eq!(
         promotion
             .staged_successor
             .as_ref()
             .and_then(|stage| stage.event_id.as_ref()),
-        Some(&event_id(9))
+        Some(&event_id(10))
     );
 
     let mut changed_time = successful_result();
@@ -1225,7 +1297,7 @@ fn promotion_producer_keeps_earliest_exact_success_result_retry_on_both_sides_of
     for changed_result in [changed_time, changed_payload, changed_identity] {
         let mut conflicting = valid_prefix();
         conflicting.push(recorded(
-            10,
+            13,
             StoredEventPayload {
                 kind: StoredEventKind::Observation as i32,
                 payload: changed_result.encode_to_vec(),
@@ -2136,6 +2208,17 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
         revocation_policy: GrantRevocationPolicy::Continue as i32,
         ..Grant::default()
     };
+    let continuation_progress = |lsn, phase| {
+        recorded(
+            lsn,
+            patchbay_core::session::encode_spawn_execution_evidence(&identified_evidence(
+                &continuation_accepted,
+                successor_external.clone(),
+                phase,
+                FailureCode::Unspecified,
+            )),
+        )
+    };
     let prefix = vec![
         attachment_event(1),
         recorded(
@@ -2234,29 +2317,32 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
                     .encode_to_vec(),
             },
         ),
+        continuation_progress(11, SpawnExecutionPhase::ExternalIdentityKnown),
+        continuation_progress(12, SpawnExecutionPhase::HandshakeReconciling),
         recorded(
-            11,
-            StoredEventPayload {
-                kind: StoredEventKind::Observation as i32,
-                payload: successful_result().encode_to_vec(),
-            },
-        ),
-        recorded(
-            12,
+            13,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnSuccessorEvidenceStaged as i32,
                 payload: continuation_staged.encode_to_vec(),
             },
         ),
+        recorded(
+            14,
+            StoredEventPayload {
+                kind: StoredEventKind::Observation as i32,
+                payload: successful_result().encode_to_vec(),
+            },
+        ),
+        continuation_progress(15, SpawnExecutionPhase::SuccessEvidenceReported),
     ];
     let mut promotion = unstamped_promotion();
     promotion.accepted_claim_event_id = Some(event_id(7));
     promotion.accepted_claim = Some(continuation_accepted);
     promotion.lifecycle[0].event_id = Some(event_id(9));
     promotion.lifecycle[1].event_id = Some(event_id(10));
-    promotion.successful_result.as_mut().unwrap().event_id = Some(event_id(11));
+    promotion.successful_result.as_mut().unwrap().event_id = Some(event_id(14));
     promotion.staged_successor = Some(SpawnPromotionStagedEvidence {
-        event_id: Some(event_id(12)),
+        event_id: Some(event_id(13)),
         staged: Some(continuation_staged),
     });
     promotion.promoted_runtime = Some(candidate);
@@ -2274,31 +2360,29 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
         .as_mut()
         .unwrap()
         .continuation_authority = Some(continuation);
-    promotion.promotion_event_id = Some(event_id(13));
-    promotion.completion_audit_event_id = Some(event_id(14));
-    descendant.audit_id = Some(event_id(14));
+    promotion.promotion_event_id = Some(event_id(16));
+    promotion.completion_audit_event_id = Some(event_id(17));
+    descendant.audit_id = Some(event_id(17));
     (prefix, promotion)
 }
 
 fn production_continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
     let (mut prefix, mut promotion) = continuation_fixture();
-    let staged = prefix
-        .pop()
-        .expect("continuation fixture ends with staging");
-    prefix.push(recorded(13, staged.payload));
-    promotion
-        .staged_successor
-        .as_mut()
-        .expect("continuation promotion has staged evidence")
-        .event_id = Some(event_id(13));
-    promotion.promotion_event_id = Some(event_id(14));
-    promotion.completion_audit_event_id = Some(event_id(15));
+    prefix
+        .last_mut()
+        .expect("continuation fixture ends with success progress")
+        .event_id = event_id(16);
+    // The deferred successful Result writer adds its audit after direct fixture
+    // LSN 14, so the following success-phase, promotion, and audit facts shift
+    // by one in the production storage path.
+    promotion.promotion_event_id = Some(event_id(17));
+    promotion.completion_audit_event_id = Some(event_id(18));
     promotion
         .authority
         .as_mut()
         .and_then(|authority| authority.descendant_grant.as_mut())
         .expect("continuation promotion has descendant authority")
-        .audit_id = Some(event_id(15));
+        .audit_id = Some(event_id(18));
     (prefix, promotion)
 }
 
@@ -2918,10 +3002,10 @@ fn promotion_installs_the_staged_runtime_but_staging_alone_does_not() {
         .current
         .is_none());
 
-    let promotion = stamped_promotion(10);
+    let promotion = stamped_promotion(13);
     sessions
         .observe(&recorded(
-            10,
+            13,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnPromotionCommitted as i32,
                 payload: promotion.encode_to_vec(),
@@ -2943,10 +3027,10 @@ fn promotion_event_directly_consumes_the_claim() {
     for event in &prefix {
         claims.observe(event).unwrap();
     }
-    let promotion = stamped_promotion(10);
+    let promotion = stamped_promotion(13);
     claims
         .observe(&recorded(
-            10,
+            13,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnPromotionCommitted as i32,
                 payload: promotion.encode_to_vec(),
@@ -2976,10 +3060,10 @@ fn aggregate_promotion_fold_requires_and_publishes_all_four_views_in_order() {
         commands.apply(event).unwrap();
     }
     let promotion = recorded(
-        10,
+        13,
         StoredEventPayload {
             kind: StoredEventKind::SpawnPromotionCommitted as i32,
-            payload: stamped_promotion(10).encode_to_vec(),
+            payload: stamped_promotion(13).encode_to_vec(),
         },
     );
 
@@ -3027,7 +3111,7 @@ fn aggregate_promotion_fold_requires_and_publishes_all_four_views_in_order() {
 
 #[test]
 fn promotion_rejects_one_dimension_at_a_time_authority_laundering() {
-    let base = stamped_promotion(10);
+    let base = stamped_promotion(13);
     let mut mutations = Vec::new();
 
     let mut wrong_actor = base.clone();
@@ -3165,7 +3249,7 @@ fn promotion_rejects_one_dimension_at_a_time_authority_laundering() {
             commands.clone(),
         );
         let event = recorded(
-            10,
+            13,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnPromotionCommitted as i32,
                 payload: mutation.encode_to_vec(),
@@ -3211,10 +3295,10 @@ fn promotion_revalidates_parent_grant_kind_scope_and_liveness() {
             &mut claims,
             &mut commands,
             &recorded(
-                10,
+                13,
                 StoredEventPayload {
                     kind: StoredEventKind::SpawnPromotionCommitted as i32,
-                    payload: stamped_promotion(10).encode_to_vec(),
+                    payload: stamped_promotion(13).encode_to_vec(),
                 },
             ),
         )
@@ -3347,7 +3431,7 @@ fn managed_completion_decision_suppresses_expired_or_revoked_exact_prior_authori
 
     let (mut revoked_prefix, _) = continuation_fixture();
     revoked_prefix.push(recorded(
-        13,
+        16,
         StoredEventPayload {
             kind: StoredEventKind::Revocation as i32,
             payload: Revocation {
@@ -3393,7 +3477,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
         &mut claims,
         &mut commands,
         &recorded(
-            13,
+            16,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnPromotionCommitted as i32,
                 payload: promotion.encode_to_vec(),
@@ -3433,13 +3517,13 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
     );
     let logical = sessions.logical_targets().get(&logical_target_id).unwrap();
     assert!(logical.tombstones.values().any(|tombstone| {
-        tombstone.external_runtime_ref == external(1) && tombstone.superseded_at_lsn == 13
+        tombstone.external_runtime_ref == external(1) && tombstone.superseded_at_lsn == 16
     }));
     let managed_lineages = sessions.managed_lineage_checkpoint_records();
     assert_eq!(managed_lineages.len(), 1);
     assert_eq!(managed_lineages[0].logical_target_id, logical_target_id);
     assert_eq!(managed_lineages[0].tombstones.len(), 1);
-    assert_eq!(managed_lineages[0].tombstones[0].superseded_at_lsn, 13);
+    assert_eq!(managed_lineages[0].tombstones[0].superseded_at_lsn, 16);
     let checkpoint_sessions: Vec<_> = sessions.sessions().cloned().collect();
     let checkpoint_tombstones: Vec<_> = sessions.tombstones().cloned().collect();
     let logical_checkpoint = sessions.logical_targets().checkpoint_records();
@@ -3451,7 +3535,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
     sessions_with_reused_old_slot.push(reused_old_slot);
     let hydrated = SessionRegistry::from_checkpoint_with_managed_lineages(
         domain(),
-        13,
+        16,
         sessions_with_reused_old_slot.clone(),
         checkpoint_tombstones.clone(),
         logical_checkpoint.clone(),
@@ -3467,7 +3551,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
     missing_logical_tombstone[0].tombstones.clear();
     assert!(SessionRegistry::from_checkpoint_with_managed_lineages(
         domain(),
-        13,
+        16,
         sessions_with_reused_old_slot,
         checkpoint_tombstones,
         missing_logical_tombstone,
@@ -3492,7 +3576,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
         &mut claims,
         &mut commands,
         &recorded(
-            13,
+            16,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnPromotionCommitted as i32,
                 payload: expired_promotion.encode_to_vec(),
@@ -3508,7 +3592,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
 
     let (mut revoked_prefix, mut revoked_promotion) = continuation_fixture();
     revoked_prefix.push(recorded(
-        13,
+        16,
         StoredEventPayload {
             kind: StoredEventKind::Revocation as i32,
             payload: Revocation {
@@ -3528,8 +3612,8 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
             .encode_to_vec(),
         },
     ));
-    revoked_promotion.promotion_event_id = Some(event_id(14));
-    revoked_promotion.completion_audit_event_id = Some(event_id(15));
+    revoked_promotion.promotion_event_id = Some(event_id(17));
+    revoked_promotion.completion_audit_event_id = Some(event_id(18));
     revoked_promotion
         .authority
         .as_mut()
@@ -3537,7 +3621,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
         .descendant_grant
         .as_mut()
         .unwrap()
-        .audit_id = Some(event_id(15));
+        .audit_id = Some(event_id(18));
     let (mut authority, mut targets, mut claims, mut commands) =
         aggregate_from_prefix(&revoked_prefix);
     assert!(fold_spawn_promotion_ordered(
@@ -3546,7 +3630,7 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
         &mut claims,
         &mut commands,
         &recorded(
-            14,
+            17,
             StoredEventPayload {
                 kind: StoredEventKind::SpawnPromotionCommitted as i32,
                 payload: revoked_promotion.encode_to_vec(),
@@ -3559,10 +3643,16 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
 #[tokio::test]
 async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_out_of_order() {
     let (prefix, promotion) = production_continuation_fixture();
+    let staged_index = prefix
+        .iter()
+        .position(|event| {
+            event.payload.kind == StoredEventKind::SpawnSuccessorEvidenceStaged as i32
+        })
+        .expect("continuation fixture contains staging");
     let (_, projected_targets, projected_claims, _) =
-        aggregate_from_prefix(&prefix[..prefix.len() - 1]);
+        aggregate_from_prefix(&prefix[..staged_index]);
     let staged =
-        SpawnSuccessorEvidenceStaged::decode(prefix.last().unwrap().payload.payload.as_slice())
+        SpawnSuccessorEvidenceStaged::decode(prefix[staged_index].payload.payload.as_slice())
             .unwrap();
     let actual_disposition = classify_session_report(
         &domain(),
@@ -3583,8 +3673,8 @@ async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_
         )
         .await
         .expect("exact current N and reserved claimed N+1 promote atomically");
-    assert_eq!(committed.source_event_id, event_id(14));
-    assert_eq!(committed.audit_event_id, event_id(15));
+    assert_eq!(committed.source_event_id, event_id(17));
+    assert_eq!(committed.audit_event_id, event_id(18));
 
     let sessions = patchbay_core::session::rebuild_from_log(&valid, &domain())
         .await
@@ -3757,7 +3847,7 @@ async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_
     accepted_event.mutation = Some(spawn_claim_event::Mutation::Accepted(accepted));
     wrong_claim_prefix[6].payload = encode_spawn_claim_event(&accepted_event);
     let mut projected_stage =
-        SpawnSuccessorEvidenceStaged::decode(wrong_claim_prefix[11].payload.payload.as_slice())
+        SpawnSuccessorEvidenceStaged::decode(wrong_claim_prefix[12].payload.payload.as_slice())
             .unwrap();
     let candidate_three = external_with_runtime("runtime-c", 3);
     projected_stage.exact_claim = Some(projected_claim);
@@ -3780,7 +3870,7 @@ async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_
     disposition.expected_prior = Some(prior_two);
     disposition.claimed_generation = Some(Generation { value: 3 });
     projected_stage.external_runtime_reservation = Some(candidate_three);
-    wrong_claim_prefix[11].payload = encode_staged_successor(&projected_stage);
+    wrong_claim_prefix[12].payload = encode_staged_successor(&projected_stage);
     let (mut authority, mut targets, mut claims, mut commands) =
         aggregate_from_prefix(&wrong_claim_prefix);
     let before = (
@@ -3807,7 +3897,7 @@ async fn promotion_append_binds_exact_generation_prestate_and_rejects_double_or_
 
     let (mut released_prefix, released_promotion) = production_continuation_fixture();
     released_prefix.push(recorded(
-        14,
+        17,
         patchbay_core::session::events::encode(
             &patchbay_core::session::events::logical_target_candidate_released(
                 domain(),
@@ -4216,7 +4306,7 @@ async fn promotion_audit_failure_rolls_back_source_and_grant_identity_reservatio
             .await
             .unwrap()
             .len(),
-        10,
+        13,
         "source event and grant identity reservation roll back with the audit failure"
     );
 
@@ -4229,8 +4319,8 @@ async fn promotion_audit_failure_rolls_back_source_and_grant_identity_reservatio
         .append_spawn_promotion_audited(&domain(), production_unstamped_promotion(), audit)
         .await
         .expect("rolled-back grant identity can be reserved by the complete retry");
-    assert_eq!(committed.source_event_id, event_id(11));
-    assert_eq!(committed.audit_event_id, event_id(12));
+    assert_eq!(committed.source_event_id, event_id(14));
+    assert_eq!(committed.audit_event_id, event_id(15));
 }
 
 #[tokio::test]
@@ -4250,9 +4340,9 @@ async fn storage_stamps_and_commits_complete_promotion_plus_audit_atomically() {
         .append_spawn_promotion_audited(&domain(), production_unstamped_promotion(), audit)
         .await
         .unwrap();
-    assert_eq!(committed.source_event_id, event_id(11));
-    assert_eq!(committed.audit_event_id, event_id(12));
-    assert_eq!(committed.promotion.promotion_event_id, Some(event_id(11)));
+    assert_eq!(committed.source_event_id, event_id(14));
+    assert_eq!(committed.audit_event_id, event_id(15));
+    assert_eq!(committed.promotion.promotion_event_id, Some(event_id(14)));
     let exact_retry = staged();
     assert_eq!(
         storage
@@ -4269,7 +4359,7 @@ async fn storage_stamps_and_commits_complete_promotion_plus_audit_atomically() {
     );
     assert_eq!(
         committed.promotion.completion_audit_event_id,
-        Some(event_id(12))
+        Some(event_id(15))
     );
     assert_eq!(
         committed
@@ -4281,10 +4371,10 @@ async fn storage_stamps_and_commits_complete_promotion_plus_audit_atomically() {
             .as_ref()
             .unwrap()
             .audit_id,
-        Some(event_id(12))
+        Some(event_id(15))
     );
     let events = storage
-        .read_after(&domain(), Lsn { value: 10 })
+        .read_after(&domain(), Lsn { value: 13 })
         .await
         .unwrap();
     assert_eq!(events.len(), 2);
@@ -4362,6 +4452,6 @@ async fn storage_stamps_and_commits_complete_promotion_plus_audit_atomically() {
             .await
             .unwrap()
             .len(),
-        12
+        15
     );
 }

@@ -2,17 +2,23 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { create } from "@bufbuild/protobuf";
+import { create, fromBinary } from "@bufbuild/protobuf";
 import {
   AuthorityDomainIdSchema,
   OperationKind,
   PayloadContentType,
   SessionActivityState,
+  SpawnRequestSchema,
   SessionConnectivityState,
 } from "@patchbay/contracts";
 import { JSDOM } from "jsdom";
 
-import { buildInstructOperation, startCockpit } from "../src/main.js";
+import {
+  buildFreshSpawnOperation,
+  buildInstructOperation,
+  buildRestartOperation,
+  startCockpit,
+} from "../src/main.js";
 import type { SessionView } from "../src/domain/model.js";
 
 const DOMAIN = create(AuthorityDomainIdSchema, { value: "operator-domain" });
@@ -120,6 +126,28 @@ test("composition submission builder emits a boundary-valid instruct Operation",
   assert.equal(new TextDecoder().decode(operation.payload?.payload), "Run the verification suite");
 });
 
+test("fresh and restart actions emit the same spawn kind with exact distinct intents", () => {
+  const fresh = buildFreshSpawnOperation(DOMAIN, "pi", {
+    commandId: "spawn-fresh",
+    idempotencyKey: "spawn-fresh-key",
+  });
+  const restart = buildRestartOperation(DOMAIN, session(), {
+    commandId: "spawn-restart",
+    idempotencyKey: "spawn-restart-key",
+  });
+  assert.equal(fresh.kind, OperationKind.SPAWN);
+  assert.equal(restart.kind, OperationKind.SPAWN);
+  assert.equal(fresh.targetScope?.adapterId?.value, "pi");
+  assert.equal(restart.targetScope?.adapterId?.value, "pi");
+  const freshRequest = fromBinary(SpawnRequestSchema, fresh.payload!.payload);
+  const restartRequest = fromBinary(SpawnRequestSchema, restart.payload!.payload);
+  assert.equal(freshRequest.intent.case, "fresh");
+  assert.equal(restartRequest.intent.case, "continuation");
+  if (restartRequest.intent.case !== "continuation") assert.fail("continuation intent expected");
+  assert.equal(restartRequest.intent.value.prior?.logicalTargetId?.value, "logical-1");
+  assert.equal(restartRequest.intent.value.prior?.externalRuntime?.generation?.value, 1n);
+});
+
 test("browser build emits a servable HTML entry and bundled module", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
   const bundle = await readFile(new URL("../assets/cockpit.js", import.meta.url), "utf8");
@@ -146,6 +174,7 @@ function session(): SessionView {
       runtimeSessionId: "session-1",
       generation: 1n,
     },
+    logicalTargetId: "logical-1",
     label: { project: "patchbay", name: "core" },
     connectivity: SessionConnectivityState.LIVE,
     activity: SessionActivityState.IDLE,

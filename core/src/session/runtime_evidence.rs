@@ -98,6 +98,16 @@ pub fn next_spawn_promotion_excluding(
     excluded_commands: &HashSet<CommandId>,
 ) -> Result<Option<SpawnPromotionCommitted>, RuntimeEvidenceError> {
     let mut commands = CommandIndex::new();
+    let mut claims = SpawnClaimRegistry::new(authority_domain_id.clone()).map_err(|error| {
+        fence(format!(
+            "promotion producer claim projection failed: {error}"
+        ))
+    })?;
+    // Session replay is continuation-only. Fresh managed claims and unrelated
+    // legacy completion histories must not acquire a new dependency on the
+    // session projection merely because the promotion producer scans the same
+    // durable prefix.
+    let mut continuation_sessions = None;
     let mut facts: HashMap<CommandId, PromotionFacts> = HashMap::new();
 
     for event in events {
@@ -268,6 +278,9 @@ pub fn next_spawn_promotion_excluding(
         commands
             .apply(event)
             .map_err(|error| fence(format!("promotion producer command fold failed: {error}")))?;
+        claims
+            .observe(event)
+            .map_err(|error| fence(format!("promotion producer claim fold failed: {error}")))?;
     }
 
     let mut ready = Vec::new();
@@ -324,6 +337,34 @@ pub fn next_spawn_promotion_excluding(
             .classified_target
             .clone()
             .ok_or_else(|| malformed("staged successor has no classified target"))?;
+        if !claims.completion_phases_ready(&command_id, &promoted_runtime) {
+            continue;
+        }
+        if claim.expected_prior.is_some() {
+            if continuation_sessions.is_none() {
+                let mut sessions = super::SessionRegistry::new(authority_domain_id.clone())
+                    .map_err(|error| {
+                        fence(format!(
+                            "promotion producer session projection failed: {error}"
+                        ))
+                    })?;
+                for event in events {
+                    sessions.observe(event).map_err(|error| {
+                        fence(format!("promotion producer session fold failed: {error}"))
+                    })?;
+                }
+                continuation_sessions = Some(sessions);
+            }
+            super::validate_continuation_prior_quiesced(
+                continuation_sessions.as_ref().expect("initialized above"),
+                claim,
+            )
+            .map_err(|error| {
+                fence(format!(
+                    "promotion producer continuation prior is not quiesced: {error}"
+                ))
+            })?;
+        }
         let external = promoted_runtime
             .external_runtime
             .clone()
@@ -617,6 +658,23 @@ fn validate_spawn_promotion_generation_prestate(
             ),
         ));
     }
+    if !claims.completion_phases_ready(
+        command_id,
+        promotion
+            .promoted_runtime
+            .as_ref()
+            .expect("promotion envelope validated"),
+    ) {
+        return Err(SpawnPromotionFoldError::Claim(
+            super::SpawnClaimError::CorruptLog(
+                "promotion omits the ordered identity/handshake/staged/success phase spine"
+                    .to_owned(),
+            ),
+        ));
+    }
+    super::validate_continuation_prior_quiesced(targets.sessions(), claim).map_err(|error| {
+        SpawnPromotionFoldError::Session(super::SessionError::CorruptLog(error.to_string()))
+    })?;
 
     let logical_target_id = claim
         .logical_target_id

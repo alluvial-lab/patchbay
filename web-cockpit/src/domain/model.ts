@@ -23,6 +23,10 @@ import {
   SessionConnectivityState,
   SessionStateEventSchema,
   SecurityLockdownEventSchema,
+  SpawnClaimDisposition,
+  SpawnClaimEventSchema,
+  SpawnPromotionCommittedSchema,
+  SpawnRequestSchema,
   StoredEventKind,
   type Elicitation,
   FailureCode,
@@ -30,7 +34,10 @@ import {
   type Operation,
   type ResponseContract,
   type Session,
+  type SessionReport,
   type SessionSnapshot,
+  type SpawnClaimEvent,
+  type SpawnPromotionCommitted,
   type SubscribeEvent,
   type TargetScope,
   type AdapterStatus,
@@ -61,6 +68,8 @@ export interface SessionIdentity {
 
 export interface SessionView {
   identity: SessionIdentity;
+  /** Stable managed-spawn identity needed to construct an exact continuation. */
+  logicalTargetId?: string;
   label: { project?: string; cwd?: string; name?: string };
   model?: string;
   connectivity: SessionConnectivityState;
@@ -327,6 +336,12 @@ export function fold(model: PresentationModel, event: SubscribeEvent): Presentat
     case StoredEventKind.SECURITY_LOCKDOWN:
       foldSecurityLockdown(next, fromBinary(SecurityLockdownEventSchema, payload.payload), lsn);
       break;
+    case StoredEventKind.SPAWN_CLAIM:
+      foldSpawnClaim(next, fromBinary(SpawnClaimEventSchema, payload.payload), lsn);
+      break;
+    case StoredEventKind.SPAWN_PROMOTION_COMMITTED:
+      foldSpawnPromotion(next, fromBinary(SpawnPromotionCommittedSchema, payload.payload), lsn);
+      break;
     case StoredEventKind.GRANT:
     case StoredEventKind.DESCENDANT_GRANT:
     case StoredEventKind.REVOCATION:
@@ -435,7 +450,20 @@ export function replaceFromSnapshots(
     const coveredByBaseline =
       (event.payload.kind === StoredEventKind.SESSION_STATE && lsn <= sessionLsn)
       || (event.payload.kind === StoredEventKind.RESOURCE_STATE && lsn <= resourceLsn);
-    if (coveredByBaseline) {
+    const coveredPromotion =
+      event.payload.kind === StoredEventKind.SPAWN_PROMOTION_COMMITTED && lsn <= sessionLsn;
+    if (coveredPromotion) {
+      // The session snapshot already contains later state/metadata for this
+      // runtime. Fold lifecycle and managed identity only; replaying the
+      // embedded promotion report must not roll the snapshot backward.
+      foldSpawnPromotion(
+        model,
+        fromBinary(SpawnPromotionCommittedSchema, event.payload.payload),
+        lsn,
+        false,
+      );
+      model = { ...model, cursor: lsn };
+    } else if (coveredByBaseline) {
       model = { ...model, cursor: lsn };
     } else {
       model = fold(model, event);
@@ -643,7 +671,7 @@ export function rendersLive(session: SessionView): boolean {
 function foldOperation(model: PresentationModel, operation: Operation, lsn: bigint): void {
   const id = required(operation.commandId?.value, "operation command id");
   if (!model.commands.has(id)) {
-    const target = operationTargetFromScope(operation.targetScope);
+    const target = operationTargetFromOperation(operation);
     model.commands.set(id, {
       id,
       state: OperationState.ACCEPTED,
@@ -678,6 +706,149 @@ function foldOperation(model: PresentationModel, operation: Operation, lsn: bigi
       lsn,
     },
   });
+}
+
+function foldSpawnClaim(model: PresentationModel, event: SpawnClaimEvent, lsn: bigint): void {
+  switch (event.mutation.case) {
+    case "accepted": {
+      const operation = event.mutation.value.acceptedOperation?.operation;
+      if (!operation) throw new Error("accepted spawn claim is missing its Operation");
+      foldOperation(model, operation, lsn);
+      return;
+    }
+    case "dispositionChanged": {
+      const change = event.mutation.value;
+      const commandId = required(change.claimOperationId?.value, "spawn claim command id");
+      const command = model.commands.get(commandId);
+      if (!command) return;
+      if (change.toDisposition === SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION) {
+        model.commands.set(commandId, {
+          ...command,
+          // Claim poison is retry-risk evidence, not a new CommandState.
+          failureCode: FailureCode.EXECUTION_OUTCOME_UNKNOWN,
+        });
+      }
+      return;
+    }
+    case undefined:
+      throw new Error("spawn claim event is missing mutation");
+  }
+}
+
+function foldSpawnPromotion(
+  model: PresentationModel,
+  promotion: SpawnPromotionCommitted,
+  lsn: bigint,
+  publishSession = true,
+): void {
+  const accepted = promotion.acceptedClaim;
+  const operation = accepted?.acceptedOperation?.operation;
+  const claim = accepted?.claim;
+  const staged = promotion.stagedSuccessor?.staged;
+  const report = staged?.report;
+  const promoted = promotion.promotedRuntime;
+  if (!operation || !claim || !report || !promoted?.externalRuntime) {
+    throw new Error("spawn promotion is missing accepted, staged, or promoted evidence");
+  }
+  const commandId = required(operation.commandId?.value, "promoted spawn command id");
+  if (!model.commands.has(commandId)) foldOperation(model, operation, lsn);
+  const currentCommand = model.commands.get(commandId)!;
+  if (!isTerminalCommand(currentCommand.state)) {
+    model.commands.set(commandId, {
+      ...currentCommand,
+      state: OperationState.COMPLETED,
+      lsn,
+      failureCode: undefined,
+      pendingControlRequest: undefined,
+      history: [
+        ...currentCommand.history,
+        { state: OperationState.COMPLETED, lsn },
+      ],
+    });
+  }
+
+  const logicalTargetId = required(promoted.logicalTargetId?.value, "promoted logical target id");
+  if (claim.logicalTargetId?.value !== logicalTargetId
+      || staged.classifiedTarget?.logicalTargetId?.value !== logicalTargetId) {
+    throw new Error("spawn promotion logical target evidence disagrees");
+  }
+  const candidate = sessionFromPromotedReport(report, logicalTargetId, lsn, model.lockdown.active);
+  if (candidate.identity.adapterId !== promoted.externalRuntime.adapterId?.value
+      || candidate.identity.deploymentScope !== promoted.externalRuntime.deploymentScope
+      || candidate.identity.runtimeSessionId !== promoted.externalRuntime.runtimeSessionId?.value
+      || candidate.identity.generation !== promoted.externalRuntime.generation?.value) {
+    throw new Error("spawn promotion report and promoted runtime disagree");
+  }
+  const candidateKey = sessionKey(candidate.identity);
+  if (publishSession) {
+    if (claim.expectedPrior) {
+      const priorIdentity = identityFromRuntimeRef(claim.expectedPrior);
+      const oldKey = sessionKey(priorIdentity);
+      const old = model.sessions.get(oldKey);
+      if (old) {
+        model.sessions.set(oldKey, {
+          ...old,
+          connectivity: SessionConnectivityState.STALE,
+          activity: SessionActivityState.UNKNOWN,
+          activityDetail: undefined,
+          activityDetailProvenance: undefined,
+          tombstoned: true,
+          needsYou: false,
+          lastLsn: lsn,
+        });
+      }
+    }
+    model.sessions.set(candidateKey, candidate);
+  } else {
+    const snapshotted = model.sessions.get(candidateKey);
+    if (snapshotted) {
+      model.sessions.set(candidateKey, { ...snapshotted, logicalTargetId });
+    }
+  }
+  const completed = model.commands.get(commandId)!;
+  if (!completed.target) {
+    model.commands.set(commandId, {
+      ...completed,
+      target: { kind: "runtime-session", identity: candidate.identity },
+    });
+  }
+}
+
+function sessionFromPromotedReport(
+  report: SessionReport,
+  logicalTargetId: string,
+  lsn: bigint,
+  lockdownActive: boolean,
+): SessionView {
+  const identity = identityFromParts(report);
+  return {
+    identity,
+    logicalTargetId,
+    label: labels(report),
+    model: report.model || undefined,
+    connectivity: lockdownActive
+      ? SessionConnectivityState.STALE
+      : normalizeConnectivity(report.connectivity),
+    activity: lockdownActive
+      ? SessionActivityState.UNKNOWN
+      : normalizeActivity(report.activity),
+    needsYou: false,
+    lastLsn: lsn,
+    tombstoned: false,
+    reconciled: true,
+    lockdownActive,
+  };
+}
+
+function identityFromRuntimeRef(runtime: NonNullable<SpawnPromotionCommitted["promotedRuntime"]>): SessionIdentity {
+  const external = runtime.externalRuntime;
+  if (!external) throw new Error("runtime generation reference is missing external runtime");
+  return {
+    adapterId: required(external.adapterId?.value, "runtime adapter id"),
+    deploymentScope: required(external.deploymentScope, "runtime deployment scope"),
+    runtimeSessionId: required(external.runtimeSessionId?.value, "runtime session id"),
+    generation: requiredBigint(external.generation?.value, "runtime generation"),
+  };
 }
 
 function foldCommandTransition(
@@ -1307,6 +1478,23 @@ function sessionFromSnapshot(session: Session, snapshotLsn: bigint): SessionView
     reconciled: true,
     lockdownActive: false,
   };
+}
+
+function operationTargetFromOperation(operation: Operation): OperationTargetView | undefined {
+  const direct = operationTargetFromScope(operation.targetScope);
+  if (direct || operation.kind !== OperationKind.SPAWN) return direct;
+  const payload = operation.payload;
+  if (!payload
+      || payload.contentType !== PayloadContentType.PROTOBUF
+      || payload.schemaRef !== "patchbay.SpawnRequest") return undefined;
+  try {
+    const request = fromBinary(SpawnRequestSchema, payload.payload);
+    return request.intent.case === "continuation" && request.intent.value.prior
+      ? { kind: "runtime-session", identity: identityFromRuntimeRef(request.intent.value.prior) }
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function operationTargetFromScope(scope: TargetScope | undefined): OperationTargetView | undefined {

@@ -16,9 +16,19 @@ import {
   TargetScopeKind,
   TargetScopeSchema,
   TypedCorrelationSchema,
+  ExternalRuntimeRefSchema,
+  GenerationSchema,
+  LogicalTargetIdSchema,
+  RuntimeGenerationRefSchema,
+  RuntimeSessionIdSchema,
   type AuthorityDomainId,
   type Operation,
 } from "@patchbay/contracts";
+import {
+  continuationSpawnPayload,
+  freshSpawnPayload,
+  spawnAdapterTarget,
+} from "@patchbay/operator-domain";
 
 import {
   lockdownViewFromState,
@@ -303,6 +313,12 @@ function composeCockpit(
       void queryAdapterStatus(session, reason);
     },
     actions: {
+      spawn(adapterId) {
+        return submit(buildFreshSpawnOperation(authorityDomainId, adapterId, nextIds()));
+      },
+      restart(session) {
+        return submit(buildRestartOperation(authorityDomainId, session, nextIds()));
+      },
       send(session, text) {
         return submit(buildInstructOperation(authorityDomainId, session, text, nextIds()));
       },
@@ -378,6 +394,50 @@ function composeCockpit(
       shell.destroy();
     },
   };
+}
+
+export function buildFreshSpawnOperation(
+  authorityDomainId: AuthorityDomainId,
+  adapterId: string,
+  ids: { commandId: string; idempotencyKey: string },
+): Operation {
+  return create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: ids.commandId }),
+    authorityDomainId,
+    sender: create(ActorEndpointRefSchema, {}),
+    kind: OperationKind.SPAWN,
+    targetScope: spawnAdapterTarget(adapterId),
+    idempotencyKey: ids.idempotencyKey,
+    payload: freshSpawnPayload({ shape: "session" }),
+  });
+}
+
+export function buildRestartOperation(
+  authorityDomainId: AuthorityDomainId,
+  session: SessionView,
+  ids: { commandId: string; idempotencyKey: string },
+): Operation {
+  if (!session.logicalTargetId) {
+    throw new Error("managed logical target identity is unavailable; reconcile before restart");
+  }
+  const exactPrior = create(RuntimeGenerationRefSchema, {
+    logicalTargetId: create(LogicalTargetIdSchema, { value: session.logicalTargetId }),
+    externalRuntime: create(ExternalRuntimeRefSchema, {
+      adapterId: { value: session.identity.adapterId },
+      deploymentScope: session.identity.deploymentScope,
+      runtimeSessionId: create(RuntimeSessionIdSchema, { value: session.identity.runtimeSessionId }),
+      generation: create(GenerationSchema, { value: session.identity.generation }),
+    }),
+  });
+  return create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: ids.commandId }),
+    authorityDomainId,
+    sender: create(ActorEndpointRefSchema, {}),
+    kind: OperationKind.SPAWN,
+    targetScope: spawnAdapterTarget(session.identity.adapterId),
+    idempotencyKey: ids.idempotencyKey,
+    payload: continuationSpawnPayload(exactPrior, { shape: "session" }),
+  });
 }
 
 export function buildInstructOperation(
