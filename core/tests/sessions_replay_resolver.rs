@@ -9,7 +9,7 @@
 //! resolution boundary.
 
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, Generation, OperationKind, RuntimeSessionId,
+    AdapterId, AuthorityDomainId, Generation, Operation, OperationKind, RuntimeSessionId,
     SessionActivityState, SessionConnectivityState, SessionReportSourceCursor, TargetScope,
     TargetScopeKind,
 };
@@ -82,6 +82,15 @@ fn target_scope(gen: Option<u64>) -> TargetScope {
     }
 }
 
+fn target_operation(scope: TargetScope) -> Operation {
+    Operation {
+        authority_domain_id: Some(domain()),
+        kind: OperationKind::Instruct as i32,
+        target_scope: Some(scope),
+        ..Operation::default()
+    }
+}
+
 /// Rebuild the registry from the durable log after any prior writes.
 async fn rebuild(storage: &RusqliteStorage) -> patchbay_core::session::SessionRegistry {
     rebuild_from_log(storage, &domain()).await.unwrap()
@@ -139,8 +148,8 @@ async fn resolve_binds_a_live_session() {
     let binding = TargetResolver::resolve(
         &registry,
         &domain(),
-        OperationKind::Instruct,
-        &target_scope(Some(1)),
+        &target_operation(target_scope(Some(1))),
+        None,
     )
     .await
     .unwrap();
@@ -187,8 +196,8 @@ async fn lookup_and_resolution_reject_a_different_authority_domain() {
     assert!(TargetResolver::resolve(
         &registry,
         &other_domain,
-        OperationKind::Instruct,
-        &target_scope(Some(1)),
+        &target_operation(target_scope(Some(1))),
+        None,
     )
     .await
     .is_err());
@@ -211,8 +220,8 @@ async fn resolve_binds_the_live_generation_when_unspecified() {
     let binding = TargetResolver::resolve(
         &registry,
         &domain(),
-        OperationKind::Instruct,
-        &target_scope(None),
+        &target_operation(target_scope(None)),
+        None,
     )
     .await
     .unwrap();
@@ -250,8 +259,8 @@ async fn resolve_rejects_a_tombstoned_generation() {
     let result = TargetResolver::resolve(
         &registry,
         &domain(),
-        OperationKind::Instruct,
-        &target_scope(Some(1)),
+        &target_operation(target_scope(Some(1))),
+        None,
     )
     .await;
     assert!(result.is_err(), "tombstoned generation must not resolve");
@@ -274,8 +283,8 @@ async fn resolve_rejects_a_generation_that_is_neither_live_nor_tombstoned() {
     let result = TargetResolver::resolve(
         &registry,
         &domain(),
-        OperationKind::Instruct,
-        &target_scope(Some(99)),
+        &target_operation(target_scope(Some(99))),
+        None,
     )
     .await;
     assert!(result.is_err(), "unknown generation must not resolve");
@@ -295,7 +304,7 @@ async fn resolve_rejects_an_unknown_session() {
         ..TargetScope::default()
     };
     let result =
-        TargetResolver::resolve(&registry, &domain(), OperationKind::Instruct, &scope).await;
+        TargetResolver::resolve(&registry, &domain(), &target_operation(scope), None).await;
     assert!(result.is_err(), "unknown session must not resolve");
 }
 
@@ -317,8 +326,8 @@ async fn resolve_allows_an_offline_session() {
     let binding = TargetResolver::resolve(
         &registry,
         &domain(),
-        OperationKind::Instruct,
-        &target_scope(Some(1)),
+        &target_operation(target_scope(Some(1))),
+        None,
     )
     .await;
     assert!(binding.is_ok(), "offline session must still resolve");
@@ -341,8 +350,8 @@ async fn resolve_allows_a_failed_session() {
     let binding = TargetResolver::resolve(
         &registry,
         &domain(),
-        OperationKind::Instruct,
-        &target_scope(Some(1)),
+        &target_operation(target_scope(Some(1))),
+        None,
     )
     .await;
     assert!(binding.is_ok(), "failed session must still resolve");

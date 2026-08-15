@@ -5,18 +5,19 @@ use std::sync::{
 
 use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, spawn_claim_event,
-    typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability,
-    AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity,
-    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
-    AuditEventKind, AuthorityDomainId, CommandId, CommandTransition, EndpointId, FailureCode,
-    Generation, IdempotencyKey, LogicalTargetCreated, LogicalTargetId, Lsn, Observation,
-    ObservationKind, Operation, OperationKind, PayloadContentType, PayloadEnvelope, ReceiveRequest,
-    ResourceCapability, ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind,
-    ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshotReport,
-    ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport, RuntimeSessionId,
-    SchemaDescriptor, SecurityLockdownEntered, SessionActivityState, SessionConnectivityState,
-    SessionReportSourceCursor, SpawnClaimAccepted, SpawnClaimEvent, SpawnGenerationClaim,
-    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
+    spawn_request, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
+    AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport,
+    AdapterDiagnosticSeverity, AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory,
+    AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition, EndpointId,
+    FailureCode, FreshSpawn, Generation, IdempotencyKey, LogicalTargetCreated, LogicalTargetId,
+    Lsn, Observation, ObservationKind, Operation, OperationKind, PayloadContentType,
+    PayloadEnvelope, ReceiveRequest, ResourceCapability, ResourceFreshnessState, ResourceId,
+    ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
+    ResourceReportMutation, ResourceSnapshotReport, ResourceStateUnknown, ResourceStateUpsert,
+    ResourceViewReport, RuntimeSessionId, SchemaDescriptor, SecurityLockdownEntered,
+    SessionActivityState, SessionConnectivityState, SessionReportSourceCursor, SpawnClaimAccepted,
+    SpawnClaimEvent, SpawnGenerationClaim, SpawnRequest, SpawnTargetSpec, StoredEventKind,
+    StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
@@ -842,19 +843,42 @@ async fn generic_registration_schema_ingress_cannot_register_an_embedded_adapter
         adapter_id: Some(adapter_id()),
         ..TargetScope::default()
     };
-    assert_eq!(
-        TargetResolver::resolve(&targets, &domain, OperationKind::Spawn, &adapter_a_scope).await,
-        Ok(TargetBinding::Adapter {
-            adapter_id: adapter_id(),
-        })
-    );
+    let fresh = SpawnRequest {
+        intent: Some(spawn_request::Intent::Fresh(FreshSpawn {})),
+        target_spec: Some(SpawnTargetSpec {
+            shape: "session".to_owned(),
+            ..SpawnTargetSpec::default()
+        }),
+    };
+    let operation = Operation {
+        command_id: Some(CommandId {
+            value: "spawn-a".to_owned(),
+        }),
+        authority_domain_id: Some(domain.clone()),
+        kind: OperationKind::Spawn as i32,
+        target_scope: Some(adapter_a_scope),
+        ..Operation::default()
+    };
+    assert!(matches!(
+        TargetResolver::resolve(&targets, &domain, &operation, Some(&fresh)).await,
+        Ok(TargetBinding::SpawnAdapter {
+            adapter_id: resolved_adapter,
+            claim,
+            continuation_authority: None,
+        }) if resolved_adapter == adapter_id()
+                && claim.claimed_generation == Some(Generation { value: 1 })
+    ));
     let adapter_b_scope = TargetScope {
         kind: TargetScopeKind::Adapter as i32,
         adapter_id: Some(adapter_b),
         ..TargetScope::default()
     };
+    let operation = Operation {
+        target_scope: Some(adapter_b_scope),
+        ..operation
+    };
     assert!(
-        TargetResolver::resolve(&targets, &domain, OperationKind::Spawn, &adapter_b_scope)
+        TargetResolver::resolve(&targets, &domain, &operation, Some(&fresh))
             .await
             .is_err(),
         "embedded adapter B is not spawn-resolvable"

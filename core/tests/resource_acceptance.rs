@@ -355,6 +355,7 @@ impl GrantCheck for CountingGrant<'_> {
             grant_id: Some(GrantId {
                 value: "unexpected".to_owned(),
             }),
+            continuation_authority: None,
         })
     }
 }
@@ -364,8 +365,8 @@ impl TargetResolver for CountingResolver<'_> {
     async fn resolve(
         &self,
         _authority_domain_id: &AuthorityDomainId,
-        _operation_kind: OperationKind,
-        _target_scope: &TargetScope,
+        _operation: &Operation,
+        _spawn_request: Option<&patchbay_contracts::patchbay::SpawnRequest>,
     ) -> Result<TargetBinding, TargetNotFound> {
         self.0.fetch_add(1, Ordering::Relaxed);
         Ok(TargetBinding::AuthorityDomain(domain()))

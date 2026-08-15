@@ -1,10 +1,12 @@
 use patchbay_contracts::patchbay::{
-    ActorId, AdapterId, AuthorityDomainId, DeviceId, EndpointId, EventId, Generation, Grant,
-    GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey, Lsn, OperationKind,
-    Revocation, StoredEventPayload, TargetScope, TargetScopeKind,
+    ActorId, AdapterId, AuthorityDomainId, ContinuationAuthorityProvenance, DeviceId, EndpointId,
+    EventId, ExternalRuntimeRef, Generation, Grant, GrantId, GrantProvenance,
+    GrantRevocationPolicy, IdempotencyKey, LogicalTargetId, Lsn, OperationKind, Revocation,
+    RuntimeGenerationRef, RuntimeSessionId, SpawnGenerationClaim, StoredEventPayload, TargetScope,
+    TargetScopeKind,
 };
 use patchbay_core::{
-    acceptance::{Authorized, GrantCheck, GrantDenied},
+    acceptance::{Authorized, GrantCheck, GrantDenied, ResolvedGrantCheck, TargetBinding},
     authority::{
         grant_matches_request, ingest_grant, ingest_revocation, rebuild_from_log, AuthorityError,
         AuthorityRegistry, GrantLiveness, IssuerContext, IssuerRef,
@@ -282,6 +284,7 @@ async fn overlapping_grants_select_the_same_lowest_id_before_and_after_replay() 
     let evaluated_at = timestamp(100);
     let expected = Ok(Authorized {
         grant_id: Some(grant_id("grant-a-domain")),
+        continuation_authority: None,
     });
     assert_eq!(
         grant_decision_at(&live, &issuer, &request_target, &evaluated_at).await,
@@ -333,6 +336,7 @@ async fn lower_id_expired_and_revoked_grants_cannot_defeat_a_live_grant_after_re
     let request_target = adapter_target();
     let expected = Ok(Authorized {
         grant_id: Some(grant_id("grant-z-live")),
+        continuation_authority: None,
     });
     assert_eq!(
         grant_decision_at(&live, &issuer, &request_target, &evaluated_at).await,
@@ -425,6 +429,7 @@ async fn grant_id_collation_uses_exact_utf8_bytes_without_normalization() {
     let request_target = adapter_target();
     let expected = Ok(Authorized {
         grant_id: Some(grant_id(decomposed)),
+        continuation_authority: None,
     });
     assert_eq!(
         grant_decision_at(&live, &issuer, &request_target, &evaluated_at).await,
@@ -438,6 +443,257 @@ async fn grant_id_collation_uses_exact_utf8_bytes_without_normalization() {
     assert_eq!(
         grant_decision_at(&rebuilt, &issuer, &request_target, &evaluated_at).await,
         expected,
+    );
+}
+
+fn exact_prior(generation: u64) -> RuntimeGenerationRef {
+    RuntimeGenerationRef {
+        logical_target_id: Some(LogicalTargetId {
+            value: "logical-a".to_owned(),
+        }),
+        external_runtime: Some(ExternalRuntimeRef {
+            adapter_id: Some(AdapterId {
+                value: "pi".to_owned(),
+            }),
+            deployment_scope: "local".to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: "session-a".to_owned(),
+            }),
+            generation: Some(Generation { value: generation }),
+        }),
+    }
+}
+
+fn continuation_binding(generation: u64) -> TargetBinding {
+    let prior = exact_prior(generation);
+    TargetBinding::SpawnAdapter {
+        adapter_id: AdapterId {
+            value: "pi".to_owned(),
+        },
+        claim: Box::new(SpawnGenerationClaim {
+            authority_domain_id: Some(domain("authority-main")),
+            claim_operation_id: Some(patchbay_contracts::patchbay::CommandId {
+                value: "spawn-a".to_owned(),
+            }),
+            logical_target_id: prior.logical_target_id.clone(),
+            expected_prior: Some(prior),
+            claimed_generation: Some(Generation {
+                value: generation + 1,
+            }),
+        }),
+        continuation_authority: None,
+    }
+}
+
+fn replacement_grant(id: &str, generation: u64) -> Grant {
+    Grant {
+        grant_id: Some(grant_id(id)),
+        authority_domain_id: Some(domain("authority-main")),
+        subject_actor_id: Some(ActorId {
+            value: "operator".to_owned(),
+        }),
+        target_scope: Some(TargetScope {
+            kind: TargetScopeKind::RuntimeSession as i32,
+            adapter_id: Some(AdapterId {
+                value: "pi".to_owned(),
+            }),
+            deployment_scope: "local".to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: "session-a".to_owned(),
+            }),
+            session_generation: Some(Generation { value: generation }),
+            ..TargetScope::default()
+        }),
+        allowed_operation_kinds: vec![OperationKind::SessionManagement as i32],
+        provenance: Some(GrantProvenance {
+            reason: "exact replacement fixture".to_owned(),
+            ..GrantProvenance::default()
+        }),
+        revocation_policy: GrantRevocationPolicy::Continue as i32,
+        ..Grant::default()
+    }
+}
+
+async fn resolved_continuation_decision(
+    registry: &AuthorityRegistry,
+    evaluated_at: &prost_types::Timestamp,
+) -> Result<Authorized, GrantDenied> {
+    let issuer = VerifiedIssuer::operator();
+    let scope = adapter_target();
+    let initial = registry
+        .check_at(
+            &domain("authority-main"),
+            &issuer,
+            OperationKind::Spawn,
+            &scope,
+            evaluated_at,
+        )
+        .await?;
+    registry
+        .check_resolved_at(
+            &domain("authority-main"),
+            &issuer,
+            ResolvedGrantCheck {
+                operation_kind: OperationKind::Spawn,
+                target_scope: &scope,
+                target_binding: &continuation_binding(7),
+                authorization: initial,
+                evaluated_at,
+            },
+        )
+        .await
+}
+
+#[tokio::test]
+async fn continuation_compound_authority_requires_exact_live_replacement_and_selects_canonically() {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut registry = AuthorityRegistry::new();
+    let mut spawn = grant("spawn-grant", "operator");
+    spawn.target_scope = Some(adapter_target());
+    ingest_grant(&storage, &mut registry, &domain("authority-main"), spawn)
+        .await
+        .unwrap();
+
+    // Mutation witness: deleting the replacement-Grant half makes this accept.
+    assert!(
+        resolved_continuation_decision(&registry, &timestamp(100))
+            .await
+            .is_err(),
+        "the broad spawn Grant alone is insufficient"
+    );
+
+    let replacement_only_storage = RusqliteStorage::open_in_memory().unwrap();
+    let mut replacement_only = AuthorityRegistry::new();
+    ingest_grant(
+        &replacement_only_storage,
+        &mut replacement_only,
+        &domain("authority-main"),
+        replacement_grant("replacement-only", 7),
+    )
+    .await
+    .unwrap();
+    // Mutation witness: deleting the adapter-scoped spawn-Grant half makes
+    // replacement authority alone sufficient.
+    let replacement_only_scope = adapter_target();
+    let replacement_only_binding = continuation_binding(7);
+    assert!(
+        replacement_only
+            .check_resolved_at(
+                &domain("authority-main"),
+                &VerifiedIssuer::operator(),
+                ResolvedGrantCheck {
+                    operation_kind: OperationKind::Spawn,
+                    target_scope: &replacement_only_scope,
+                    target_binding: &replacement_only_binding,
+                    authorization: Authorized {
+                        grant_id: Some(grant_id("missing-spawn-grant")),
+                        continuation_authority: None,
+                    },
+                    evaluated_at: &timestamp(100),
+                },
+            )
+            .await
+            .is_err(),
+        "replacement Grant alone is insufficient even when a caller fabricates spawn provenance"
+    );
+
+    // Reverse insertion pressure proves exact Grant-id byte ordering, and the
+    // asserted provenance makes silent substitution of the other live Grant fail.
+    ingest_grant(
+        &storage,
+        &mut registry,
+        &domain("authority-main"),
+        replacement_grant("replacement-z", 7),
+    )
+    .await
+    .unwrap();
+    ingest_grant(
+        &storage,
+        &mut registry,
+        &domain("authority-main"),
+        replacement_grant("replacement-a", 7),
+    )
+    .await
+    .unwrap();
+    let decision = resolved_continuation_decision(&registry, &timestamp(100))
+        .await
+        .unwrap();
+    assert_eq!(decision.grant_id, Some(grant_id("spawn-grant")));
+    assert_eq!(
+        decision.continuation_authority,
+        Some(ContinuationAuthorityProvenance {
+            exact_prior: Some(exact_prior(7)),
+            replacement_grant_id: Some(grant_id("replacement-a")),
+            replacement_authority_kind: OperationKind::SessionManagement as i32,
+        })
+    );
+    let rebuilt = rebuild_from_log(&storage, &domain("authority-main"))
+        .await
+        .expect("compound authority prefix replays");
+    assert_eq!(
+        resolved_continuation_decision(&rebuilt, &timestamp(100))
+            .await
+            .expect("replay selects the same compound authority"),
+        decision
+    );
+}
+
+#[tokio::test]
+async fn continuation_rejects_expired_revoked_wrong_subject_endpoint_and_generation_replacement() {
+    async fn decision_with(replacement: Grant, revoke: bool) -> Result<Authorized, GrantDenied> {
+        let storage = RusqliteStorage::open_in_memory().unwrap();
+        let mut registry = AuthorityRegistry::new();
+        let mut spawn = grant("spawn-grant", "operator");
+        spawn.target_scope = Some(adapter_target());
+        ingest_grant(&storage, &mut registry, &domain("authority-main"), spawn)
+            .await
+            .unwrap();
+        let replacement_id = replacement.grant_id.clone().unwrap();
+        ingest_grant(
+            &storage,
+            &mut registry,
+            &domain("authority-main"),
+            replacement,
+        )
+        .await
+        .unwrap();
+        if revoke {
+            ingest_revocation(
+                &storage,
+                &mut registry,
+                &domain("authority-main"),
+                revocation_at(&replacement_id.value, 50),
+            )
+            .await
+            .unwrap();
+        }
+        resolved_continuation_decision(&registry, &timestamp(100)).await
+    }
+
+    let mut expired = replacement_grant("replacement-expired", 7);
+    expired.expires_at = Some(timestamp(100));
+    assert!(decision_with(expired, false).await.is_err());
+    assert!(
+        decision_with(replacement_grant("replacement-revoked", 7), true)
+            .await
+            .is_err()
+    );
+
+    let mut wrong_subject = replacement_grant("replacement-subject", 7);
+    wrong_subject.subject_actor_id = Some(ActorId {
+        value: "another-actor".to_owned(),
+    });
+    assert!(decision_with(wrong_subject, false).await.is_err());
+
+    let mut wrong_endpoint = replacement_grant("replacement-endpoint", 7);
+    wrong_endpoint.subject_endpoint_id = Some(EndpointId {
+        value: "another-endpoint".to_owned(),
+    });
+    assert!(decision_with(wrong_endpoint, false).await.is_err());
+    assert!(
+        decision_with(replacement_grant("replacement-generation", 8), false)
+            .await
+            .is_err()
     );
 }
 

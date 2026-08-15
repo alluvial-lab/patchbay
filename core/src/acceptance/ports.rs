@@ -5,8 +5,9 @@
 //! from depending on either sibling feature's implementation.
 
 use patchbay_contracts::patchbay::{
-    ActorId, AdapterId, AuthorityDomainId, ElicitationId, EventId, Generation, GrantId, Operation,
-    OperationKind, ResponseContract, RuntimeSessionId, TargetScope,
+    ActorId, AdapterId, AuthorityDomainId, ContinuationAuthorityProvenance, ElicitationId, EventId,
+    Generation, GrantId, Operation, OperationKind, ResponseContract, RuntimeSessionId,
+    SpawnGenerationClaim, SpawnRequest, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -87,6 +88,20 @@ pub trait GrantCheck: Send + Sync {
                 .await
         }
     }
+
+    /// Complete an operation-aware authority decision after target binding.
+    ///
+    /// Ordinary Operations and fresh spawn retain the selected Grant unchanged.
+    /// Continuation-aware implementations additionally select the exact-prior
+    /// replacement Grant at the same sampled decision time.
+    fn check_resolved_at(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _issuer: &dyn IssuerContext,
+        request: ResolvedGrantCheck<'_>,
+    ) -> impl std::future::Future<Output = Result<Authorized, GrantDenied>> + Send {
+        std::future::ready(Ok(request.authorization))
+    }
 }
 
 /// The operation-aware registry seam used to validate and bind a target.
@@ -98,8 +113,8 @@ pub trait TargetResolver: Send + Sync {
     fn resolve(
         &self,
         authority_domain_id: &AuthorityDomainId,
-        operation_kind: OperationKind,
-        target_scope: &TargetScope,
+        operation: &Operation,
+        spawn_request: Option<&SpawnRequest>,
     ) -> impl std::future::Future<Output = Result<TargetBinding, TargetNotFound>> + Send;
 }
 
@@ -134,8 +149,19 @@ pub struct ActiveElicitation {
 /// Evidence that the authority adapter found a matching live grant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Authorized {
-    /// The durable grant that authorized the operation, when retained.
+    /// The durable Grant that authorized the requested target.
     pub grant_id: Option<GrantId>,
+    /// Exact-prior replacement authority selected only for continuation.
+    pub continuation_authority: Option<ContinuationAuthorityProvenance>,
+}
+
+/// Operation-aware inputs for the second, resolved-target authority decision.
+pub struct ResolvedGrantCheck<'a> {
+    pub operation_kind: OperationKind,
+    pub target_scope: &'a TargetScope,
+    pub target_binding: &'a TargetBinding,
+    pub authorization: Authorized,
+    pub evaluated_at: &'a Timestamp,
 }
 
 /// A deny-by-default result from the authority adapter.
@@ -152,8 +178,11 @@ pub enum GrantDenied {
 /// Concrete target identity returned by the target-kind-polymorphic resolver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TargetBinding {
-    Adapter {
+    SpawnAdapter {
         adapter_id: AdapterId,
+        claim: Box<SpawnGenerationClaim>,
+        /// Filled by the compound authority decision after exact target lookup.
+        continuation_authority: Option<Box<ContinuationAuthorityProvenance>>,
     },
     RuntimeSession {
         adapter_id: AdapterId,

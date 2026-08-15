@@ -29,8 +29,8 @@ pub use pipeline::{
 };
 pub use ports::{
     ActiveElicitation, AllowOperations, Authorized, Clock, ElicitationContractLookup, GrantCheck,
-    GrantDenied, OperationPosture, OperationPostureDenied, SystemClock, TargetBinding,
-    TargetNotFound, TargetResolver,
+    GrantDenied, OperationPosture, OperationPostureDenied, ResolvedGrantCheck, SystemClock,
+    TargetBinding, TargetNotFound, TargetResolver,
 };
 pub use replay::rebuild_from_log;
 pub use spawn::{

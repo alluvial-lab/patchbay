@@ -276,10 +276,11 @@ where
             .issuer_from_request(&request, authority_domain_id.clone())
             .await?;
 
-        // Reconcile and submit under one gate. Pre-submit catch-up repairs the
-        // projection after a prior append whose handler did not complete; the
-        // post-append catch-up makes a newly durable command visible before the
-        // next submit acquires the gate.
+        // Reconcile and submit under one gate. Pre-submit catch-up brings the
+        // adapter target, logical-target/claim, and authority projections to one
+        // durable prefix before operation-aware spawn resolution samples time
+        // and selects either one or both Grants. Post-append catch-up makes a
+        // newly durable command visible before the next decision acquires the gate.
         let _decision_guard = self.decision_gate.acquire().await;
         self.state
             .catch_up(&self.storage, &authority_domain_id)

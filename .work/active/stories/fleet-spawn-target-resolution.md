@@ -1,7 +1,7 @@
 ---
 id: fleet-spawn-target-resolution
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, security]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-cursor-authoritative-replacement-contract, research-handoff-spawn-runtime-evidence-promotion-contract]
@@ -50,13 +50,28 @@ For continuation, acceptance fails if the payload prior is not the exact current
 
 ## Acceptance evidence
 
-- [ ] Fresh spawn resolves with one adapter-spawn Grant and generation-1 claim.
-- [ ] Continuation resolves only with adapter-spawn + exact-prior session-management Grants for one verified subject/endpoint/domain.
-- [ ] Missing/revoked/expired/wrong-generation replacement Grant rejects before accepted append/delivery.
-- [ ] Runtime/resource/fleet/domain/malformed/mixed spawn targets reject before acceptance; unsupported adapter shape remains delivery-layer `unsupported_command`.
-- [ ] Restart replay preserves durable adapter routing eligibility without fabricating a live attachment.
-- [ ] Mutations accepting continuation on the broad spawn Grant alone or substituting another replacement Grant fail.
+- [x] Fresh spawn resolves with one adapter-spawn Grant and generation-1 claim.
+- [x] Continuation resolves only with adapter-spawn + exact-prior session-management Grants for one verified subject/endpoint/domain.
+- [x] Missing/revoked/expired/wrong-generation replacement Grant rejects before accepted append/delivery.
+- [x] Runtime/resource/fleet/domain/malformed/mixed spawn targets reject before acceptance; unsupported adapter shape remains delivery-layer `unsupported_command`.
+- [x] Restart replay preserves durable adapter routing eligibility without fabricating a live attachment.
+- [x] Mutations accepting continuation on the broad spawn Grant alone or substituting another replacement Grant fail.
 
 ## Ordering constraint
 
 Begins only after every contract leaf is available: the promotion-contract dependency brings the identity, continuation, claim, and crash-evidence leaves; the cursor leaf completes the parallel shared-contract layer.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol` for the operation-aware resolver and security-critical compound Grant decision. This pass stops at `review` for independent review.
+- `TargetResolver` now receives the complete validated Operation plus optional generated `SpawnRequest`. Spawn admits only one explicitly named attached adapter with declared spawn capability. Fresh spawn derives a deterministic logical-target id from the command id and generation 1; continuation accepts only the exact current logical-target runtime and derives checked `N+1`.
+- `ResolvedGrantCheck` carries the first Grant selection, resolved target/claim, and one sampled timestamp into the second authority decision. Production revalidates the adapter-spawn Grant at that timestamp, then selects the lowest exact UTF-8 Grant id among live exact-runtime `session-management` Grants for the verified domain/actor/optional endpoint. Both ids and exact prior remain resolver-produced authority carriage; sender-authored fields cannot substitute.
+- The acceptance pipeline's historical continuation guard was removed. Fresh spawn requires no continuation provenance; continuation requires complete `ContinuationAuthorityProvenance` before append. Target/claim/authority projections catch up under the existing `CoreDecisionGate`, and the locked resolver rejects invalid, conflicting, active, or poisoned claim candidates while allowing an exact retry. Atomic durable `SpawnClaimAccepted` construction remains the explicitly dependent Unit 2; no protobuf or generated artifact changed here.
+- Resolver coverage rejects stale and one-field-mutated prior identities, cross-adapter continuation, unattached adapters, and runtime/resource/fleet/domain/mixed scopes. Authority coverage rejects spawn-only and replacement-only decisions, expired/revoked/wrong-subject/wrong-endpoint/wrong-generation replacement Grants, and proves canonical selection survives replay.
+- Mutation probes: bypassing the replacement-Grant half failed `continuation_compound_authority_requires_exact_live_replacement_and_selects_canonically` at the spawn-only witness; trusting fabricated spawn provenance failed the same test at the replacement-only witness. Both mutants were reverted and the restored focused test passed.
+- Verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS**.
+- Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; 54 vectors, 17 promoted vectors, 22 implementation checks, and 38 mutation witnesses.
+- Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 23/23 tests.
+- Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 29/29 tests including the real core/adapter restart e2e.
+- Additional required gates — `PROPTEST_CASES=256 cargo test --workspace --features proptest`: **PASS**; `./formal/run-model-checks.sh`: **PASS**, 20/20; `cargo fmt --all --check` and `git diff --check`: **PASS**.
+- Adjacent issues parked: none.

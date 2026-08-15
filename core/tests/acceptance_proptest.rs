@@ -278,6 +278,7 @@ impl GrantCheck for AlwaysAuthorized {
             grant_id: Some(GrantId {
                 value: "test-grant".to_owned(),
             }),
+            continuation_authority: None,
         }))
     }
 }
@@ -288,8 +289,8 @@ impl TargetResolver for AlwaysResolved {
     fn resolve(
         &self,
         _authority_domain_id: &AuthorityDomainId,
-        _operation_kind: OperationKind,
-        _target_scope: &TargetScope,
+        _operation: &Operation,
+        _spawn_request: Option<&patchbay_contracts::patchbay::SpawnRequest>,
     ) -> impl std::future::Future<Output = Result<TargetBinding, TargetNotFound>> + Send {
         ready(Ok(TargetBinding::RuntimeSession {
             adapter_id: AdapterId {

@@ -1,9 +1,11 @@
 use patchbay_contracts::patchbay::{
-    resource_state_mutation, AdapterCapability, AdapterId, AdapterRegistration,
-    AdapterSnapshotSupport, AdapterTargetCategory, AuthorityDomainId, EndpointId, Generation,
-    OperationKind, PayloadContentType, PayloadEnvelope, ResourceId, ResourceKind,
-    ResourceStateEvent, ResourceStateMutation, ResourceStateUpsert, ResourceViewStateUpdate,
-    TargetScope, TargetScopeKind,
+    resource_state_mutation, spawn_request, AdapterCapability, AdapterId, AdapterRegistration,
+    AdapterSnapshotSupport, AdapterTargetCategory, AuthorityDomainId, CommandId, EndpointId,
+    ExternalRuntimeRef, FreshSpawn, Generation, LogicalTargetId, Operation, OperationKind,
+    PayloadContentType, PayloadEnvelope, ResourceId, ResourceKind, ResourceStateEvent,
+    ResourceStateMutation, ResourceStateUpsert, ResourceViewStateUpdate, RuntimeGenerationRef,
+    RuntimeSessionId, SpawnContinuation, SpawnRequest, SpawnTargetSpec, TargetScope,
+    TargetScopeKind,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
@@ -19,6 +21,28 @@ use prost_types::Timestamp;
 fn domain() -> AuthorityDomainId {
     AuthorityDomainId {
         value: "authority-main".to_owned(),
+    }
+}
+
+fn operation(kind: OperationKind, target_scope: TargetScope) -> Operation {
+    Operation {
+        command_id: Some(CommandId {
+            value: "command-a".to_owned(),
+        }),
+        authority_domain_id: Some(domain()),
+        kind: kind as i32,
+        target_scope: Some(target_scope),
+        ..Operation::default()
+    }
+}
+
+fn fresh_spawn() -> SpawnRequest {
+    SpawnRequest {
+        intent: Some(spawn_request::Intent::Fresh(FreshSpawn {})),
+        target_spec: Some(SpawnTargetSpec {
+            shape: "session".to_owned(),
+            ..SpawnTargetSpec::default()
+        }),
     }
 }
 
@@ -91,8 +115,8 @@ async fn registered_resource_resolves_by_the_exact_tuple() {
         TargetResolver::resolve(
             &targets,
             &domain(),
-            OperationKind::Query,
-            &registered.to_scope()
+            &operation(OperationKind::Query, registered.to_scope()),
+            None,
         )
         .await,
         Ok(TargetBinding::Resource(registered.clone()))
@@ -105,8 +129,8 @@ async fn registered_resource_resolves_by_the_exact_tuple() {
         assert!(TargetResolver::resolve(
             &targets,
             &domain(),
-            OperationKind::Query,
-            &unknown.to_scope()
+            &operation(OperationKind::Query, unknown.to_scope()),
+            None,
         )
         .await
         .is_err());
@@ -133,11 +157,14 @@ async fn malformed_legacy_and_nonordinary_resource_targets_fail_closed() {
         ..TargetScope::default()
     };
     for scope in [legacy, mixed, authority] {
-        assert!(
-            TargetResolver::resolve(&targets, &domain(), OperationKind::Query, &scope)
-                .await
-                .is_err()
-        );
+        assert!(TargetResolver::resolve(
+            &targets,
+            &domain(),
+            &operation(OperationKind::Query, scope),
+            None,
+        )
+        .await
+        .is_err());
     }
 }
 
@@ -168,7 +195,30 @@ async fn spawn_resolution_commits_one_attached_adapter_boundary_only() {
     )
     .await
     .unwrap();
-    let targets = TargetRegistry::with_adapters(
+    ingest_registration(
+        &storage,
+        &mut adapters,
+        AdapterRegistration {
+            adapter_id: Some(AdapterId {
+                value: "adapter-b".to_owned(),
+            }),
+            endpoint_id: Some(EndpointId {
+                value: "adapter-b-endpoint".to_owned(),
+            }),
+            authority_domain_id: Some(domain()),
+            adapter_generation: Some(Generation { value: 1 }),
+            capability: Some(AdapterCapability {
+                supported_operation_kinds: vec![OperationKind::Spawn as i32],
+                session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
+                target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+                ..AdapterCapability::default()
+            }),
+            ..AdapterRegistration::default()
+        },
+    )
+    .await
+    .unwrap();
+    let mut targets = TargetRegistry::with_adapters(
         SessionRegistry::new(domain()).unwrap(),
         registry(&[identity("adapter-a", "pool", "shared")]),
         adapters,
@@ -180,14 +230,170 @@ async fn spawn_resolution_commits_one_attached_adapter_boundary_only() {
         }),
         ..TargetScope::default()
     };
+    let fresh = fresh_spawn();
     assert_eq!(
-        TargetResolver::resolve(&targets, &domain(), OperationKind::Spawn, &adapter).await,
-        Ok(TargetBinding::Adapter {
+        TargetResolver::resolve(
+            &targets,
+            &domain(),
+            &operation(OperationKind::Spawn, adapter.clone()),
+            Some(&fresh),
+        )
+        .await,
+        Ok(TargetBinding::SpawnAdapter {
             adapter_id: AdapterId {
                 value: "adapter-a".to_owned(),
             },
+            claim: Box::new(patchbay_contracts::patchbay::SpawnGenerationClaim {
+                authority_domain_id: Some(domain()),
+                claim_operation_id: Some(CommandId {
+                    value: "command-a".to_owned(),
+                }),
+                logical_target_id: Some(patchbay_contracts::patchbay::LogicalTargetId {
+                    value: "command-a".to_owned(),
+                }),
+                expected_prior: None,
+                claimed_generation: Some(Generation { value: 1 }),
+            }),
+            continuation_authority: None,
         })
     );
+
+    let logical_target_id = LogicalTargetId {
+        value: "logical-a".to_owned(),
+    };
+    let prior_external = ExternalRuntimeRef {
+        adapter_id: Some(AdapterId {
+            value: "adapter-a".to_owned(),
+        }),
+        deployment_scope: "local".to_owned(),
+        runtime_session_id: Some(RuntimeSessionId {
+            value: "runtime-a".to_owned(),
+        }),
+        generation: Some(Generation { value: 7 }),
+    };
+    targets
+        .sessions_mut()
+        .logical_targets_mut()
+        .create(
+            logical_target_id.clone(),
+            AdapterId {
+                value: "adapter-a".to_owned(),
+            },
+            "local".to_owned(),
+        )
+        .unwrap();
+    targets
+        .sessions_mut()
+        .logical_targets_mut()
+        .assign_initial_current(&logical_target_id, prior_external.clone())
+        .unwrap();
+    let prior = RuntimeGenerationRef {
+        logical_target_id: Some(logical_target_id.clone()),
+        external_runtime: Some(prior_external),
+    };
+    let continuation = SpawnRequest {
+        intent: Some(spawn_request::Intent::Continuation(SpawnContinuation {
+            prior: Some(prior.clone()),
+        })),
+        target_spec: fresh.target_spec.clone(),
+    };
+    let continuation_binding = TargetResolver::resolve(
+        &targets,
+        &domain(),
+        &operation(OperationKind::Spawn, adapter.clone()),
+        Some(&continuation),
+    )
+    .await
+    .expect("the exact current generation resolves");
+    assert!(matches!(
+        continuation_binding,
+        TargetBinding::SpawnAdapter {
+            claim,
+            continuation_authority: None,
+            ..
+        } if claim.logical_target_id == Some(logical_target_id)
+            && claim.expected_prior == Some(prior.clone())
+            && claim.claimed_generation == Some(Generation { value: 8 })
+    ));
+    let mut stale_prior = prior.clone();
+    stale_prior.external_runtime.as_mut().unwrap().generation = Some(Generation { value: 6 });
+    let stale_continuation = SpawnRequest {
+        intent: Some(spawn_request::Intent::Continuation(SpawnContinuation {
+            prior: Some(stale_prior),
+        })),
+        target_spec: fresh.target_spec.clone(),
+    };
+    assert!(TargetResolver::resolve(
+        &targets,
+        &domain(),
+        &operation(OperationKind::Spawn, adapter.clone()),
+        Some(&stale_continuation),
+    )
+    .await
+    .is_err());
+    let mut prior_mutations = Vec::new();
+    let mut wrong_logical_target = prior.clone();
+    wrong_logical_target.logical_target_id = Some(LogicalTargetId {
+        value: "logical-other".to_owned(),
+    });
+    prior_mutations.push(wrong_logical_target);
+    let mut wrong_runtime_adapter = prior.clone();
+    wrong_runtime_adapter
+        .external_runtime
+        .as_mut()
+        .unwrap()
+        .adapter_id = Some(AdapterId {
+        value: "adapter-b".to_owned(),
+    });
+    prior_mutations.push(wrong_runtime_adapter);
+    let mut wrong_deployment = prior.clone();
+    wrong_deployment
+        .external_runtime
+        .as_mut()
+        .unwrap()
+        .deployment_scope = "remote".to_owned();
+    prior_mutations.push(wrong_deployment);
+    let mut wrong_runtime = prior.clone();
+    wrong_runtime
+        .external_runtime
+        .as_mut()
+        .unwrap()
+        .runtime_session_id = Some(RuntimeSessionId {
+        value: "runtime-other".to_owned(),
+    });
+    prior_mutations.push(wrong_runtime);
+    for mutated_prior in prior_mutations {
+        let mutated = SpawnRequest {
+            intent: Some(spawn_request::Intent::Continuation(SpawnContinuation {
+                prior: Some(mutated_prior),
+            })),
+            target_spec: fresh.target_spec.clone(),
+        };
+        assert!(TargetResolver::resolve(
+            &targets,
+            &domain(),
+            &operation(OperationKind::Spawn, adapter.clone()),
+            Some(&mutated),
+        )
+        .await
+        .is_err());
+    }
+
+    let other_adapter = TargetScope {
+        kind: TargetScopeKind::Adapter as i32,
+        adapter_id: Some(AdapterId {
+            value: "adapter-b".to_owned(),
+        }),
+        ..TargetScope::default()
+    };
+    assert!(TargetResolver::resolve(
+        &targets,
+        &domain(),
+        &operation(OperationKind::Spawn, other_adapter),
+        Some(&continuation),
+    )
+    .await
+    .is_err());
 
     let runtime = TargetScope {
         kind: TargetScopeKind::RuntimeSession as i32,
@@ -206,7 +412,7 @@ async fn spawn_resolution_commits_one_attached_adapter_boundary_only() {
     let unattached = TargetScope {
         kind: TargetScopeKind::Adapter as i32,
         adapter_id: Some(AdapterId {
-            value: "adapter-b".to_owned(),
+            value: "adapter-c".to_owned(),
         }),
         ..TargetScope::default()
     };
@@ -214,16 +420,26 @@ async fn spawn_resolution_commits_one_attached_adapter_boundary_only() {
     mixed.project_or_group = "not-canonical".to_owned();
     for incompatible in [runtime, resource, fleet, unattached, mixed] {
         assert!(
-            TargetResolver::resolve(&targets, &domain(), OperationKind::Spawn, &incompatible)
-                .await
-                .is_err(),
+            TargetResolver::resolve(
+                &targets,
+                &domain(),
+                &operation(OperationKind::Spawn, incompatible.clone()),
+                Some(&fresh),
+            )
+            .await
+            .is_err(),
             "incompatible spawn target resolved: {incompatible:?}"
         );
     }
     assert!(
-        TargetResolver::resolve(&targets, &domain(), OperationKind::Instruct, &adapter)
-            .await
-            .is_err(),
+        TargetResolver::resolve(
+            &targets,
+            &domain(),
+            &operation(OperationKind::Instruct, adapter),
+            None,
+        )
+        .await
+        .is_err(),
         "adapter scope is a spawn-only operation boundary"
     );
 }
@@ -238,8 +454,8 @@ async fn diagnostics_resolution_returns_an_honest_authority_domain_binding() {
         TargetResolver::resolve(
             &AuthorityDomainTargetResolver,
             &domain(),
-            OperationKind::Query,
-            &scope,
+            &operation(OperationKind::Query, scope),
+            None,
         )
         .await,
         Ok(TargetBinding::AuthorityDomain(domain()))
@@ -249,8 +465,8 @@ async fn diagnostics_resolution_returns_an_honest_authority_domain_binding() {
     assert!(TargetResolver::resolve(
         &AuthorityDomainTargetResolver,
         &domain(),
-        OperationKind::Query,
-        &resource,
+        &operation(OperationKind::Query, resource),
+        None,
     )
     .await
     .is_err());

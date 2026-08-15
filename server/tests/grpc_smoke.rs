@@ -988,12 +988,17 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
         TargetResolver::resolve(
             restarted.target_resolver(),
             &domain(),
-            OperationKind::Query,
-            &TargetScope {
-                kind: TargetScopeKind::Resource as i32,
-                resource: Some(resource_identity.clone()),
-                ..TargetScope::default()
+            &Operation {
+                authority_domain_id: Some(domain()),
+                kind: OperationKind::Query as i32,
+                target_scope: Some(TargetScope {
+                    kind: TargetScopeKind::Resource as i32,
+                    resource: Some(resource_identity.clone()),
+                    ..TargetScope::default()
+                }),
+                ..Operation::default()
             },
+            None,
         )
         .await,
         Ok(TargetBinding::Resource(

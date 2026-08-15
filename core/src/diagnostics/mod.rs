@@ -8,7 +8,7 @@ use patchbay_contracts::patchbay::{
     AuditEventKind, AuditQuery, AuditRecord, AuthorityDomainId, CommandHistoryEntry, CommandId,
     CommandInspection, CommandInspectionQuery, CommandInspectionResult, CommandSummary,
     DiagnosticsQuery, EventId, FailureCode, Observation, Operation, OperationKind, OperationState,
-    Revocation, StoredEventKind, TargetScope, TargetScopeKind,
+    Revocation, SpawnRequest, StoredEventKind, TargetScope, TargetScopeKind,
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -44,10 +44,17 @@ impl TargetResolver for AuthorityDomainTargetResolver {
     async fn resolve(
         &self,
         authority_domain_id: &AuthorityDomainId,
-        operation_kind: OperationKind,
-        target_scope: &TargetScope,
+        operation: &Operation,
+        _spawn_request: Option<&SpawnRequest>,
     ) -> Result<TargetBinding, TargetNotFound> {
-        if operation_kind != OperationKind::Query
+        let target_scope =
+            operation
+                .target_scope
+                .as_ref()
+                .ok_or_else(|| TargetNotFound::NotFound {
+                    target: "diagnostics operation is missing target_scope".to_owned(),
+                })?;
+        if OperationKind::try_from(operation.kind).ok() != Some(OperationKind::Query)
             || TargetScopeKind::try_from(target_scope.kind).ok()
                 != Some(TargetScopeKind::AuthorityDomain)
         {

@@ -1,7 +1,8 @@
 //! Composite ordinary-operation target registry and routing helpers.
 
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, OperationKind, TargetScope, TargetScopeKind,
+    spawn_request, AdapterId, AuthorityDomainId, Generation, LogicalTargetId, Operation,
+    OperationKind, SpawnGenerationClaim, SpawnRequest, TargetScope, TargetScopeKind,
 };
 
 use crate::{
@@ -94,30 +95,42 @@ impl TargetResolver for TargetRegistry {
     async fn resolve(
         &self,
         authority_domain_id: &AuthorityDomainId,
-        operation_kind: OperationKind,
-        target_scope: &TargetScope,
+        operation: &Operation,
+        spawn_request: Option<&SpawnRequest>,
     ) -> Result<TargetBinding, TargetNotFound> {
+        let operation_kind =
+            OperationKind::try_from(operation.kind).map_err(|_| TargetNotFound::NotFound {
+                target: format!("operation has an unknown kind: {}", operation.kind),
+            })?;
+        let target_scope =
+            operation
+                .target_scope
+                .as_ref()
+                .ok_or_else(|| TargetNotFound::NotFound {
+                    target: "operation is missing target_scope".to_owned(),
+                })?;
         let target_kind =
             TargetScopeKind::try_from(target_scope.kind).map_err(|_| TargetNotFound::NotFound {
                 target: format!("target has an unknown scope kind: {target_scope:?}"),
             })?;
         match (operation_kind, target_kind) {
-            (OperationKind::Spawn, TargetScopeKind::Adapter) => {
-                resolve_spawn_adapter(&self.adapters, authority_domain_id, target_scope)
-            }
+            (OperationKind::Spawn, TargetScopeKind::Adapter) => resolve_spawn_adapter(
+                &self.adapters,
+                &self.sessions,
+                authority_domain_id,
+                operation,
+                target_scope,
+                spawn_request.ok_or_else(|| TargetNotFound::NotFound {
+                    target: "spawn target resolution requires a validated SpawnRequest".to_owned(),
+                })?,
+            ),
             (OperationKind::Spawn, _) => Err(TargetNotFound::NotFound {
                 target: format!(
                     "v0.1.0 spawn requires one attached adapter target; fleet selection and existing runtime/resource targets are unavailable: {target_scope:?}"
                 ),
             }),
             (_, TargetScopeKind::RuntimeSession) => {
-                TargetResolver::resolve(
-                    &self.sessions,
-                    authority_domain_id,
-                    operation_kind,
-                    target_scope,
-                )
-                .await
+                TargetResolver::resolve(&self.sessions, authority_domain_id, operation, None).await
             }
             (_, TargetScopeKind::Resource) => resolve_resource(&self.resources, target_scope),
             _ => Err(TargetNotFound::NotFound {
@@ -129,8 +142,11 @@ impl TargetResolver for TargetRegistry {
 
 fn resolve_spawn_adapter(
     adapters: &AdapterRegistry,
+    sessions: &SessionRegistry,
     authority_domain_id: &AuthorityDomainId,
+    operation: &Operation,
     target_scope: &TargetScope,
+    spawn_request: &SpawnRequest,
 ) -> Result<TargetBinding, TargetNotFound> {
     let adapter_id = target_scope
         .adapter_id
@@ -165,8 +181,89 @@ fn resolve_spawn_adapter(
         registration.registration.adapter_id.as_ref(),
         Some(adapter_id)
     );
-    Ok(TargetBinding::Adapter {
+
+    let command_id = operation
+        .command_id
+        .as_ref()
+        .filter(|id| !id.value.is_empty())
+        .ok_or_else(|| TargetNotFound::NotFound {
+            target: "spawn operation is missing command_id".to_owned(),
+        })?;
+    let (logical_target_id, expected_prior, claimed_generation) = match spawn_request
+        .intent
+        .as_ref()
+    {
+        Some(spawn_request::Intent::Fresh(_)) => (
+            LogicalTargetId {
+                value: command_id.value.clone(),
+            },
+            None,
+            Generation { value: 1 },
+        ),
+        Some(spawn_request::Intent::Continuation(continuation)) => {
+            let prior = continuation
+                .prior
+                .as_ref()
+                .ok_or_else(|| TargetNotFound::NotFound {
+                    target: "spawn continuation is missing exact prior".to_owned(),
+                })?;
+            let logical_target_id =
+                prior
+                    .logical_target_id
+                    .as_ref()
+                    .ok_or_else(|| TargetNotFound::NotFound {
+                        target: "spawn continuation is missing logical_target_id".to_owned(),
+                    })?;
+            let external =
+                prior
+                    .external_runtime
+                    .as_ref()
+                    .ok_or_else(|| TargetNotFound::NotFound {
+                        target: "spawn continuation is missing external_runtime".to_owned(),
+                    })?;
+            let target = sessions
+                    .logical_targets()
+                    .get(logical_target_id)
+                    .filter(|record| {
+                        record.current.as_ref() == Some(prior)
+                            && record.adapter_id == *adapter_id
+                            && external.adapter_id.as_ref() == Some(adapter_id)
+                            && external.deployment_scope == record.deployment_scope
+                    })
+                    .ok_or_else(|| TargetNotFound::NotFound {
+                        target: "spawn continuation prior is not the exact current logical-target generation"
+                            .to_owned(),
+                    })?;
+            debug_assert_eq!(target.current.as_ref(), Some(prior));
+            let generation = external
+                .generation
+                .and_then(|generation| generation.value.checked_add(1))
+                .ok_or_else(|| TargetNotFound::NotFound {
+                    target: "spawn continuation prior generation cannot advance".to_owned(),
+                })?;
+            (
+                logical_target_id.clone(),
+                Some(prior.clone()),
+                Generation { value: generation },
+            )
+        }
+        None => {
+            return Err(TargetNotFound::NotFound {
+                target: "spawn request has no intent".to_owned(),
+            })
+        }
+    };
+
+    Ok(TargetBinding::SpawnAdapter {
         adapter_id: adapter_id.clone(),
+        claim: Box::new(SpawnGenerationClaim {
+            authority_domain_id: Some(authority_domain_id.clone()),
+            claim_operation_id: Some(command_id.clone()),
+            logical_target_id: Some(logical_target_id),
+            expected_prior,
+            claimed_generation: Some(claimed_generation),
+        }),
+        continuation_authority: None,
     })
 }
 

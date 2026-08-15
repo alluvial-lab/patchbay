@@ -4,18 +4,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use patchbay_contracts::patchbay::{
     response_contract, spawn_request, typed_correlation, AcceptedOperation, ActorEndpointRef,
     ActorId, AdapterId, ApprovalDecision, ApprovalResponsePayload, AuthorityDomainId, CommandId,
-    DeviceId, ElicitationId, ElicitationResponsePayload, EndpointId, ExternalRuntimeRef,
-    FailureCode, FreshSpawn, Generation, GrantId, LogicalTargetId, Lsn, Operation, OperationKind,
-    OperationState, PayloadContentType, PayloadEnvelope, QuestionContract, ResponseContract,
-    ResponseContractKind, ResponseOption, RuntimeGenerationRef, RuntimeSessionId,
-    SessionActivityState, SessionConnectivityState, SessionReportSourceCursor, SpawnContinuation,
-    SpawnRequest, SpawnTargetSpec, StoredEventKind, SubmissionOutcome, TargetScope,
-    TargetScopeKind, TimeWindow, TypedCorrelation,
+    ContinuationAuthorityProvenance, DeviceId, ElicitationId, ElicitationResponsePayload,
+    EndpointId, ExternalRuntimeRef, FailureCode, FreshSpawn, Generation, GrantId, LogicalTargetId,
+    Lsn, Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
+    QuestionContract, ResponseContract, ResponseContractKind, ResponseOption, RuntimeGenerationRef,
+    RuntimeSessionId, SessionActivityState, SessionConnectivityState, SessionReportSourceCursor,
+    SpawnContinuation, SpawnRequest, SpawnTargetSpec, StoredEventKind, SubmissionOutcome,
+    TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation,
 };
 use patchbay_core::acceptance::{
     submit, submit_with_clock, AcceptanceError, ActiveElicitation, Authorized, Clock,
     CommandSnapshot, CommandStateLookup, ElicitationContractLookup, GrantCheck, GrantDenied,
-    TargetBinding, TargetNotFound, TargetResolver, SPAWN_REQUEST_SCHEMA,
+    ResolvedGrantCheck, TargetBinding, TargetNotFound, TargetResolver, SPAWN_REQUEST_SCHEMA,
 };
 use patchbay_core::{
     authority::IssuerContext,
@@ -53,6 +53,7 @@ impl GrantCheck for TestGrantCheck {
                 grant_id: Some(GrantId {
                     value: "test-grant".to_owned(),
                 }),
+                continuation_authority: None,
             })
         } else {
             Err(GrantDenied::NoGrant {
@@ -60,6 +61,62 @@ impl GrantCheck for TestGrantCheck {
                 kind: operation_kind,
                 target: "session".to_owned(),
             })
+        })
+    }
+}
+
+struct CompoundGrantCheck {
+    spawn_calls: AtomicUsize,
+    replacement_calls: AtomicUsize,
+}
+
+impl CompoundGrantCheck {
+    fn new() -> Self {
+        Self {
+            spawn_calls: AtomicUsize::new(0),
+            replacement_calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl GrantCheck for CompoundGrantCheck {
+    async fn check(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _issuer: &dyn IssuerContext,
+        operation_kind: OperationKind,
+        _target_scope: &TargetScope,
+    ) -> Result<Authorized, GrantDenied> {
+        assert_eq!(operation_kind, OperationKind::Spawn);
+        self.spawn_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(Authorized {
+            grant_id: Some(GrantId {
+                value: "spawn-grant".to_owned(),
+            }),
+            continuation_authority: None,
+        })
+    }
+
+    async fn check_resolved_at(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _issuer: &dyn IssuerContext,
+        request: ResolvedGrantCheck<'_>,
+    ) -> Result<Authorized, GrantDenied> {
+        assert_eq!(request.operation_kind, OperationKind::Spawn);
+        self.replacement_calls.fetch_add(1, Ordering::Relaxed);
+        let TargetBinding::SpawnAdapter { claim, .. } = request.target_binding else {
+            panic!("continuation must bind one spawn adapter");
+        };
+        Ok(Authorized {
+            grant_id: request.authorization.grant_id,
+            continuation_authority: Some(ContinuationAuthorityProvenance {
+                exact_prior: claim.expected_prior.clone(),
+                replacement_grant_id: Some(GrantId {
+                    value: "replacement-grant".to_owned(),
+                }),
+                replacement_authority_kind: OperationKind::SessionManagement as i32,
+            }),
         })
     }
 }
@@ -93,12 +150,46 @@ impl TargetResolver for TestTargetResolver {
     fn resolve(
         &self,
         _authority_domain_id: &AuthorityDomainId,
-        _operation_kind: OperationKind,
-        _target_scope: &TargetScope,
+        operation: &Operation,
+        spawn_request: Option<&SpawnRequest>,
     ) -> impl std::future::Future<Output = Result<TargetBinding, TargetNotFound>> + Send {
         self.calls.fetch_add(1, Ordering::Relaxed);
-        ready(if self.found {
-            Ok(TargetBinding::RuntimeSession {
+        let binding = if operation.kind == OperationKind::Spawn as i32 {
+            let expected_prior = spawn_request.and_then(|request| match request.intent.as_ref() {
+                Some(spawn_request::Intent::Continuation(continuation)) => {
+                    continuation.prior.clone()
+                }
+                _ => None,
+            });
+            let claimed_generation = expected_prior
+                .as_ref()
+                .and_then(|prior| prior.external_runtime.as_ref())
+                .and_then(|external| external.generation)
+                .map_or(Generation { value: 1 }, |prior| Generation {
+                    value: prior.value + 1,
+                });
+            TargetBinding::SpawnAdapter {
+                adapter_id: AdapterId {
+                    value: "pi".to_owned(),
+                },
+                claim: Box::new(patchbay_contracts::patchbay::SpawnGenerationClaim {
+                    authority_domain_id: operation.authority_domain_id.clone(),
+                    claim_operation_id: operation.command_id.clone(),
+                    logical_target_id: expected_prior
+                        .as_ref()
+                        .and_then(|prior| prior.logical_target_id.clone())
+                        .or_else(|| {
+                            operation.command_id.as_ref().map(|id| LogicalTargetId {
+                                value: id.value.clone(),
+                            })
+                        }),
+                    expected_prior,
+                    claimed_generation: Some(claimed_generation),
+                }),
+                continuation_authority: None,
+            }
+        } else {
+            TargetBinding::RuntimeSession {
                 adapter_id: AdapterId {
                     value: "pi".to_owned(),
                 },
@@ -107,7 +198,10 @@ impl TargetResolver for TestTargetResolver {
                     value: "session-1".to_owned(),
                 },
                 session_generation: Generation { value: 7 },
-            })
+            }
+        };
+        ready(if self.found {
+            Ok(binding)
         } else {
             Err(TargetNotFound::NotFound {
                 target: "session-1".to_owned(),
@@ -1145,7 +1239,7 @@ async fn unknown_target_rejects_without_durable_state() {
 }
 
 #[tokio::test]
-async fn continuation_rejects_before_grant_target_or_append_while_fresh_spawn_remains_enabled() {
+async fn continuation_requires_compound_authority_while_fresh_spawn_remains_enabled() {
     let continuation_storage = RusqliteStorage::open_in_memory().unwrap();
     let continuation_grant = TestGrantCheck::new(true);
     let continuation_resolver = TestTargetResolver::new(true);
@@ -1163,12 +1257,42 @@ async fn continuation_rejects_before_grant_target_or_append_while_fresh_spawn_re
     .unwrap();
 
     assert_eq!(outcome(&rejected), SubmissionOutcome::Rejected);
-    assert_eq!(failure(&rejected), FailureCode::UnsupportedCommand);
-    assert_eq!(rejected.reason_code, "unsupported_command");
-    assert!(rejected.diagnostic_message.contains("compound authority"));
-    assert_eq!(continuation_grant.calls.load(Ordering::Relaxed), 0);
-    assert_eq!(continuation_resolver.calls.load(Ordering::Relaxed), 0);
+    assert_eq!(failure(&rejected), FailureCode::AuthorizationDenied);
+    assert_eq!(rejected.reason_code, "authorization_denied");
+    assert!(rejected
+        .diagnostic_message
+        .contains("replacement authority"));
+    assert_eq!(continuation_grant.calls.load(Ordering::Relaxed), 1);
+    assert_eq!(continuation_resolver.calls.load(Ordering::Relaxed), 1);
     assert!(durable_events(&continuation_storage).await.is_empty());
+
+    let compound_storage = RusqliteStorage::open_in_memory().unwrap();
+    let compound_grant = CompoundGrantCheck::new();
+    let compound_resolver = TestTargetResolver::new(true);
+    let accepted_continuation = submit(
+        &compound_storage,
+        &compound_grant,
+        &compound_resolver,
+        &AlwaysAccepted,
+        &NoElicitationContractLookup,
+        &issuer(),
+        spawn_operation(spawn_continuation(), "authorized-continuation"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(outcome(&accepted_continuation), SubmissionOutcome::Accepted);
+    assert_eq!(compound_grant.spawn_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(compound_grant.replacement_calls.load(Ordering::Relaxed), 1);
+    let compound_events = durable_events(&compound_storage).await;
+    assert_eq!(compound_events.len(), 1);
+    let accepted = AcceptedOperation::decode(compound_events[0].payload.payload.as_slice())
+        .expect("accepted continuation envelope decodes");
+    assert_eq!(
+        accepted.authorizing_grant_id,
+        Some(GrantId {
+            value: "spawn-grant".to_owned(),
+        })
+    );
 
     let fresh_storage = RusqliteStorage::open_in_memory().unwrap();
     let fresh_grant = TestGrantCheck::new(true);

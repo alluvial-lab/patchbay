@@ -11,8 +11,8 @@ use patchbay_core::{
     acceptance::{
         ActiveElicitation, Authorized, CommandIndex, CommandRecord, CommandSnapshot,
         CommandStateLookup, ElicitationContractLookup, ElicitationSlotLayer, GrantCheck,
-        GrantDenied, OperationPosture, OperationPostureDenied, TargetBinding, TargetNotFound,
-        TargetResolver,
+        GrantDenied, OperationPosture, OperationPostureDenied, ResolvedGrantCheck, TargetBinding,
+        TargetNotFound, TargetResolver,
     },
     adapter::AdapterRegistry,
     authority::{
@@ -25,7 +25,10 @@ use patchbay_core::{
     diagnostics::DiagnosticsProjection,
     resource::ResourceRegistry,
     security::SecurityPostureProjection,
-    session::{fold_spawn_promotion_ordered, SessionRegistry, SpawnClaimRegistry},
+    session::{
+        fold_spawn_promotion_ordered, SessionRegistry, SpawnClaimQuery, SpawnClaimRegistry,
+        SpawnClaimability,
+    },
     storage::{validate_next_replay_event, CoreGenerationStore, Storage, StorageError},
     target::TargetRegistry,
 };
@@ -177,11 +180,12 @@ impl ProjectionState {
         }
         diagnostics.reset_adapter_liveness();
 
+        let spawn_claims = Arc::new(Mutex::new(claims));
         Ok(Self {
             grant_check: LockedGrantCheck::new(authority),
-            target_resolver: LockedTargetResolver::new(targets),
+            target_resolver: LockedTargetResolver::new(targets, Arc::clone(&spawn_claims)),
             state_lookup: LockedCommandStateLookup::new(commands),
-            spawn_claims: Arc::new(Mutex::new(claims)),
+            spawn_claims,
             elicitation_slots: LockedElicitationContractLookup::from_layer(elicitation_slots),
             diagnostics: Arc::new(Mutex::new(diagnostics)),
             security_posture: LockedSecurityPosture::new(security_posture),
@@ -1106,17 +1110,29 @@ impl GrantCheck for LockedGrantCheck {
         )
         .await
     }
+
+    async fn check_resolved_at(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        issuer: &dyn IssuerContext,
+        request: ResolvedGrantCheck<'_>,
+    ) -> Result<Authorized, GrantDenied> {
+        let registry = self.inner.lock().await;
+        GrantCheck::check_resolved_at(&*registry, authority_domain_id, issuer, request).await
+    }
 }
 
 #[derive(Clone)]
 pub struct LockedTargetResolver {
     inner: Arc<Mutex<TargetRegistry>>,
+    spawn_claims: Arc<Mutex<SpawnClaimRegistry>>,
 }
 
 impl LockedTargetResolver {
-    fn new(registry: TargetRegistry) -> Self {
+    fn new(registry: TargetRegistry, spawn_claims: Arc<Mutex<SpawnClaimRegistry>>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(registry)),
+            spawn_claims,
         }
     }
 }
@@ -1125,17 +1141,26 @@ impl TargetResolver for LockedTargetResolver {
     async fn resolve(
         &self,
         authority_domain_id: &AuthorityDomainId,
-        operation_kind: OperationKind,
-        target_scope: &TargetScope,
+        operation: &patchbay_contracts::patchbay::Operation,
+        spawn_request: Option<&patchbay_contracts::patchbay::SpawnRequest>,
     ) -> Result<TargetBinding, TargetNotFound> {
-        let registry = self.inner.lock().await;
-        TargetResolver::resolve(
-            &*registry,
-            authority_domain_id,
-            operation_kind,
-            target_scope,
-        )
-        .await
+        let binding = {
+            let registry = self.inner.lock().await;
+            TargetResolver::resolve(&*registry, authority_domain_id, operation, spawn_request)
+                .await?
+        };
+        if let TargetBinding::SpawnAdapter { claim, .. } = &binding {
+            match self.spawn_claims.lock().await.classify_claim(claim) {
+                SpawnClaimability::Available | SpawnClaimability::ExactRetry(_) => {}
+                SpawnClaimability::Conflict(_) | SpawnClaimability::Invalid => {
+                    return Err(TargetNotFound::NotFound {
+                        target: "spawn generation claim is already consumed or malformed"
+                            .to_owned(),
+                    });
+                }
+            }
+        }
+        Ok(binding)
     }
 }
 

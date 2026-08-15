@@ -1,10 +1,10 @@
 use patchbay_contracts::patchbay::{
-    AdapterId, AuthorityDomainId, EventId, Generation, Lsn, OperationKind, RuntimeSessionId,
-    SecurityLockdownEntered, SecurityLockdownEvent, SecurityLockdownExited, SessionActivityChanged,
-    SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
-    SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled,
-    SessionReport, SessionReportApplied, SessionReportSourceCursor, SessionState, StoredEventKind,
-    StoredEventPayload, TargetScope,
+    AdapterId, AuthorityDomainId, EventId, Generation, Lsn, Operation, OperationKind,
+    RuntimeSessionId, SecurityLockdownEntered, SecurityLockdownEvent, SecurityLockdownExited,
+    SessionActivityChanged, SessionActivityState, SessionConnectivityChanged,
+    SessionConnectivityState, SessionGenerationBumped, SessionModelChanged, SessionRegistered,
+    SessionRelabeled, SessionReport, SessionReportApplied, SessionReportSourceCursor, SessionState,
+    StoredEventKind, StoredEventPayload, TargetScope,
 };
 use prost::Message;
 
@@ -18,6 +18,15 @@ use patchbay_core::{
 fn domain() -> AuthorityDomainId {
     AuthorityDomainId {
         value: "authority-main".to_owned(),
+    }
+}
+
+fn target_operation(scope: TargetScope) -> Operation {
+    Operation {
+        authority_domain_id: Some(domain()),
+        kind: OperationKind::Instruct as i32,
+        target_scope: Some(scope),
+        ..Operation::default()
     }
 }
 
@@ -487,7 +496,7 @@ async fn folds_axis_changes_relabel_and_generation_bump() {
         ..TargetScope::default()
     };
     assert!(
-        TargetResolver::resolve(&registry, &domain(), OperationKind::Instruct, &stale_target,)
+        TargetResolver::resolve(&registry, &domain(), &target_operation(stale_target), None,)
             .await
             .is_err()
     );
@@ -500,7 +509,7 @@ async fn folds_axis_changes_relabel_and_generation_bump() {
         ..TargetScope::default()
     };
     let binding =
-        TargetResolver::resolve(&registry, &domain(), OperationKind::Instruct, &live_target)
+        TargetResolver::resolve(&registry, &domain(), &target_operation(live_target), None)
             .await
             .expect("an unspecified generation binds the live generation");
     assert!(matches!(
@@ -602,7 +611,7 @@ async fn tombstones_are_scoped_to_the_full_session_identity() {
         deployment_scope: "machine-b".to_owned(),
         ..TargetScope::default()
     };
-    let binding = TargetResolver::resolve(&registry, &domain(), OperationKind::Instruct, &target_b)
+    let binding = TargetResolver::resolve(&registry, &domain(), &target_operation(target_b), None)
         .await
         .expect("a same-runtime session under another adapter must remain resolvable");
     assert!(matches!(

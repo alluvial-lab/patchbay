@@ -511,8 +511,8 @@ impl TargetResolver for AlwaysResolvedTarget {
     async fn resolve(
         &self,
         _authority_domain_id: &AuthorityDomainId,
-        _operation_kind: OperationKind,
-        _target_scope: &TargetScope,
+        _operation: &Operation,
+        _spawn_request: Option<&patchbay_contracts::patchbay::SpawnRequest>,
     ) -> Result<TargetBinding, TargetNotFound> {
         Ok(TargetBinding::RuntimeSession {
             adapter_id: adapter("adapter-pi"),

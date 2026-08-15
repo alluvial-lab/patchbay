@@ -1,10 +1,10 @@
 //! Operation submission and durable acceptance.
 
 use patchbay_contracts::patchbay::{
-    spawn_request, AcceptedOperation, ActorEndpointRef, AuthorityDomainId, CommandId, EventId,
-    FailureCode, GrantId, IdempotencyKey, Lsn, Operation, OperationKind, OperationState,
-    StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmissionResult, TargetScope,
-    TargetScopeKind, TimeWindow,
+    AcceptedOperation, ActorEndpointRef, AuthorityDomainId, CommandId, EventId, FailureCode,
+    GrantId, IdempotencyKey, Lsn, Operation, OperationKind, OperationState, StoredEventKind,
+    StoredEventPayload, SubmissionOutcome, SubmissionResult, TargetScope, TargetScopeKind,
+    TimeWindow,
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -17,9 +17,10 @@ use crate::{
 
 use super::{
     elicitation::correlation_to_elicitation, validate_response_payload,
-    validate_response_responder, validate_spawn_operation_payload, AcceptanceError,
-    AllowOperations, Clock, CommandStateLookup, ElicitationContractLookup, GrantCheck,
-    OperationPosture, OperationPostureDenied, SystemClock, TargetResolver,
+    validate_response_responder, validate_spawn_authority_carriage,
+    validate_spawn_operation_payload, AcceptanceError, AllowOperations, Clock, CommandStateLookup,
+    ElicitationContractLookup, GrantCheck, OperationPosture, OperationPostureDenied,
+    ResolvedGrantCheck, SystemClock, TargetBinding, TargetResolver,
 };
 
 /// The committed v0.1.0 operation kinds. Reserved wire values deliberately do
@@ -254,9 +255,9 @@ where
         ));
     }
 
-    if validated.operation_kind == OperationKind::Spawn {
-        let spawn_request = match validate_spawn_operation_payload(&operation) {
-            Ok(request) => request,
+    let spawn_request = if validated.operation_kind == OperationKind::Spawn {
+        match validate_spawn_operation_payload(&operation) {
+            Ok(request) => Some(request),
             Err(error) => {
                 return Ok(rejected_result(
                     Some(validated.command_id.clone()),
@@ -266,21 +267,10 @@ where
                     error.to_string(),
                 ));
             }
-        };
-        if matches!(
-            spawn_request.intent,
-            Some(spawn_request::Intent::Continuation(_))
-        ) {
-            return Ok(rejected_result(
-                Some(validated.command_id.clone()),
-                FailureCode::UnsupportedCommand,
-                "unsupported_command".to_owned(),
-                None,
-                "spawn continuation requires compound authority selection, which is not yet supported"
-                    .to_owned(),
-            ));
         }
-    }
+    } else {
+        None
+    };
 
     if matches!(
         validated.operation_kind,
@@ -314,7 +304,7 @@ where
         }
     }
 
-    let authorization = match grant_check
+    let initial_authorization = match grant_check
         .check_at(
             validated.authority_domain_id,
             issuer,
@@ -325,40 +315,53 @@ where
         .await
     {
         Ok(authorized) => authorized,
-        Err(crate::acceptance::GrantDenied::NoGrant { actor, .. }) => {
-            let (failure, reason_code, decision_grant_id, diagnostic) =
-                if let Some(value) = actor.strip_prefix("grant_expired:") {
-                    (
-                        FailureCode::Expired,
-                        "grant_expired",
-                        Some(GrantId {
-                            value: value.to_owned(),
-                        }),
-                        "grant is expired",
-                    )
-                } else if let Some(value) = actor.strip_prefix("grant_revoked:") {
-                    (
-                        FailureCode::AuthorizationDenied,
-                        "grant_revoked",
-                        Some(GrantId {
-                            value: value.to_owned(),
-                        }),
-                        "grant is revoked",
-                    )
-                } else {
-                    (
-                        FailureCode::AuthorizationDenied,
-                        "authorization_denied",
-                        None,
-                        "no matching live grant",
-                    )
-                };
+        Err(denied) => {
+            return Ok(grant_denied_result(
+                Some(validated.command_id.clone()),
+                denied,
+            ));
+        }
+    };
+
+    let mut target_binding = match target_resolver
+        .resolve(
+            validated.authority_domain_id,
+            &operation,
+            spawn_request.as_ref(),
+        )
+        .await
+    {
+        Ok(binding) => binding,
+        Err(_) => {
             return Ok(rejected_result(
                 Some(validated.command_id.clone()),
-                failure,
-                reason_code.to_owned(),
-                decision_grant_id,
-                diagnostic.to_owned(),
+                FailureCode::TargetNotFound,
+                "target_not_found".to_owned(),
+                None,
+                "operation target could not be resolved".to_owned(),
+            ));
+        }
+    };
+
+    let authorization = match grant_check
+        .check_resolved_at(
+            validated.authority_domain_id,
+            issuer,
+            ResolvedGrantCheck {
+                operation_kind: validated.operation_kind,
+                target_scope: validated.target_scope,
+                target_binding: &target_binding,
+                authorization: initial_authorization,
+                evaluated_at: &evaluated_at,
+            },
+        )
+        .await
+    {
+        Ok(authorized) => authorized,
+        Err(denied) => {
+            return Ok(grant_denied_result(
+                Some(validated.command_id.clone()),
+                denied,
             ));
         }
     };
@@ -366,22 +369,34 @@ where
         AcceptanceError::CorruptRecord("grant check authorized without grant provenance".to_owned())
     })?;
 
-    if target_resolver
-        .resolve(
-            validated.authority_domain_id,
-            validated.operation_kind,
-            validated.target_scope,
-        )
-        .await
-        .is_err()
-    {
-        return Ok(rejected_result(
-            Some(validated.command_id.clone()),
-            FailureCode::TargetNotFound,
-            "target_not_found".to_owned(),
-            None,
-            "operation target could not be resolved".to_owned(),
-        ));
+    if let Some(request) = spawn_request.as_ref() {
+        let TargetBinding::SpawnAdapter {
+            continuation_authority,
+            ..
+        } = &mut target_binding
+        else {
+            return Ok(rejected_result(
+                Some(validated.command_id.clone()),
+                FailureCode::TargetNotFound,
+                "target_not_found".to_owned(),
+                None,
+                "spawn did not resolve to one canonical attached adapter".to_owned(),
+            ));
+        };
+        *continuation_authority = authorization.continuation_authority.clone().map(Box::new);
+        if let Err(error) = validate_spawn_authority_carriage(
+            request,
+            Some(&grant_id),
+            continuation_authority.as_deref(),
+        ) {
+            return Ok(rejected_result(
+                Some(validated.command_id.clone()),
+                FailureCode::AuthorizationDenied,
+                "authorization_denied".to_owned(),
+                None,
+                error.to_string(),
+            ));
+        }
     }
 
     // Sender is an audit attribution field, but it must never preserve a
@@ -649,6 +664,47 @@ fn sender_from_verified_issuer(issuer: &dyn IssuerContext) -> Option<ActorEndpoi
         device_id: Some(issuer.verified_device()?.clone()),
         endpoint_generation: Some(issuer.endpoint_generation()?),
     })
+}
+
+fn grant_denied_result(
+    command_id: Option<CommandId>,
+    denied: crate::acceptance::GrantDenied,
+) -> SubmissionResult {
+    let crate::acceptance::GrantDenied::NoGrant { actor, .. } = denied;
+    let (failure, reason_code, decision_grant_id, diagnostic) =
+        if let Some(value) = actor.strip_prefix("grant_expired:") {
+            (
+                FailureCode::Expired,
+                "grant_expired",
+                Some(GrantId {
+                    value: value.to_owned(),
+                }),
+                "grant is expired",
+            )
+        } else if let Some(value) = actor.strip_prefix("grant_revoked:") {
+            (
+                FailureCode::AuthorizationDenied,
+                "grant_revoked",
+                Some(GrantId {
+                    value: value.to_owned(),
+                }),
+                "grant is revoked",
+            )
+        } else {
+            (
+                FailureCode::AuthorizationDenied,
+                "authorization_denied",
+                None,
+                "no matching live grant",
+            )
+        };
+    rejected_result(
+        command_id,
+        failure,
+        reason_code.to_owned(),
+        decision_grant_id,
+        diagnostic.to_owned(),
+    )
 }
 
 fn rejected_result(

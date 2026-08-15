@@ -1,7 +1,7 @@
 //! Acceptance target resolution backed by the session projection.
 
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, OperationKind, TargetScope, TargetScopeKind,
+    AuthorityDomainId, Operation, SpawnRequest, TargetScope, TargetScopeKind,
 };
 
 use crate::acceptance::{TargetBinding, TargetNotFound, TargetResolver};
@@ -18,9 +18,16 @@ impl TargetResolver for SessionRegistry {
     async fn resolve(
         &self,
         authority_domain_id: &AuthorityDomainId,
-        _operation_kind: OperationKind,
-        target_scope: &TargetScope,
+        operation: &Operation,
+        _spawn_request: Option<&SpawnRequest>,
     ) -> Result<TargetBinding, TargetNotFound> {
+        let target_scope =
+            operation
+                .target_scope
+                .as_ref()
+                .ok_or_else(|| TargetNotFound::NotFound {
+                    target: "operation is missing target_scope".to_owned(),
+                })?;
         self.require_authority_domain(authority_domain_id)
             .map_err(|_| not_found(target_scope, "session registry authority domain mismatch"))?;
         if TargetScopeKind::try_from(target_scope.kind).ok()
