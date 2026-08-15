@@ -1,7 +1,7 @@
 ---
 id: fleet-spawn-target-resolution
 kind: story
-stage: review
+stage: done
 tags: [adapter, protocol, security]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-cursor-authoritative-replacement-contract, research-handoff-spawn-runtime-evidence-promotion-contract]
