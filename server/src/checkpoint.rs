@@ -376,19 +376,26 @@ mod tests {
     use std::sync::{atomic::AtomicBool, Mutex as StdMutex};
 
     use patchbay_contracts::patchbay::{
-        resource_state_mutation, ActorEndpointRef, ActorId, AdapterId, AdapterSnapshotSupport,
-        EventId, ExternalRuntimeRef, Generation, IdempotencyKey, LogicalTargetCandidateReserved,
-        LogicalTargetCreated, LogicalTargetId, LogicalTargetInitialCurrentAssigned, Observation,
-        PayloadContentType, PayloadEnvelope, ResourceId, ResourceIdentity, ResourceKind,
-        ResourceStateEvent, ResourceStateMutation, ResourceStateUpsert, ResourceViewStateUpdate,
-        RuntimeSessionId, SecurityLockdownEntered, SessionActivityState, SessionConnectivityState,
-        SessionGenerationBumped, SessionRegistered, SessionReport, SessionReportApplied,
-        SessionReportSourceCursor, SessionState, StoredEventKind, StoredEventPayload,
+        resource_state_mutation, runtime_generation_disposition, ActorEndpointRef, ActorId,
+        AdapterCapability, AdapterId, AdapterRegistration, AdapterSnapshotSupport,
+        AdapterTargetCategory, EventId, ExternalRuntimeRef, Generation, IdempotencyKey,
+        LogicalTargetCandidateReserved, LogicalTargetCreated, LogicalTargetId,
+        LogicalTargetInitialCurrentAssigned, Observation, PayloadContentType, PayloadEnvelope,
+        ResourceId, ResourceIdentity, ResourceKind, ResourceStateEvent, ResourceStateMutation,
+        ResourceStateUpsert, ResourceViewStateUpdate, RuntimeEvidenceSourceAttachment,
+        RuntimeGenerationRef, RuntimeSessionId, SecurityLockdownEntered, SessionActivityState,
+        SessionConnectivityState, SessionGenerationBumped, SessionRegistered, SessionReport,
+        SessionReportApplied, SessionReportSourceCursor, SessionState, StoredEventKind,
+        StoredEventPayload,
     };
     use patchbay_core::{
+        adapter::{
+            AdapterRecord, AdapterRegistry, CapabilityValidationContext, ValidatedAdapterCapability,
+        },
         session::{
-            events as session_events, rebuild_from_log as rebuild_sessions_from_log,
-            ExternalRuntimeOwnership, LogicalTargetError, SessionRegistry,
+            classify_runtime_target, events as session_events,
+            rebuild_from_log as rebuild_sessions_from_log, ExternalRuntimeOwnership,
+            LogicalTargetError, LogicalTargetRegistry, SessionRegistry,
         },
         storage::{
             CoreGenerationStore, DedupOutcome, RecordedEvent, RusqliteStorage, StoredSnapshot,
@@ -1097,6 +1104,170 @@ mod tests {
             recovered.registry.lockdown_active(),
             fresh.lockdown_active()
         );
+
+        // A managed logical-target tombstone without its exact session
+        // tombstone counterpart is a disposable checkpoint, not a partial
+        // authority source. The otherwise complete projection validates, then
+        // removing only the outer tombstone forces strict replay from LSN 0.
+        let logical_target_id = LogicalTargetId {
+            value: "managed-target".to_owned(),
+        };
+        let prior_external = ExternalRuntimeRef {
+            adapter_id: Some(AdapterId {
+                value: "pi".to_owned(),
+            }),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: "session-1".to_owned(),
+            }),
+            generation: Some(Generation { value: 1 }),
+        };
+        let current_external = ExternalRuntimeRef {
+            generation: Some(Generation { value: 2 }),
+            ..prior_external.clone()
+        };
+        let prior_ref = RuntimeGenerationRef {
+            logical_target_id: Some(logical_target_id.clone()),
+            external_runtime: Some(prior_external.clone()),
+        };
+        let mut managed_targets = LogicalTargetRegistry::new(domain()).unwrap();
+        managed_targets
+            .create(
+                logical_target_id.clone(),
+                AdapterId {
+                    value: "pi".to_owned(),
+                },
+                "machine-a".to_owned(),
+            )
+            .unwrap();
+        managed_targets
+            .assign_initial_current(&logical_target_id, prior_external.clone())
+            .unwrap();
+        managed_targets
+            .reserve_candidate(&logical_target_id, current_external.clone())
+            .unwrap();
+        managed_targets
+            .commit_reserved_candidate(&logical_target_id, Some(&prior_ref), &current_external, 2)
+            .unwrap();
+        let managed_complete = patchbay_contracts::patchbay::StoredSessionCheckpoint {
+            snapshot: Some(compatible.snapshot.clone()),
+            tombstones: compatible
+                .registry
+                .tombstones()
+                .map(
+                    |tombstone| patchbay_contracts::patchbay::SessionCheckpointTombstone {
+                        adapter_id: Some(tombstone.adapter_id.clone()),
+                        deployment_scope: tombstone.deployment_scope.clone(),
+                        runtime_session_id: Some(tombstone.runtime_session_id.clone()),
+                        generation: Some(tombstone.superseded_generation),
+                        superseded_at_lsn: Some(Lsn {
+                            value: tombstone.superseded_at_lsn,
+                        }),
+                    },
+                )
+                .collect(),
+            logical_targets: managed_targets.checkpoint_records(),
+        };
+        let checkpoint_row = |checkpoint| StoredSnapshot {
+            event_id: stored.event_id.clone(),
+            payload: encode_stored_session_checkpoint(&checkpoint),
+        };
+        assert!(crate::snapshot::decode_compatible_session_checkpoint(
+            &checkpoint_row(managed_complete.clone()),
+            &domain(),
+            &generation,
+        )
+        .is_ok());
+        let mut missing_session_tombstone = managed_complete;
+        missing_session_tombstone.tombstones.clear();
+        let mismatched = checkpoint_row(missing_session_tombstone);
+        assert!(crate::snapshot::decode_compatible_session_checkpoint(
+            &mismatched,
+            &domain(),
+            &generation,
+        )
+        .is_err());
+        storage
+            .write_snapshot(&domain(), Lsn { value: 2 }, mismatched.payload.clone())
+            .await
+            .unwrap();
+        let symmetric_fallback =
+            crate::snapshot::recover_session_registry(&storage, &domain(), &generation)
+                .await
+                .unwrap();
+        assert!(symmetric_fallback.checkpoint_rejected);
+        assert_eq!(symmetric_fallback.checkpoint_lsn, 0);
+        assert_eq!(symmetric_fallback.replayed_event_count, 3);
+        assert_eq!(
+            symmetric_fallback.registry.sessions().collect::<Vec<_>>(),
+            fresh.sessions().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            symmetric_fallback.registry.tombstones().collect::<Vec<_>>(),
+            fresh.tombstones().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            symmetric_fallback
+                .registry
+                .logical_targets()
+                .checkpoint_records(),
+            fresh.logical_targets().checkpoint_records()
+        );
+
+        let capability = AdapterCapability {
+            session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
+            target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+            ..AdapterCapability::default()
+        };
+        let attachment_event_id = EventId {
+            authority_domain_id: Some(domain()),
+            lsn: Some(Lsn { value: 1 }),
+        };
+        let adapter_id = AdapterId {
+            value: "pi".to_owned(),
+        };
+        let adapters = AdapterRegistry::from_single(
+            adapter_id.clone(),
+            AdapterRecord {
+                registration: AdapterRegistration {
+                    adapter_id: Some(adapter_id.clone()),
+                    authority_domain_id: Some(domain()),
+                    adapter_generation: Some(Generation { value: 3 }),
+                    capability: Some(capability.clone()),
+                    ..AdapterRegistration::default()
+                },
+                validated_capability: ValidatedAdapterCapability::try_from_wire(
+                    &capability,
+                    CapabilityValidationContext::Attach,
+                )
+                .unwrap(),
+                attach_event_id: attachment_event_id.clone(),
+            },
+        );
+        let source_attachment = RuntimeEvidenceSourceAttachment {
+            adapter_id: Some(adapter_id),
+            adapter_generation: Some(Generation { value: 3 }),
+            attachment_event_id: Some(attachment_event_id),
+        };
+        let fallback_classification = classify_runtime_target(
+            &domain(),
+            &prior_external,
+            &source_attachment,
+            &adapters,
+            &symmetric_fallback.registry,
+        );
+        let replay_classification = classify_runtime_target(
+            &domain(),
+            &prior_external,
+            &source_attachment,
+            &adapters,
+            &fresh,
+        );
+        assert_eq!(fallback_classification, replay_classification);
+        assert!(matches!(
+            fallback_classification.disposition,
+            Some(runtime_generation_disposition::Disposition::Tombstoned(_))
+        ));
 
         // Mutate an internally well-formed checkpoint so it disagrees with
         // the authoritative tail's previous cursor. Recovery must discard the

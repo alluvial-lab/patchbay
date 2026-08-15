@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-generation-monotonicity-tombstoning
 kind: story
-stage: implementing
+stage: review
 tags: [protocol, verification, security]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-registration]
@@ -62,3 +62,13 @@ Consumes staged claimed-successor evidence. The stale fence implements every ing
 - Simplification: reused `fold_spawn_promotion_ordered`, `ProjectionState`, the claim registry, reverse index, dedicated append, and existing projection observers; no second promotion reactor, mutable side table, proto change, or generated-contract artifact change was added.
 - Discrepancies from design: the named authority/claim/command promotion folds and aggregate recovery plumbing were already landed by Leaf 6 and Unit 3, so Unit 4 extends their shared pre-state gate and assurance instead of duplicating files or events. The committed generated Quint inspection artifact is updated with the authored model even though the story named only the `.qnt` source.
 - Adjacent issues parked: none.
+
+### Fix round — symmetric tombstone checkpoint hydration
+
+- Execution capability: `openai-codex/gpt-5.6-sol` (caller-selected); review weight remains `thorough` from the autopilot caller, with a fresh independent re-review following this commit.
+- Symmetric validation: checkpoint hydration now treats a logical-target-owned lineage as managed before considering the legacy same-runtime path. Every managed session tombstone must match the logical-target tombstone/current lineage, and every retained logical-target tombstone must have an exact session-tombstone counterpart by adapter, deployment scope, runtime id, generation, and superseding LSN. Session-only legacy lineages remain accepted only when no logical target owns the external runtime.
+- Recovery regression: the changed-runtime checkpoint test now rejects removal of only the session tombstone. The checkpoint recovery test also proves an otherwise valid managed tombstone projection becomes a deterministic disposable miss when that counterpart is removed, falls back to LSN-0 replay, and converges with the full-replay sessions, both tombstone projections, and production late-runtime classification. The fallback assertion lives in `server/src/checkpoint.rs` because `recover_session_registry` owns the server recovery decision; the decoder-shape assertion stays beside the existing changed-runtime fixture in `server/src/snapshot.rs`.
+- Mutation evidence: removing only the new inverse logical-target-to-session validation made `checkpoint::tests::complete_checkpoint_round_trips_tombstones_source_cursor_and_tail` fail at the mismatched-checkpoint rejection (exit 101). `git restore core/src/session/registry.rs` restored the staged production implementation, and the focused tests passed afterward.
+- Formal inspection artifact: regenerated `specs/seed/session_generation.emitted.tla` from the `session_generation_promotion` main module with Quint 0.32.0, `--verbosity 0`, and the `--out` compile path; the committed TLA+ contains no checker diagnostics or absolute output path.
+- Verification: all four required groups pass on the final integrated Unit 4 + Unit 6 tree: `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`; contracts drift/vector/model/build (55 vectors, 22 implementation checks, 38 mutation witnesses); operator-domain build/tests (23/23); and Pi adapter tests (38/38).
+- Simplification/discrepancies: no protocol, generated-contract, or model-source change; the fix extends the existing checkpoint validation and recovery fixtures rather than adding a second hydration/replay path. No adjacent issues were parked.

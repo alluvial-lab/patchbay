@@ -608,26 +608,38 @@ mod tests {
             }],
             ..valid_snapshot()
         };
-        let stored = StoredSnapshot {
+        let complete = StoredSessionCheckpoint {
+            snapshot: Some(snapshot),
+            tombstones: vec![SessionCheckpointTombstone {
+                adapter_id: Some(adapter_id.clone()),
+                deployment_scope: "machine-a".to_owned(),
+                runtime_session_id: prior.runtime_session_id.clone(),
+                generation: prior.generation,
+                superseded_at_lsn: Some(Lsn { value: 6 }),
+            }],
+            logical_targets: logical_targets.checkpoint_records(),
+        };
+        let stored = |checkpoint: &StoredSessionCheckpoint| StoredSnapshot {
             event_id: EventId {
                 authority_domain_id: Some(domain("main")),
                 lsn: Some(Lsn { value: 7 }),
             },
-            payload: encode_stored_session_checkpoint(&StoredSessionCheckpoint {
-                snapshot: Some(snapshot),
-                tombstones: vec![SessionCheckpointTombstone {
-                    adapter_id: Some(adapter_id.clone()),
-                    deployment_scope: "machine-a".to_owned(),
-                    runtime_session_id: prior.runtime_session_id.clone(),
-                    generation: prior.generation,
-                    superseded_at_lsn: Some(Lsn { value: 6 }),
-                }],
-                logical_targets: logical_targets.checkpoint_records(),
-            }),
+            payload: encode_stored_session_checkpoint(checkpoint),
         };
+        let mut missing_session_tombstone = complete.clone();
+        missing_session_tombstone.tombstones.clear();
+        assert_eq!(
+            decode_compatible_session_checkpoint(
+                &stored(&missing_session_tombstone),
+                &domain("main"),
+                &Generation { value: 11 },
+            ),
+            Err(SessionCheckpointRejection::Semantic),
+            "managed logical-target and session tombstones must hydrate symmetrically",
+        );
 
         let mut decoded = decode_compatible_session_checkpoint(
-            &stored,
+            &stored(&complete),
             &domain("main"),
             &Generation { value: 11 },
         )

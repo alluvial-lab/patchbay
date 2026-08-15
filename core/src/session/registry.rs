@@ -205,6 +205,12 @@ impl SessionRegistry {
                 ));
             }
         }
+        if !checkpoint_logical_tombstones_have_session_counterparts(&logical_targets, &retained) {
+            return Err(SessionError::CorruptRecord(
+                "managed logical-target checkpoint tombstone has no exact session tombstone counterpart"
+                    .to_owned(),
+            ));
+        }
 
         if lockdown_active
             && sessions
@@ -1261,11 +1267,6 @@ fn checkpoint_tombstone_has_current_successor(
     logical_targets: &LogicalTargetRegistry,
     tombstone: &SessionTombstone,
 ) -> bool {
-    let legacy_key = SessionLiveKey {
-        adapter_id: tombstone.adapter_id.clone(),
-        deployment_scope: tombstone.deployment_scope.clone(),
-        runtime_session_id: tombstone.runtime_session_id.clone(),
-    };
     let valid_successor = |live: &SessionRecord| {
         tombstone.superseded_generation.value < live.identity.session_generation.value
             && tombstone.superseded_at_lsn
@@ -1273,50 +1274,80 @@ fn checkpoint_tombstone_has_current_successor(
                     .last_authoritative_lsn
                     .expect("checkpoint live records are validated before tombstones")
     };
-    if sessions.get(&legacy_key).is_some_and(valid_successor) {
-        return true;
-    }
-
     let superseded = ExternalRuntimeRef {
         adapter_id: Some(tombstone.adapter_id.clone()),
         deployment_scope: tombstone.deployment_scope.clone(),
         runtime_session_id: Some(tombstone.runtime_session_id.clone()),
         generation: Some(tombstone.superseded_generation),
     };
-    let Some(logical_target_id) = logical_targets.owner_of(&superseded) else {
-        return false;
-    };
-    let Some(target) = logical_targets.get(logical_target_id) else {
-        return false;
-    };
-    if !target.tombstones.values().any(|retained| {
-        retained.external_runtime_ref == superseded
-            && retained.superseded_at_lsn == tombstone.superseded_at_lsn
-    }) {
-        return false;
+    if let Some(logical_target_id) = logical_targets.owner_of(&superseded) {
+        let Some(target) = logical_targets.get(logical_target_id) else {
+            return false;
+        };
+        if !target.tombstones.values().any(|retained| {
+            retained.external_runtime_ref == superseded
+                && retained.superseded_at_lsn == tombstone.superseded_at_lsn
+        }) {
+            return false;
+        }
+        let Some(current) = target
+            .current
+            .as_ref()
+            .and_then(|runtime| runtime.external_runtime.as_ref())
+        else {
+            return false;
+        };
+        let (Some(adapter_id), Some(runtime_session_id), Some(generation)) = (
+            current.adapter_id.as_ref(),
+            current.runtime_session_id.as_ref(),
+            current.generation,
+        ) else {
+            return false;
+        };
+        let current_key = SessionLiveKey {
+            adapter_id: adapter_id.clone(),
+            deployment_scope: current.deployment_scope.clone(),
+            runtime_session_id: runtime_session_id.clone(),
+        };
+        return sessions.get(&current_key).is_some_and(|live| {
+            live.identity.session_generation == generation && valid_successor(live)
+        });
     }
-    let Some(current) = target
-        .current
-        .as_ref()
-        .and_then(|runtime| runtime.external_runtime.as_ref())
-    else {
-        return false;
+
+    let legacy_key = SessionLiveKey {
+        adapter_id: tombstone.adapter_id.clone(),
+        deployment_scope: tombstone.deployment_scope.clone(),
+        runtime_session_id: tombstone.runtime_session_id.clone(),
     };
-    let (Some(adapter_id), Some(runtime_session_id), Some(generation)) = (
-        current.adapter_id.as_ref(),
-        current.runtime_session_id.as_ref(),
-        current.generation,
-    ) else {
-        return false;
-    };
-    let current_key = SessionLiveKey {
-        adapter_id: adapter_id.clone(),
-        deployment_scope: current.deployment_scope.clone(),
-        runtime_session_id: runtime_session_id.clone(),
-    };
-    sessions
-        .get(&current_key)
-        .is_some_and(|live| live.identity.session_generation == generation && valid_successor(live))
+    sessions.get(&legacy_key).is_some_and(valid_successor)
+}
+
+fn checkpoint_logical_tombstones_have_session_counterparts(
+    logical_targets: &LogicalTargetRegistry,
+    session_tombstones: &HashMap<SessionTombstoneKey, SessionTombstone>,
+) -> bool {
+    logical_targets.records().all(|target| {
+        target.tombstones.values().all(|logical_tombstone| {
+            let external = &logical_tombstone.external_runtime_ref;
+            let (Some(adapter_id), Some(runtime_session_id), Some(generation)) = (
+                external.adapter_id.as_ref(),
+                external.runtime_session_id.as_ref(),
+                external.generation,
+            ) else {
+                return false;
+            };
+            session_tombstones
+                .get(&SessionTombstoneKey {
+                    adapter_id: adapter_id.clone(),
+                    deployment_scope: external.deployment_scope.clone(),
+                    runtime_session_id: runtime_session_id.clone(),
+                    generation,
+                })
+                .is_some_and(|session_tombstone| {
+                    session_tombstone.superseded_at_lsn == logical_tombstone.superseded_at_lsn
+                })
+        })
+    })
 }
 
 fn mutation_identity(
