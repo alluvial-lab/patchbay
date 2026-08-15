@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-reconnect-cursor-reconcile
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-restart-continuation-orchestration, research-handoff-spawn-cursor-authoritative-replacement-contract]
@@ -73,4 +73,22 @@ Final spawn-side checkpoint after restart orchestration and the early cursor con
   - Surface suites also **PASS**: `cd web-cockpit && npm test` (133/133) and `cd cli && npm test` (48/48 plus real-core resource projection).
 - Simplification: no parallel replay state machine, cursor translation, Pi-specific core ontology, replacement upsert path, generation allocator, or second snapshot authority was added. The vector runner reuses the sealed Leaf-4 transition owner and the cockpit reuses the existing exact snapshot builder.
 - Discrepancies from design: the named `core/src/session/{registry,replay}.rs` and `server/src/{checkpoint,snapshot}.rs` mechanisms required no production edits: Units 1–9 already landed ordered aggregate replay, exact promotion/tombstone folding, typed checkpoints, and current snapshots. Unit 10 consumes those mechanisms and adds mutation-sensitive convergence evidence at their stable public seams rather than duplicating them. The Pi concrete cursor store remains downstream exactly as designed.
+- Adjacent issues parked: none.
+
+### Fix round — storage-lineage-anchored cockpit reconciliation
+
+- Review finding resolved: the normal cockpit no longer lets a streamed `(authority_domain_id, LSN)` prefix remain storage-lineage-unanchored. Before the initial subscription and every finite clean-tail resumption, `Reconciler` loads both existing session/resource snapshot envelopes, validates their domain/LSN framing and matching positive `core_generation`, and binds that persisted generation into `PresentationModel` before folding another stream event.
+- Fail-closed comparison: a cached non-empty prefix with no generation anchor cannot be retroactively attributed to an arriving snapshot, and an anchored model accepts replacement only from the same authority domain, the same core/storage generation, and a strictly newer snapshot horizon. A foreign lineage keeps cached membership unchanged and the canonical reconnect path marks it unreconciled/stale instead of silently swapping in the foreign view.
+- Rationale: `SessionSnapshot.core_generation` and `ResourceSnapshot.core_generation` already carry the server's persisted core-generation plumbing from `server/src/state.rs`; the two-view handshake is sufficient for the committed single-core topology. No `.proto` or generated binding change was required.
+- Files changed: `web-cockpit/src/domain/{model,reconcile}.ts`; `web-cockpit/tests/{model,reconcile,conformance-vectors}.test.ts`; this story file.
+- Regression evidence: added the reviewer's stream-derived LSN-3 → higher-LSN generation-99 snapshot probe, which proves the cached prefix remains unreconciled and unchanged; added a production `Reconciler` clean-tail probe proving generation 7 is bound before the first event and generation 99 is rejected before a successor subscription opens. Existing same-lineage exact replacement and conformance fixtures now establish their lineage anchor explicitly.
+- Mutation evidence: all mutations were injected individually on the main tree over the staged fix, killed by focused tests, restored with `git restore`, and followed by an unstaged-clean status check. The restored old optional-generation comparison was killed by the generation-99 regression; removing the pre-subscription lineage handshake was killed by the clean-tail regression. The five prior review mutants stayed killed: equal-LSN remembered-stream acceptance; equal-LSN snapshot acceptance; cursor/leaf/epoch publication with old exact membership; a transient torn cursor-first store write; and detach degradation targeting successor generation N+1.
+- Full verification:
+  1. **PASS** — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings` (all workspace targets/tests/doctests; 35 runtime-evidence/promotion tests and 82 server unit tests; warnings denied).
+  2. **PASS** — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build` (57 vectors, 17 promoted, 26 implementation checks, 38 mutation witnesses; generated bindings clean).
+  3. **PASS** — `cd operator-domain && npm run build && npm test` (27/27).
+  4. **PASS** — `cd pi-adapter && npm test` (38/38, including real-core reconnect/restart E2E).
+  - Surface suites also **PASS**: `cd web-cockpit && npm test` (135/135) and `cd cli && npm test` (48/48 plus the real-core resource projection).
+- Simplification: reused the two generated snapshot envelopes and one presentation anchor; no subscription-envelope field, parallel lineage registry, generation ordering, or core/LSN translation was introduced.
+- Discrepancies from design: none. The fix follows the review's existing-snapshot-handshake option and does not change protocol design.
 - Adjacent issues parked: none.

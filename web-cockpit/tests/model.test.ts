@@ -518,7 +518,9 @@ test("terminal race labels derive from both durable control-request arrival orde
 });
 
 test("snapshot replacement discards the old projection and pending elicitations derive needs-you", () => {
-  const projection = new PresentationProjection(fold(emptyPresentationModel(), registration(1n, 1n)));
+  const projection = new PresentationProjection();
+  projection.bindCoreLineage(DOMAIN.value, CORE_GENERATION.value);
+  projection.foldEvent(registration(1n, 1n));
   projection.foldEvent(elicitationEvent(2n));
   assert.equal([...projection.model.sessions.values()][0]!.needsYou, true);
 
@@ -561,7 +563,9 @@ test("newer core snapshot authority exactly replaces cached N and remembered str
     generation: 2n,
   };
   const successorKey = sessionKey(successorIdentity);
-  const projection = new PresentationProjection(fold(emptyPresentationModel(), registration(1n, 1n)));
+  const projection = new PresentationProjection();
+  projection.bindCoreLineage(DOMAIN.value, CORE_GENERATION.value);
+  projection.foldEvent(registration(1n, 1n));
   projection.markUnreconciled();
 
   const baselines = {
@@ -634,6 +638,51 @@ test("newer core snapshot authority exactly replaces cached N and remembered str
   assert.equal(projection.model, repaired, "a non-newer cached-N snapshot installs nothing");
   assert.equal(projection.model.sessions.has(priorKey), false);
   assert.equal(projection.model.sessions.has(successorKey), true);
+});
+
+test("an unanchored streamed prefix rejects a higher-LSN generation-99 snapshot", () => {
+  const priorKey = sessionKey({
+    adapterId: "pi",
+    deploymentScope,
+    runtimeSessionId: "session-1",
+    generation: 1n,
+  });
+  const projection = new PresentationProjection();
+  projection.foldEvent(registration(3n, 1n));
+  projection.markUnreconciled();
+  const cached = projection.model;
+  const foreignGeneration = create(GenerationSchema, { value: 99n });
+
+  assert.throws(() => projection.replaceFromSnapshots({
+    session: create(SessionSnapshotSchema, {
+      authorityDomainId: DOMAIN,
+      snapshotLsn: create(LsnSchema, { value: 9n }),
+      coreGeneration: foreignGeneration,
+      sessions: [create(SessionSchema, {
+        authorityDomainId: DOMAIN,
+        adapterId,
+        deploymentScope,
+        runtimeSessionId: create(RuntimeSessionIdSchema, { value: "foreign-session" }),
+        sessionGeneration: create(GenerationSchema, { value: 99n }),
+        state: create(SessionStateSchema, {
+          connectivity: SessionConnectivityState.LIVE,
+          activity: SessionActivityState.IDLE,
+        }),
+        lastAuthoritativeLsn: create(LsnSchema, { value: 9n }),
+      })],
+    }),
+    resource: create(ResourceSnapshotSchema, {
+      authorityDomainId: DOMAIN,
+      snapshotLsn: create(LsnSchema, { value: 9n }),
+      coreGeneration: foreignGeneration,
+    }),
+  }, []), /no storage-lineage anchor/);
+
+  assert.equal(projection.model, cached, "foreign lineage installs no replacement prefix");
+  assert.equal(projection.model.coreGeneration, undefined);
+  assert.equal(projection.model.cursor, 3n);
+  assert.equal(projection.model.reconciled, false);
+  assert.equal(projection.model.sessions.has(priorKey), true);
 });
 
 test("a late Elicitation event cannot rewrite the first terminal state", () => {

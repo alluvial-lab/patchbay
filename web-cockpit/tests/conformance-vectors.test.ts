@@ -646,6 +646,7 @@ function executeSpawnReconnectSurface(vector: ConformanceVector): void {
   };
 
   const projection = new PresentationProjection();
+  projection.bindCoreLineage(domain.value, coreGeneration.value);
   projection.foldEvent(registrationEvent(cachedLsn, priorRuntime, cachedGeneration));
   projection.markUnreconciled();
   projection.replaceFromSnapshots({

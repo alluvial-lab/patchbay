@@ -66,6 +66,7 @@ class RecordingProjection implements ReconcileProjection {
   readonly marks: Array<"stream-break" | "event-gap"> = [];
   visibleConnectivity = SessionConnectivityState.LIVE;
   snapshots = 0;
+  readonly coreLineages: Array<{ authorityDomainId: string; coreGeneration: bigint }> = [];
 
   markUnreconciled(reason: "stream-break" | "event-gap"): void {
     this.marks.push(reason);
@@ -79,6 +80,17 @@ class RecordingProjection implements ReconcileProjection {
       snapshots.session.sessions[0]?.state?.connectivity ?? SessionConnectivityState.UNKNOWN;
   }
 
+  bindCoreLineage(authorityDomainId: string, coreGeneration: bigint): void {
+    const current = this.coreLineages[0];
+    if (current && (
+      current.authorityDomainId !== authorityDomainId
+      || current.coreGeneration !== coreGeneration
+    )) {
+      throw new Error("cross-generation core lineage rejected");
+    }
+    this.coreLineages.push({ authorityDomainId, coreGeneration });
+  }
+
   foldEvent(event: SubscribeEvent): void {
     this.folded.push(eventLsn(event));
   }
@@ -89,6 +101,7 @@ test("stream breaks rebuild the projection prefix before resuming from the snaps
   const cursors: bigint[] = [];
   const reconciliationSignals: string[] = [];
   let subscription = 0;
+  let snapshotReads = 0;
   const client: ReconcileClient = {
     subscribe(request) {
       cursors.push(request.cursor!.value);
@@ -98,7 +111,13 @@ test("stream breaks rebuild the projection prefix before resuming from the snaps
       return values([event(2n)]);
     },
     async loadSnapshot(request) {
-      assert.equal(projection.visibleConnectivity, SessionConnectivityState.STALE);
+      snapshotReads += 1;
+      assert.equal(
+        projection.visibleConnectivity,
+        snapshotReads === 3 || snapshotReads === 4
+          ? SessionConnectivityState.STALE
+          : SessionConnectivityState.LIVE,
+      );
       return snapshotResponse(request.viewKind, 1n);
     },
   };
@@ -131,8 +150,8 @@ test("clean completion at the durable tail stays reconciled and re-subscribes", 
       subscription += 1;
       return subscription === 1 ? values([event(1n)]) : values([event(2n)]);
     },
-    async loadSnapshot() {
-      assert.fail("clean completion must not trigger snapshot reconciliation");
+    async loadSnapshot(request) {
+      return snapshotResponse(request.viewKind, 2n);
     },
   };
 
@@ -147,7 +166,46 @@ test("clean completion at the durable tail stays reconciled and re-subscribes", 
   assert.deepEqual(cursors, [0n, 1n]);
   assert.deepEqual(projection.marks, []);
   assert.equal(projection.visibleConnectivity, SessionConnectivityState.LIVE);
+  assert.ok(projection.coreLineages.length >= 2, "every clean-tail subscription turn is lineage-bound");
   assert.equal(reconciler.currentCursor, 2n);
+});
+
+test("clean-tail resumption rejects a foreign storage lineage without replacing cached streamed state", async () => {
+  const controller = new AbortController();
+  const projection = new PresentationProjection();
+  let subscriptions = 0;
+  let delays = 0;
+  const foreignGeneration = create(GenerationSchema, { value: 99n });
+  const client: ReconcileClient = {
+    subscribe(request) {
+      subscriptions += 1;
+      assert.equal(subscriptions, 1, "foreign lineage must be rejected before another stream opens");
+      assert.equal(request.cursor?.value, 0n);
+      return values([operationEvent(3n)]);
+    },
+    async loadSnapshot(request) {
+      return subscriptions === 0
+        ? snapshotResponse(request.viewKind, 0n)
+        : snapshotResponse(request.viewKind, 9n, DOMAIN, foreignGeneration);
+    },
+  };
+  const reconciler = new Reconciler(client, projection, {
+    retryDelayMs: 0,
+    delay: async () => {
+      delays += 1;
+      if (delays === 2) controller.abort();
+    },
+  });
+
+  for await (const _ of reconciler.subscribe(DOMAIN, controller.signal)) {
+    // The generation-7 prefix is accepted only after the initial handshake.
+  }
+
+  assert.equal(projection.model.coreGeneration, 7n);
+  assert.equal(projection.model.cursor, 3n);
+  assert.equal(projection.model.commands.has("command-1"), true);
+  assert.equal(projection.model.reconciled, false, "cross-lineage resumption keeps cached state stale");
+  assert.equal(subscriptions, 1);
 });
 
 test("filtered audit-record holes do not replace the projection snapshot", async () => {
@@ -160,8 +218,8 @@ test("filtered audit-record holes do not replace the projection snapshot", async
       assert.equal(request.cursor!.value, 0n);
       return values([operationEvent(1n), observationEvent(4n)]);
     },
-    async loadSnapshot() {
-      assert.fail("a successful filtered stream must not trigger snapshot replacement");
+    async loadSnapshot(request) {
+      return snapshotResponse(request.viewKind, 4n);
     },
   };
 
@@ -191,8 +249,8 @@ test("filtered authority-record holes preserve the reconciled model", async () =
       assert.equal(request.cursor!.value, 0n);
       return values(prefix);
     },
-    async loadSnapshot() {
-      assert.fail("filtered authority records are not stream loss");
+    async loadSnapshot(request) {
+      return snapshotResponse(request.viewKind, 4n);
     },
   };
 
@@ -229,8 +287,8 @@ test("a diagnostics query lifecycle hole preserves its just-returned adapter sta
       assert.equal(request.cursor!.value, 0n);
       return values([operationEvent(1n), observationEvent(4n)]);
     },
-    async loadSnapshot() {
-      assert.fail("query lifecycle audit records are filtered, not stream loss");
+    async loadSnapshot(request) {
+      return snapshotResponse(request.viewKind, 5n);
     },
   };
   const reconciler = new Reconciler(client, projection, {
@@ -281,11 +339,12 @@ test("a failed resource snapshot read installs no half-reconciled replacement", 
   const controller = new AbortController();
   const projection = new PresentationProjection();
   let snapshotReads = 0;
+  let resourceReads = 0;
   const client: ReconcileClient = {
     subscribe: () => brokenAfter([operationEvent(1n)]),
     async loadSnapshot(request) {
       snapshotReads += 1;
-      if (request.viewKind === SnapshotViewKind.RESOURCE) {
+      if (request.viewKind === SnapshotViewKind.RESOURCE && ++resourceReads > 1) {
         throw new Error("injected resource snapshot failure");
       }
       return snapshotResponse(request.viewKind, 1n);
@@ -300,7 +359,7 @@ test("a failed resource snapshot read installs no half-reconciled replacement", 
     // The first command folds before the stream break.
   }
 
-  assert.equal(snapshotReads, 2);
+  assert.equal(snapshotReads, 4);
   assert.equal(reconciler.currentCursor, 1n);
   assert.equal(projection.model.cursor, 1n);
   assert.equal(projection.model.commands.has("command-1"), true);
@@ -313,6 +372,7 @@ test("the cursor does not advance when projection folding throws", async () => {
   const projection: ReconcileProjection = {
     markUnreconciled() {},
     replaceFromSnapshots() {},
+    bindCoreLineage() {},
     foldEvent() {
       throw new Error("injected fold failure");
     },
@@ -370,8 +430,12 @@ test("unreconciled state is never visible as live across generated stream breaks
       }
 
       assert.deepEqual(observedAtSnapshotLoad, [
+        SessionConnectivityState.LIVE,
+        SessionConnectivityState.LIVE,
         SessionConnectivityState.STALE,
         SessionConnectivityState.STALE,
+        SessionConnectivityState.LIVE,
+        SessionConnectivityState.LIVE,
       ]);
       assert.equal(reconciler.currentCursor, BigInt(breakAfter + 1));
       assert.equal(new Set(projection.folded).size, projection.folded.length);
@@ -469,12 +533,13 @@ function snapshotResponse(
   viewKind: SnapshotViewKind,
   lsn: bigint,
   authorityDomainId: AuthorityDomainId = DOMAIN,
+  coreGeneration = CORE_GENERATION,
 ): LoadSnapshotResponse {
   const snapshotPayload = viewKind === SnapshotViewKind.SESSION
     ? toBinary(SessionSnapshotSchema, create(SessionSnapshotSchema, {
         authorityDomainId,
         snapshotLsn: create(LsnSchema, { value: lsn }),
-        coreGeneration: CORE_GENERATION,
+        coreGeneration,
         sessions: [
           create(SessionSchema, {
             authorityDomainId,
@@ -492,7 +557,7 @@ function snapshotResponse(
     : toBinary(ResourceSnapshotSchema, create(ResourceSnapshotSchema, {
         authorityDomainId,
         snapshotLsn: create(LsnSchema, { value: lsn }),
-        coreGeneration: CORE_GENERATION,
+        coreGeneration,
       }));
   return create(LoadSnapshotResponseSchema, {
     present: true,

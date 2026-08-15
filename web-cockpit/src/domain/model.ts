@@ -568,6 +568,29 @@ export function replaceSecuritySnapshot(
   return next;
 }
 
+/** Establishes the persisted storage-lineage fence before subscription events
+ * can become authoritative. A non-empty streamed prefix with no prior anchor
+ * cannot be retroactively attributed to whichever snapshot arrives later. */
+export function bindCoreLineage(
+  model: PresentationModel,
+  authorityDomainId: string,
+  coreGeneration: bigint,
+): PresentationModel {
+  const domain = required(authorityDomainId, "core lineage authority domain");
+  if (coreGeneration <= 0n) throw new Error("core lineage generation must be positive");
+  if (model.authorityDomainId && model.authorityDomainId !== domain) {
+    throw new Error("cross-domain core lineage rejected");
+  }
+  if (model.coreGeneration !== undefined && model.coreGeneration !== coreGeneration) {
+    throw new Error("cross-generation core lineage rejected");
+  }
+  if (model.cursor > 0n && model.coreGeneration === undefined) {
+    throw new Error("cached core authority has no storage-lineage anchor");
+  }
+  if (model.authorityDomainId === domain && model.coreGeneration === coreGeneration) return model;
+  return { ...model, authorityDomainId: domain, coreGeneration };
+}
+
 /** Marks cached axes honestly while a stream/snapshot gap is unresolved. */
 export function markUnreconciled(model: PresentationModel): PresentationModel {
   const next = cloneModel(model);
@@ -622,6 +645,10 @@ export class PresentationProjection implements ReconcileProjection {
 
   replaceSecuritySnapshot(snapshot: SecuritySnapshot): void {
     this.model = replaceSecuritySnapshot(this.model, snapshot);
+  }
+
+  bindCoreLineage(authorityDomainId: string, coreGeneration: bigint): void {
+    this.model = bindCoreLineage(this.model, authorityDomainId, coreGeneration);
   }
 
   foldEvent(event: SubscribeEvent): void {
@@ -1964,10 +1991,10 @@ function assertNewerCoreAuthority(
   if (replacement.authorityDomainId !== current.authorityDomainId) {
     throw new Error("cross-domain snapshot replacement rejected");
   }
-  if (
-    current.coreGeneration !== undefined
-    && replacement.coreGeneration !== current.coreGeneration
-  ) {
+  if (current.coreGeneration === undefined) {
+    throw new Error("cached core authority has no storage-lineage anchor");
+  }
+  if (replacement.coreGeneration !== current.coreGeneration) {
     throw new Error("cross-generation snapshot replacement rejected");
   }
   if (replacement.cursor <= current.cursor) {

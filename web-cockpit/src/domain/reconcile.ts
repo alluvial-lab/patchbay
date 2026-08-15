@@ -12,7 +12,9 @@ import {
   type LoadSecuritySnapshotResponse,
   type LoadSnapshotRequest,
   type LoadSnapshotResponse,
+  type ResourceSnapshot,
   type SecuritySnapshot,
+  type SessionSnapshot,
   type SubscribeEvent,
   type SubscribeRequest,
 } from "@patchbay/contracts";
@@ -33,6 +35,7 @@ export interface ReconcileProjection {
     replayEvents: readonly SubscribeEvent[],
   ): void | Promise<void>;
   replaceSecuritySnapshot?(snapshot: SecuritySnapshot): void | Promise<void>;
+  bindCoreLineage(authorityDomainId: string, coreGeneration: bigint): void | Promise<void>;
   foldEvent(event: SubscribeEvent): void | Promise<void>;
 }
 
@@ -89,6 +92,11 @@ export class Reconciler {
 
     while (!signal?.aborted) {
       try {
+        // SubscribeEvent has no storage-continuity field. Bind this finite
+        // subscription turn to the matching session/resource snapshot epoch
+        // before any streamed event can become presentation authority. This
+        // runs for initial establishment and every clean-tail resumption.
+        await this.bindCoreLineage(authorityDomainId);
         const request = create(SubscribeRequestSchema, {
           authorityDomainId,
           cursor: create(LsnSchema, { value: this.cursor }),
@@ -134,6 +142,28 @@ export class Reconciler {
   }
 
   private async reconcile(authorityDomainId: AuthorityDomainId): Promise<void> {
+    const { session, resource, coreGeneration, horizon } = await this.loadSnapshotBaselines(authorityDomainId);
+    await this.projection.bindCoreLineage(authorityDomainId.value, coreGeneration);
+    if (horizon < this.cursor) throw new Error("older snapshot horizon rejected");
+
+    const replayEvents = await this.replayThrough(authorityDomainId, horizon);
+    await this.projection.replaceFromSnapshots({ session, resource }, replayEvents);
+    await this.loadSecuritySnapshot(authorityDomainId);
+    this.cursor = horizon;
+    this.onReconciliationComplete?.("stream-reconnect");
+  }
+
+  private async bindCoreLineage(authorityDomainId: AuthorityDomainId): Promise<void> {
+    const { coreGeneration } = await this.loadSnapshotBaselines(authorityDomainId);
+    await this.projection.bindCoreLineage(authorityDomainId.value, coreGeneration);
+  }
+
+  private async loadSnapshotBaselines(authorityDomainId: AuthorityDomainId): Promise<{
+    session: SessionSnapshot;
+    resource: ResourceSnapshot;
+    coreGeneration: bigint;
+    horizon: bigint;
+  }> {
     // Load and validate both independently materialized axes before touching
     // the cached projection. A failed second read leaves the old model stale.
     const sessionResponse = await this.loadSnapshotView(authorityDomainId, SnapshotViewKind.SESSION);
@@ -165,14 +195,12 @@ export class Reconciler {
       authorityDomainId.value,
       "resource",
     );
-    const horizon = sessionLsn > resourceLsn ? sessionLsn : resourceLsn;
-    if (horizon < this.cursor) throw new Error("older snapshot horizon rejected");
-
-    const replayEvents = await this.replayThrough(authorityDomainId, horizon);
-    await this.projection.replaceFromSnapshots({ session, resource }, replayEvents);
-    await this.loadSecuritySnapshot(authorityDomainId);
-    this.cursor = horizon;
-    this.onReconciliationComplete?.("stream-reconnect");
+    return {
+      session,
+      resource,
+      coreGeneration: sessionCoreGeneration,
+      horizon: sessionLsn > resourceLsn ? sessionLsn : resourceLsn,
+    };
   }
 
   private async loadSnapshotView(
