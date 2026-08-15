@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-stale-event-fencing
 kind: story
-stage: review
+stage: implementing
 tags: [protocol, security, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-generation-monotonicity-tombstoning]
