@@ -28,6 +28,7 @@ use prost_types::Timestamp;
 struct TestGrantCheck {
     authorized: bool,
     calls: AtomicUsize,
+    resolved_calls: AtomicUsize,
 }
 
 impl TestGrantCheck {
@@ -35,6 +36,7 @@ impl TestGrantCheck {
         Self {
             authorized,
             calls: AtomicUsize::new(0),
+            resolved_calls: AtomicUsize::new(0),
         }
     }
 }
@@ -62,6 +64,16 @@ impl GrantCheck for TestGrantCheck {
                 target: "session".to_owned(),
             })
         })
+    }
+
+    fn check_resolved_at(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _issuer: &dyn IssuerContext,
+        request: ResolvedGrantCheck<'_>,
+    ) -> impl std::future::Future<Output = Result<Authorized, GrantDenied>> + Send {
+        self.resolved_calls.fetch_add(1, Ordering::Relaxed);
+        ready(Ok(request.authorization))
     }
 }
 
@@ -1239,9 +1251,9 @@ async fn unknown_target_rejects_without_durable_state() {
 }
 
 #[tokio::test]
-async fn continuation_requires_compound_authority_while_fresh_spawn_remains_enabled() {
+async fn guarded_continuation_writes_no_event_while_fresh_spawn_uses_resolved_grant_path() {
     let continuation_storage = RusqliteStorage::open_in_memory().unwrap();
-    let continuation_grant = TestGrantCheck::new(true);
+    let continuation_grant = CompoundGrantCheck::new();
     let continuation_resolver = TestTargetResolver::new(true);
 
     let rejected = submit(
@@ -1257,41 +1269,20 @@ async fn continuation_requires_compound_authority_while_fresh_spawn_remains_enab
     .unwrap();
 
     assert_eq!(outcome(&rejected), SubmissionOutcome::Rejected);
-    assert_eq!(failure(&rejected), FailureCode::AuthorizationDenied);
-    assert_eq!(rejected.reason_code, "authorization_denied");
+    assert_eq!(failure(&rejected), FailureCode::UnsupportedCommand);
+    assert_eq!(rejected.reason_code, "unsupported_command");
     assert!(rejected
         .diagnostic_message
-        .contains("replacement authority"));
-    assert_eq!(continuation_grant.calls.load(Ordering::Relaxed), 1);
-    assert_eq!(continuation_resolver.calls.load(Ordering::Relaxed), 1);
-    assert!(durable_events(&continuation_storage).await.is_empty());
-
-    let compound_storage = RusqliteStorage::open_in_memory().unwrap();
-    let compound_grant = CompoundGrantCheck::new();
-    let compound_resolver = TestTargetResolver::new(true);
-    let accepted_continuation = submit(
-        &compound_storage,
-        &compound_grant,
-        &compound_resolver,
-        &AlwaysAccepted,
-        &NoElicitationContractLookup,
-        &issuer(),
-        spawn_operation(spawn_continuation(), "authorized-continuation"),
-    )
-    .await
-    .unwrap();
-    assert_eq!(outcome(&accepted_continuation), SubmissionOutcome::Accepted);
-    assert_eq!(compound_grant.spawn_calls.load(Ordering::Relaxed), 1);
-    assert_eq!(compound_grant.replacement_calls.load(Ordering::Relaxed), 1);
-    let compound_events = durable_events(&compound_storage).await;
-    assert_eq!(compound_events.len(), 1);
-    let accepted = AcceptedOperation::decode(compound_events[0].payload.payload.as_slice())
-        .expect("accepted continuation envelope decodes");
+        .contains("atomic claim acceptance"));
+    assert_eq!(continuation_grant.spawn_calls.load(Ordering::Relaxed), 0);
     assert_eq!(
-        accepted.authorizing_grant_id,
-        Some(GrantId {
-            value: "spawn-grant".to_owned(),
-        })
+        continuation_grant.replacement_calls.load(Ordering::Relaxed),
+        0
+    );
+    assert_eq!(continuation_resolver.calls.load(Ordering::Relaxed), 0);
+    assert!(
+        durable_events(&continuation_storage).await.is_empty(),
+        "a guarded continuation must leave no Operation event for legacy spawn completion"
     );
 
     let fresh_storage = RusqliteStorage::open_in_memory().unwrap();
@@ -1314,10 +1305,19 @@ async fn continuation_requires_compound_authority_while_fresh_spawn_remains_enab
 
     assert_eq!(outcome(&accepted), SubmissionOutcome::Accepted);
     assert_eq!(fresh_grant.calls.load(Ordering::Relaxed), 1);
+    assert_eq!(fresh_grant.resolved_calls.load(Ordering::Relaxed), 1);
     assert_eq!(fresh_resolver.calls.load(Ordering::Relaxed), 1);
     let events = durable_events(&fresh_storage).await;
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].payload.kind, StoredEventKind::Operation as i32);
+    let accepted = AcceptedOperation::decode(events[0].payload.payload.as_slice())
+        .expect("accepted fresh-spawn envelope decodes");
+    assert_eq!(
+        accepted.authorizing_grant_id,
+        Some(GrantId {
+            value: "test-grant".to_owned(),
+        })
+    );
 }
 
 #[tokio::test]

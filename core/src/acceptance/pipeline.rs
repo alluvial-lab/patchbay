@@ -1,10 +1,10 @@
 //! Operation submission and durable acceptance.
 
 use patchbay_contracts::patchbay::{
-    AcceptedOperation, ActorEndpointRef, AuthorityDomainId, CommandId, EventId, FailureCode,
-    GrantId, IdempotencyKey, Lsn, Operation, OperationKind, OperationState, StoredEventKind,
-    StoredEventPayload, SubmissionOutcome, SubmissionResult, TargetScope, TargetScopeKind,
-    TimeWindow,
+    spawn_request, AcceptedOperation, ActorEndpointRef, AuthorityDomainId, CommandId, EventId,
+    FailureCode, GrantId, IdempotencyKey, Lsn, Operation, OperationKind, OperationState,
+    StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmissionResult, TargetScope,
+    TargetScopeKind, TimeWindow,
 };
 use prost::Message;
 use prost_types::Timestamp;
@@ -271,6 +271,25 @@ where
     } else {
         None
     };
+
+    // Continuation stays guarded until acceptance can atomically persist the
+    // exact generation claim and both selected Grant ids. In particular, it
+    // must never fall through to the ordinary AcceptedOperation writer below.
+    if matches!(
+        spawn_request
+            .as_ref()
+            .and_then(|request| request.intent.as_ref()),
+        Some(spawn_request::Intent::Continuation(_))
+    ) {
+        return Ok(rejected_result(
+            Some(validated.command_id.clone()),
+            FailureCode::UnsupportedCommand,
+            "unsupported_command".to_owned(),
+            None,
+            "spawn continuation requires atomic claim acceptance, which is not yet supported"
+                .to_owned(),
+        ));
+    }
 
     if matches!(
         validated.operation_kind,

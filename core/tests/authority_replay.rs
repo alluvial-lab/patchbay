@@ -545,7 +545,7 @@ async fn resolved_continuation_decision(
 }
 
 #[tokio::test]
-async fn continuation_compound_authority_requires_exact_live_replacement_and_selects_canonically() {
+async fn continuation_resolution_round_trips_both_grant_ids_and_exact_prior() {
     let storage = RusqliteStorage::open_in_memory().unwrap();
     let mut registry = AuthorityRegistry::new();
     let mut spawn = grant("spawn-grant", "operator");
@@ -615,27 +615,31 @@ async fn continuation_compound_authority_requires_exact_live_replacement_and_sel
     )
     .await
     .unwrap();
-    let decision = resolved_continuation_decision(&registry, &timestamp(100))
-        .await
-        .unwrap();
-    assert_eq!(decision.grant_id, Some(grant_id("spawn-grant")));
-    assert_eq!(
-        decision.continuation_authority,
-        Some(ContinuationAuthorityProvenance {
+    let expected = Authorized {
+        grant_id: Some(grant_id("spawn-grant")),
+        continuation_authority: Some(ContinuationAuthorityProvenance {
             exact_prior: Some(exact_prior(7)),
             replacement_grant_id: Some(grant_id("replacement-a")),
             replacement_authority_kind: OperationKind::SessionManagement as i32,
-        })
-    );
+        }),
+    };
+    let live_decision = resolved_continuation_decision(&registry, &timestamp(100))
+        .await
+        .expect("live resolution returns complete compound provenance");
+    assert_eq!(live_decision, expected);
+
+    // Round-trip the authority input log and ask the production decision port
+    // again. The independent expected value makes either selected Grant id or
+    // the exact prior load-bearing rather than comparing two equally stripped
+    // live/replayed results.
     let rebuilt = rebuild_from_log(&storage, &domain("authority-main"))
         .await
         .expect("compound authority prefix replays");
-    assert_eq!(
-        resolved_continuation_decision(&rebuilt, &timestamp(100))
-            .await
-            .expect("replay selects the same compound authority"),
-        decision
-    );
+    let replayed_decision = resolved_continuation_decision(&rebuilt, &timestamp(100))
+        .await
+        .expect("replay selects complete compound provenance");
+    assert_eq!(replayed_decision, expected);
+    assert_eq!(replayed_decision, live_decision);
 }
 
 #[tokio::test]
