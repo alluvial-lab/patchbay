@@ -4,21 +4,23 @@ use patchbay_contracts::patchbay::{
     AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AuditEventKind,
     AuditRecord, AuthorityDomainId, CommandId, CommandTransition, ContinuationAuthorityProvenance,
     DescendantGrant, DescendantGrantProvenance, Elicitation, ElicitationId, ElicitationState,
-    EndpointId, EventId, ExternalRuntimeRef, FailureCode, FreshSpawn, Generation, Grant, GrantId,
-    GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LogicalTargetCandidateReleased,
-    LogicalTargetCreated, LogicalTargetId, LogicalTargetInitialCurrentAssigned, Lsn, Observation,
-    ObservationKind, Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
+    EndpointId, EventId, ExternalEffectDisposition, ExternalRuntimeRef, FailureCode, FreshSpawn,
+    Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey,
+    LogicalTargetCandidateReleased, LogicalTargetCandidateReserved, LogicalTargetCreated,
+    LogicalTargetId, LogicalTargetInitialCurrentAssigned, Lsn, Observation, ObservationKind,
+    Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
     QuarantinedRuntimeEvidence, Revocation, RuntimeDeliveryAcknowledgementEvidence,
     RuntimeElicitationMutationEvidence, RuntimeEvidenceClassificationContext,
     RuntimeEvidenceQuarantineReason, RuntimeEvidenceSourceAttachment, RuntimeGenerationDisposition,
     RuntimeGenerationRef, RuntimeGenerationUnknown, RuntimeSessionId,
     RuntimeTranscriptStatusEvidence, SessionActivityState, SessionConnectivityState,
     SessionRegistered, SessionReport, SessionReportSourceCursor, SessionState, SpawnClaimAccepted,
-    SpawnClaimDisposition, SpawnClaimEvent, SpawnContinuation, SpawnGenerationClaim,
-    SpawnPendingReplacementFence, SpawnPromotionAuthorityEvidence, SpawnPromotionCommitted,
-    SpawnPromotionLifecycleEvidence, SpawnPromotionResultEvidence, SpawnPromotionStagedEvidence,
-    SpawnRequest, SpawnSuccessorEvidenceStaged, SpawnTargetSpec, StoredEventKind,
-    StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
+    SpawnClaimDisposition, SpawnClaimEvent, SpawnContinuation, SpawnEvidenceAttachment,
+    SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
+    SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnPromotionAuthorityEvidence,
+    SpawnPromotionCommitted, SpawnPromotionLifecycleEvidence, SpawnPromotionResultEvidence,
+    SpawnPromotionStagedEvidence, SpawnRequest, SpawnSuccessorEvidenceStaged, SpawnTargetSpec,
+    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{CommandIndex, ElicitationSlotLayer},
@@ -29,7 +31,8 @@ use patchbay_core::{
     session::{
         classify_session_report, encode_quarantined_runtime_evidence, encode_spawn_claim_event,
         encode_staged_successor, fold_spawn_promotion_ordered, next_spawn_promotion,
-        ExternalRuntimeOwnership, SessionRegistry, SpawnClaimQuery, SpawnClaimRegistry,
+        rebuild_spawn_claims_from_log, ExternalRuntimeOwnership, SessionRegistry, SpawnClaimQuery,
+        SpawnClaimRegistry,
     },
     storage::{
         AuditRecordDraft, AuditedStorage, RecordedEvent, RusqliteStorage, Storage, StorageError,
@@ -137,6 +140,209 @@ fn accepted_claim() -> SpawnClaimAccepted {
         claim: Some(claim()),
         ..SpawnClaimAccepted::default()
     }
+}
+
+fn competing_claim() -> SpawnClaimAccepted {
+    let command_id = CommandId {
+        value: "spawn-b".to_owned(),
+    };
+    let logical_target_id = LogicalTargetId {
+        value: "logical-b".to_owned(),
+    };
+    let mut accepted_operation = accepted_operation();
+    let operation = accepted_operation
+        .operation
+        .as_mut()
+        .expect("accepted Operation fixture");
+    operation.command_id = Some(command_id.clone());
+    operation.idempotency_key = "spawn-b-key".to_owned();
+    SpawnClaimAccepted {
+        accepted_operation: Some(accepted_operation),
+        claim: Some(SpawnGenerationClaim {
+            authority_domain_id: Some(domain()),
+            claim_operation_id: Some(command_id),
+            logical_target_id: Some(logical_target_id),
+            expected_prior: None,
+            claimed_generation: Some(Generation { value: 1 }),
+        }),
+        ..SpawnClaimAccepted::default()
+    }
+}
+
+fn identified_evidence(
+    accepted: &SpawnClaimAccepted,
+    external_runtime: ExternalRuntimeRef,
+    phase: SpawnExecutionPhase,
+    failure: FailureCode,
+) -> SpawnExecutionEvidence {
+    let claim = accepted.claim.clone().expect("accepted claim fixture");
+    SpawnExecutionEvidence {
+        authority_domain_id: Some(domain()),
+        exact_claim: Some(claim.clone()),
+        phase: phase as i32,
+        external_effect_disposition: ExternalEffectDisposition::Identified as i32,
+        producer: SpawnExecutionEvidenceProducer::CurrentAdapter as i32,
+        source_attachment: Some(SpawnEvidenceAttachment {
+            adapter_id: Some(AdapterId {
+                value: "pi".to_owned(),
+            }),
+            adapter_generation: Some(Generation { value: 3 }),
+            attachment_event_id: Some(event_id(1)),
+        }),
+        failure_code: failure as i32,
+        no_external_effect_proof: None,
+        external_runtime: Some(RuntimeGenerationRef {
+            logical_target_id: claim.logical_target_id,
+            external_runtime: Some(external_runtime),
+        }),
+    }
+}
+
+async fn append_claim(storage: &RusqliteStorage, accepted: SpawnClaimAccepted, target_key: &str) {
+    let accepted_operation = accepted
+        .accepted_operation
+        .as_ref()
+        .expect("accepted claim fixture");
+    let operation = accepted_operation
+        .operation
+        .as_ref()
+        .expect("accepted Operation fixture");
+    let mut audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        AuditEventKind::CommandSubmissionAccepted,
+    );
+    audit.actor_id = operation
+        .sender
+        .as_ref()
+        .and_then(|sender| sender.actor_id.clone());
+    audit.endpoint_id = operation
+        .sender
+        .as_ref()
+        .and_then(|sender| sender.endpoint_id.clone());
+    audit.device_id = operation
+        .sender
+        .as_ref()
+        .and_then(|sender| sender.device_id.clone());
+    audit.command_id = operation.command_id.clone();
+    audit.grant_id = accepted_operation.authorizing_grant_id.clone();
+    audit.target_scope = operation.target_scope.clone();
+    audit.reason_code = "operation_spawn".to_owned();
+    let idempotency_key = IdempotencyKey {
+        value: operation.idempotency_key.clone(),
+    };
+    let logical_payload = operation.encode_to_vec();
+    storage
+        .append_spawn_claim_accepted(
+            &domain(),
+            &idempotency_key,
+            &TargetKey::new(target_key.to_owned()).expect("target key fixture"),
+            accepted,
+            audit,
+            logical_payload,
+        )
+        .await
+        .expect("claim appends through its dedicated boundary");
+}
+
+async fn append_logical_target_owner(
+    storage: &RusqliteStorage,
+    external_runtime: ExternalRuntimeRef,
+    reserved_candidate: bool,
+) {
+    storage
+        .append(&domain(), attachment_event(1).payload)
+        .await
+        .expect("adapter attachment appends");
+    storage
+        .append(
+            &domain(),
+            patchbay_core::session::events::encode(
+                &patchbay_core::session::events::logical_target_created(
+                    domain(),
+                    LogicalTargetCreated {
+                        logical_target_id: Some(LogicalTargetId {
+                            value: "logical-a".to_owned(),
+                        }),
+                        adapter_id: Some(AdapterId {
+                            value: "pi".to_owned(),
+                        }),
+                        deployment_scope: "machine-a".to_owned(),
+                    },
+                ),
+            ),
+        )
+        .await
+        .expect("logical target creation appends");
+    let ownership = if reserved_candidate {
+        patchbay_core::session::events::logical_target_candidate_reserved(
+            domain(),
+            LogicalTargetCandidateReserved {
+                logical_target_id: Some(LogicalTargetId {
+                    value: "logical-a".to_owned(),
+                }),
+                external_runtime_ref: Some(external_runtime),
+            },
+        )
+    } else {
+        patchbay_core::session::events::logical_target_initial_current_assigned(
+            domain(),
+            LogicalTargetInitialCurrentAssigned {
+                logical_target_id: Some(LogicalTargetId {
+                    value: "logical-a".to_owned(),
+                }),
+                external_runtime_ref: Some(external_runtime),
+            },
+        )
+    };
+    storage
+        .append(
+            &domain(),
+            patchbay_core::session::events::encode(&ownership),
+        )
+        .await
+        .expect("logical target ownership appends");
+}
+
+fn seed_fixture_grant_identities(path: &std::path::Path, grants: &[(&str, u64)]) {
+    let db = rusqlite::Connection::open(path).expect("fixture database opens");
+    for (grant_id, source_lsn) in grants {
+        db.execute(
+            "INSERT INTO grant_identities (authority_domain_id, grant_id, source_lsn)
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params![domain().value, grant_id, source_lsn],
+        )
+        .expect("fixture grant identity seeds");
+    }
+}
+
+async fn assert_wrong_claim_identified_runtime_rejected(
+    storage: &RusqliteStorage,
+    evidence: SpawnExecutionEvidence,
+) {
+    let before = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .expect("durable prefix reads before wrong-claim evidence");
+    assert!(matches!(
+        storage
+            .append_spawn_execution_evidence_reconciled(&domain(), evidence)
+            .await,
+        Err(StorageError::DuplicateNativeReference {
+            owner,
+            attempted_owner,
+        }) if owner == "logical-a" && attempted_owner == "logical-b"
+    ));
+    assert_eq!(
+        storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .expect("durable prefix reads after wrong-claim evidence"),
+        before,
+        "wrong-claim identified evidence must append zero events"
+    );
 }
 
 fn report(operation: &str) -> SessionReport {
@@ -746,6 +952,176 @@ fn production_unstamped_promotion() -> SpawnPromotionCommitted {
         .expect("promotion has staged evidence")
         .event_id = Some(event_id(10));
     promotion
+}
+
+#[tokio::test]
+async fn successful_identified_evidence_stays_active_and_reaches_original_claim_promotion() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("identified-success.sqlite");
+    let path_string = path.to_string_lossy().into_owned();
+    let storage = RusqliteStorage::open(&path_string).unwrap();
+    let mut prefix = valid_prefix();
+    prefix.truncate(7);
+    append_prefix(&storage, prefix).await;
+    let deferred = storage
+        .append_spawn_result_deferred_audited(
+            &domain(),
+            successful_result(),
+            deferred_result_audit(),
+        )
+        .await
+        .expect("successful Result commits through its dedicated boundary");
+    assert_eq!(deferred.source_event_id, event_id(8));
+    assert_eq!(deferred.audit_event_id, event_id(9));
+
+    let evidence = identified_evidence(
+        &accepted_claim(),
+        external(1),
+        SpawnExecutionPhase::SuccessEvidenceReported,
+        FailureCode::Unspecified,
+    );
+    let first = storage
+        .append_spawn_execution_evidence_reconciled(&domain(), evidence.clone())
+        .await
+        .expect("successful identified evidence is staged");
+    assert_eq!(first.evidence_event_id, event_id(10));
+    assert!(!first.deduplicated);
+    assert!(first.disposition_event_id.is_none());
+    let count = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .unwrap()
+        .len();
+    let retry = storage
+        .append_spawn_execution_evidence_reconciled(&domain(), evidence.clone())
+        .await
+        .expect("exact identified evidence retry reconciles");
+    assert!(retry.deduplicated);
+    assert_eq!(retry.evidence_event_id, first.evidence_event_id);
+    assert!(retry.disposition_event_id.is_none());
+    assert_eq!(
+        storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap()
+            .len(),
+        count
+    );
+    let claims = rebuild_spawn_claims_from_log(&storage, &domain())
+        .await
+        .expect("claims rebuild after successful identified evidence");
+    assert_eq!(
+        claims
+            .claim_for_operation(&command())
+            .expect("original claim remains")
+            .disposition,
+        SpawnClaimDisposition::Active
+    );
+    assert_eq!(
+        claims.identified_runtime_for_operation(&command()),
+        evidence.external_runtime.as_ref()
+    );
+
+    drop(storage);
+    tokio::task::yield_now().await;
+    seed_fixture_grant_identities(&path, &[("spawn-grant", 2)]);
+    let storage = RusqliteStorage::open(&path_string).unwrap();
+    let restart_retry = storage
+        .append_spawn_execution_evidence_reconciled(&domain(), evidence.clone())
+        .await
+        .expect("identified evidence retry survives restart");
+    assert!(restart_retry.deduplicated);
+    assert_eq!(restart_retry.evidence_event_id, first.evidence_event_id);
+    assert_eq!(
+        storage
+            .append_spawn_successor_staged_idempotent(&domain(), staged())
+            .await
+            .expect("the original claim stages its matching successor"),
+        event_id(11)
+    );
+    let staged_retry = storage
+        .append_spawn_execution_evidence_reconciled(&domain(), evidence)
+        .await
+        .expect("same-target evidence retry remains valid after ownership reservation");
+    assert!(staged_retry.deduplicated);
+    assert_eq!(staged_retry.evidence_event_id, first.evidence_event_id);
+
+    let events = storage
+        .read_after(&domain(), Lsn { value: 0 })
+        .await
+        .expect("promotion prefix reads");
+    let promotion = next_spawn_promotion(
+        &domain(),
+        &events,
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+    )
+    .expect("promotion producer accepts successful identified evidence")
+    .expect("the original claim is ready for promotion");
+    storage
+        .append_spawn_promotion_audited(&domain(), promotion, promotion_completion_audit())
+        .await
+        .expect("the original claim promotes");
+    let promoted = rebuild_spawn_claims_from_log(&storage, &domain())
+        .await
+        .expect("promoted claims rebuild");
+    assert_eq!(
+        promoted
+            .claim_for_operation(&command())
+            .expect("original claim remains queryable")
+            .disposition,
+        SpawnClaimDisposition::Promoted
+    );
+}
+
+#[tokio::test]
+async fn identified_evidence_respects_current_and_reserved_logical_target_owners_after_restart() {
+    for (slot, reserved_candidate) in [("current", false), ("reserved", true)] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(format!("identified-{slot}.sqlite"));
+        let path_string = path.to_string_lossy().into_owned();
+        let storage = RusqliteStorage::open(&path_string).unwrap();
+        let owned = external_with_runtime(&format!("owned-{slot}"), 1);
+        append_logical_target_owner(&storage, owned.clone(), reserved_candidate).await;
+        let competitor = competing_claim();
+        append_claim(
+            &storage,
+            competitor.clone(),
+            &format!("spawn-target-{slot}"),
+        )
+        .await;
+        let evidence = identified_evidence(
+            &competitor,
+            owned,
+            SpawnExecutionPhase::ExternalIdentityKnown,
+            FailureCode::ExecutionFailed,
+        );
+        assert_wrong_claim_identified_runtime_rejected(&storage, evidence.clone()).await;
+
+        drop(storage);
+        tokio::task::yield_now().await;
+        let restarted = RusqliteStorage::open(&path_string).unwrap();
+        assert_wrong_claim_identified_runtime_rejected(&restarted, evidence).await;
+        let claims = rebuild_spawn_claims_from_log(&restarted, &domain())
+            .await
+            .expect("claims rebuild after rejected owner collision");
+        assert_eq!(
+            claims
+                .claim_for_operation(
+                    competitor
+                        .claim
+                        .as_ref()
+                        .and_then(|claim| claim.claim_operation_id.as_ref())
+                        .expect("competitor claim id"),
+                )
+                .expect("competitor remains active")
+                .disposition,
+            SpawnClaimDisposition::Active,
+            "slot={slot}"
+        );
+    }
 }
 
 #[test]
@@ -2749,6 +3125,65 @@ fn promotion_revalidates_parent_grant_kind_scope_and_liveness() {
         )
         .is_err());
     }
+}
+
+#[tokio::test]
+async fn identified_evidence_respects_tombstone_ownership_hot_and_after_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("identified-tombstone.sqlite");
+    let path_string = path.to_string_lossy().into_owned();
+    let storage = RusqliteStorage::open(&path_string).unwrap();
+    let (prefix, promotion) = production_continuation_fixture();
+    append_prefix(&storage, prefix).await;
+    storage
+        .append_spawn_promotion_audited(
+            &domain(),
+            unstamped(promotion),
+            promotion_completion_audit(),
+        )
+        .await
+        .expect("continuation promotion commits");
+    let sessions = patchbay_core::session::rebuild_from_log(&storage, &domain())
+        .await
+        .expect("promoted session projection rebuilds");
+    assert_eq!(
+        sessions.logical_targets().owner_of(&external(1)),
+        Some(&LogicalTargetId {
+            value: "logical-a".to_owned(),
+        }),
+        "the superseded runtime remains owned through its tombstone"
+    );
+
+    let competitor = competing_claim();
+    append_claim(&storage, competitor.clone(), "spawn-target-tombstone").await;
+    let evidence = identified_evidence(
+        &competitor,
+        external(1),
+        SpawnExecutionPhase::ExternalIdentityKnown,
+        FailureCode::ExecutionFailed,
+    );
+    assert_wrong_claim_identified_runtime_rejected(&storage, evidence.clone()).await;
+
+    drop(storage);
+    tokio::task::yield_now().await;
+    seed_fixture_grant_identities(&path, &[("spawn-grant", 2), ("replacement-grant", 3)]);
+    let restarted = RusqliteStorage::open(&path_string).unwrap();
+    assert_wrong_claim_identified_runtime_rejected(&restarted, evidence).await;
+    assert_eq!(
+        rebuild_spawn_claims_from_log(&restarted, &domain())
+            .await
+            .expect("claims rebuild after tombstone collision")
+            .claim_for_operation(
+                competitor
+                    .claim
+                    .as_ref()
+                    .and_then(|claim| claim.claim_operation_id.as_ref())
+                    .expect("competitor claim id"),
+            )
+            .expect("competitor remains active")
+            .disposition,
+        SpawnClaimDisposition::Active
+    );
 }
 
 #[test]

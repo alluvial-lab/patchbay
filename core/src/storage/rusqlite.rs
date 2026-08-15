@@ -38,8 +38,8 @@ use patchbay_contracts::patchbay::{
     OperationState, QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason,
     RuntimeEvidenceSourceAttachment, SessionReport, SessionStateEvent, SpawnClaimAccepted,
     SpawnClaimAmbiguityEvidence, SpawnClaimDisposition, SpawnClaimDispositionChanged,
-    SpawnClaimEvent, SpawnClaimNoEffectRelease, SpawnExecutionEvidence, SpawnPromotionCommitted,
-    SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
+    SpawnClaimEvent, SpawnClaimNoEffectRelease, SpawnExecutionEvidence, SpawnExecutionPhase,
+    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
@@ -3340,6 +3340,25 @@ fn do_append_spawn_execution_evidence_reconciled(
         }
     }
 
+    let phase = SpawnExecutionPhase::try_from(evidence.phase).map_err(|_| {
+        StorageError::CorruptRecord(
+            "spawn execution evidence has an unknown execution phase".to_owned(),
+        )
+    })?;
+    let failure = FailureCode::try_from(evidence.failure_code).map_err(|_| {
+        StorageError::CorruptRecord(
+            "spawn execution evidence has an unknown failure code".to_owned(),
+        )
+    })?;
+    let identified_progress_without_failure = effect == ExternalEffectDisposition::Identified
+        && failure == FailureCode::Unspecified
+        && matches!(
+            phase,
+            SpawnExecutionPhase::ExternalIdentityKnown
+                | SpawnExecutionPhase::HandshakeReconciling
+                | SpawnExecutionPhase::SuccessEvidenceReported
+        );
+
     let deduplicated = exact_evidence_id.is_some();
     let mut pending_sources = Vec::<RecordedEvent>::new();
     let evidence_event_id = if let Some(event_id) = exact_evidence_id {
@@ -3351,6 +3370,31 @@ fn do_append_spawn_execution_evidence_reconciled(
         claims
             .validate_execution_evidence_candidate(&evidence)
             .map_err(|error| map_spawn_execution_evidence_error(error, &claims, &command_id))?;
+        if effect == ExternalEffectDisposition::Identified {
+            let identified = evidence
+                .external_runtime
+                .as_ref()
+                .expect("identified execution evidence validated");
+            let attempted_owner = identified
+                .logical_target_id
+                .as_ref()
+                .expect("identified execution evidence validated");
+            let external = identified
+                .external_runtime
+                .as_ref()
+                .expect("identified execution evidence validated");
+            if let Some(owner) = crate::session::ExternalRuntimeOwnership::owner_of(
+                sessions.logical_targets(),
+                external,
+            ) {
+                if owner != attempted_owner {
+                    return Err(StorageError::DuplicateNativeReference {
+                        owner: owner.value.clone(),
+                        attempted_owner: attempted_owner.value.clone(),
+                    });
+                }
+            }
+        }
         let candidate = RecordedEvent {
             event_id: event_id(domain.clone(), next_lsn),
             payload: crate::session::encode_spawn_execution_evidence(&evidence),
@@ -3377,6 +3421,11 @@ fn do_append_spawn_execution_evidence_reconciled(
     let mut disposition_event_id = None;
 
     let target_disposition = match (effect, record.disposition) {
+        (ExternalEffectDisposition::Identified, SpawnClaimDisposition::Active)
+            if identified_progress_without_failure =>
+        {
+            None
+        }
         (
             ExternalEffectDisposition::MayExist | ExternalEffectDisposition::Identified,
             SpawnClaimDisposition::Active,

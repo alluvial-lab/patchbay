@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-idempotency-duplicate-handling
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-registration, research-handoff-spawn-crash-external-effect-evidence-contract]
@@ -64,6 +64,34 @@ Consumes atomic claim, staged identity reservation, and the crash/effect evidenc
 - Added an executable draft conformance vector and refreshed generated traceability in `docs/VERIFICATION.md`. No protobuf or generated binding changed, and `core/src/session/registry.rs` generation/tombstone internals were not modified by this unit.
 - Tests cover exact ambiguity/proved-none retry, restart replay and redelivery suppression, delayed continuation liveness release, invalid-evidence zero-write behavior, identified-runtime reverse collisions, authenticated evidence canonicalization, delivered ambiguous Results, and abnormal stream loss.
 - Discrepancies from design: none. Adjacent issues parked: none.
+
+### Fix round — 2026-08-15 thorough review findings
+
+- Execution capability: `openai-codex/gpt-5.6-sol`; direct-read fix round because the authoritative review named the three bounded reconciliation gaps and exact ownership surfaces. Review weight remains `thorough` from the autopilot caller; a fresh independent re-review follows.
+- Effect-before-ack Results: authenticated, exactly correlated ambiguous spawn Results now admit `accepted` as well as `delivered`/`running` pre-state. The dedicated evidence write therefore poisons the exact claim before ordinary terminalization even when the delivery acknowledgement was lost. Focused server coverage exercises cancellation, expiry, and `execution_outcome_unknown` both with and without the acknowledgement.
+- Identified-success staging: the SQLite writer now derives the claim consequence from phase, failure, and disposition. Identified progress with no failure at `external_identity_known`, `handshake_reconciling`, or `success_evidence_reported` reserves the exact runtime while leaving the claim active; identified failure evidence and `may_exist` ambiguity still poison. The chosen phase split follows the authoritative failure-phase table: known-identity progress is active absent failure, whereas launch ambiguity does not gain success semantics merely from carrying an identity.
+- Logical-target ownership: before observing any new identified evidence in the claim projection, the same writer transaction consults the authoritative logical-target reverse index. A current, reserved-candidate, or tombstoned runtime owned by another logical target returns `DuplicateNativeReference` with zero writes; the original target's exact evidence retry remains valid. File-backed hot/restart tests cover all three owner slots.
+- Promotion continuity: successful identified evidence is durable and byte-idempotent across restart, remains `active`, accepts the matching staged successor for the original claim, and reaches the ordinary atomic promotion path.
+- Files changed: `server/src/adapter_service.rs`, `server/src/adapter_service/tests.rs`, `core/src/storage/rusqlite.rs`, `core/tests/runtime_evidence_promotion.rs`, and this story file. No protobuf, generated binding, `core/src/session/registry.rs`, or `specs/seed/` file was changed by this fix round.
+- Tests added/expanded: one six-cell effect-before-ack/acknowledged Result oracle; successful identified evidence retry/replay/staging/promotion; logical-target current/reserved/tombstone collision oracles across file restart. Simplification: one shared server case helper and shared storage-fixture helpers avoid duplicate scenario bodies. Discrepancies from design: none. Adjacent issues parked: none.
+
+#### Fix-round mutation evidence
+
+Each mutant was applied alone, its focused oracle failed with exit 101, and its file was restored before the next probe:
+
+- remove `accepted` from ambiguous-Result poisoning — killed by `ambiguous_spawn_results_with_or_without_ack_poison_the_exact_claim` (`Cancelled`, no acknowledgement remained `Active`);
+- route `success_evidence_reported + identified + unspecified` back into poison/rejection — killed by `successful_identified_evidence_stays_active_and_reaches_original_claim_promotion`;
+- remove the logical-target reverse-owner consultation — killed by `identified_evidence_respects_current_and_reserved_logical_target_owners_after_restart`.
+
+The four pass-1 mutants were re-confirmed killed: release on terminal; infer no effect from terminal state/ack silence; re-offer a claim after execution evidence; and ignore the claim-level external-runtime reverse owner. The restored `spawn_claim_registry` suite passed 38/38.
+
+#### Fix-round verification evidence
+
+- Verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS**, including 38 spawn-claim tests, 31 runtime-evidence/promotion tests, 77 server unit tests, all workspace integration/property tests, doctests, and warnings-denied clippy.
+- Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; 55 vectors, 17 promoted vectors, 22 implementation checks, and 38 mutation witnesses.
+- Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 23/23 tests.
+- Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 38/38 tests including the real core/adapter restart e2e.
+- `cargo fmt --all -- --check` and `git diff --check`: **PASS**.
 
 ## Mutation evidence
 

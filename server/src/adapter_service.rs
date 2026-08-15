@@ -580,7 +580,7 @@ async fn poison_ambiguous_spawn_result<S: Storage>(
     if OperationKind::try_from(command.operation.kind).ok() != Some(OperationKind::Spawn)
         || !matches!(
             command.state,
-            OperationState::Delivered | OperationState::Running
+            OperationState::Accepted | OperationState::Delivered | OperationState::Running
         )
         || command.operation.target_scope != observation.target_scope
     {

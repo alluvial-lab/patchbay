@@ -3473,30 +3473,25 @@ fn managed_spawn_delivery_rejects_truncated_claim_and_authority_fields() {
     }
 }
 
-#[tokio::test]
-async fn delivered_ambiguous_spawn_results_poison_the_exact_claim() {
-    for failure in [
-        FailureCode::Cancelled,
-        FailureCode::Expired,
-        FailureCode::ExecutionOutcomeUnknown,
-    ] {
-        let storage = RusqliteStorage::open_in_memory().expect("storage opens");
-        let domain = AuthorityDomainId {
-            value: "authority-main".into(),
-        };
-        let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
-        let accepted = append_replacement_claim(&storage, &domain, "ambiguous-result").await;
-        let operation = accepted
-            .accepted_operation
-            .as_ref()
-            .and_then(|accepted| accepted.operation.as_ref())
-            .expect("accepted spawn operation")
-            .clone();
-        let mut tail = receive_from_start(&service, &attachment_token).await;
-        tail.next()
-            .await
-            .expect("managed delivery exists")
-            .expect("managed delivery is valid");
+async fn ambiguous_spawn_result_case(failure: FailureCode, acknowledge_delivery: bool) {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    let accepted = append_replacement_claim(&storage, &domain, "ambiguous-result").await;
+    let operation = accepted
+        .accepted_operation
+        .as_ref()
+        .and_then(|accepted| accepted.operation.as_ref())
+        .expect("accepted spawn operation")
+        .clone();
+    let mut tail = receive_from_start(&service, &attachment_token).await;
+    tail.next()
+        .await
+        .expect("managed delivery exists")
+        .expect("managed delivery is valid");
+    if acknowledge_delivery {
         service
             .ingest_observation(authenticated_with_attachment_token(
                 delivery_acknowledgement(domain.clone(), &operation),
@@ -3504,54 +3499,67 @@ async fn delivered_ambiguous_spawn_results_poison_the_exact_claim() {
             ))
             .await
             .expect("delivery acknowledgement commits");
-        service
-            .ingest_observation(authenticated_with_attachment_token(
-                ObservationRequest {
+    }
+    service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::Event(Observation {
                     authority_domain_id: Some(domain.clone()),
-                    observation: Some(observation_request::Observation::Event(Observation {
-                        authority_domain_id: Some(domain.clone()),
-                        kind: ObservationKind::Result as i32,
-                        correlations: vec![TypedCorrelation {
-                            r#ref: Some(typed_correlation::Ref::CommandId(
-                                operation.command_id.clone().unwrap(),
-                            )),
-                        }],
-                        target_scope: operation.target_scope.clone(),
-                        failure_code: failure as i32,
-                        ..Observation::default()
-                    })),
-                },
-                &attachment_token,
-            ))
-            .await
-            .expect("ambiguous result is terminalized only after claim poison");
+                    kind: ObservationKind::Result as i32,
+                    correlations: vec![TypedCorrelation {
+                        r#ref: Some(typed_correlation::Ref::CommandId(
+                            operation.command_id.clone().unwrap(),
+                        )),
+                    }],
+                    target_scope: operation.target_scope.clone(),
+                    failure_code: failure as i32,
+                    ..Observation::default()
+                })),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("ambiguous result is terminalized only after claim poison");
 
-        let claims = session::rebuild_spawn_claims_from_log(&storage, &domain)
-            .await
-            .expect("spawn claims rebuild");
-        assert_eq!(
-            claims
-                .claim_for_operation(operation.command_id.as_ref().unwrap())
-                .expect("exact claim")
-                .disposition,
-            SpawnClaimDisposition::PoisonedPendingReconciliation,
-            "failure={failure:?}"
-        );
-        let events = storage
-            .read_after(&domain, Lsn { value: 0 })
-            .await
-            .expect("ambiguous result events");
-        assert_eq!(
-            events
-                .iter()
-                .filter(|event| {
-                    event.payload.kind == StoredEventKind::SpawnExecutionEvidence as i32
-                })
-                .count(),
-            1,
-            "failure={failure:?}"
-        );
-        drop(tail);
+    let claims = session::rebuild_spawn_claims_from_log(&storage, &domain)
+        .await
+        .expect("spawn claims rebuild");
+    assert_eq!(
+        claims
+            .claim_for_operation(operation.command_id.as_ref().unwrap())
+            .expect("exact claim")
+            .disposition,
+        SpawnClaimDisposition::PoisonedPendingReconciliation,
+        "failure={failure:?}, acknowledge_delivery={acknowledge_delivery}"
+    );
+    let events = storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("ambiguous result events");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event.payload.kind == StoredEventKind::SpawnExecutionEvidence as i32
+            })
+            .count(),
+        1,
+        "failure={failure:?}, acknowledge_delivery={acknowledge_delivery}"
+    );
+    drop(tail);
+}
+
+#[tokio::test]
+async fn ambiguous_spawn_results_with_or_without_ack_poison_the_exact_claim() {
+    for acknowledge_delivery in [false, true] {
+        for failure in [
+            FailureCode::Cancelled,
+            FailureCode::Expired,
+            FailureCode::ExecutionOutcomeUnknown,
+        ] {
+            ambiguous_spawn_result_case(failure, acknowledge_delivery).await;
+        }
     }
 }
 
