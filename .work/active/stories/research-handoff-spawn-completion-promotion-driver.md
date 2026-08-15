@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-completion-promotion-driver
 kind: story
-stage: review
+stage: done
 tags: [protocol, security, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-stale-event-fencing, research-handoff-spawn-idempotency-duplicate-handling]
