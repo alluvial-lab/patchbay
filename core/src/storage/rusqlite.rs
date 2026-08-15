@@ -3350,14 +3350,8 @@ fn do_append_spawn_execution_evidence_reconciled(
             "spawn execution evidence has an unknown failure code".to_owned(),
         )
     })?;
-    let identified_progress_without_failure = effect == ExternalEffectDisposition::Identified
-        && failure == FailureCode::Unspecified
-        && matches!(
-            phase,
-            SpawnExecutionPhase::ExternalIdentityKnown
-                | SpawnExecutionPhase::HandshakeReconciling
-                | SpawnExecutionPhase::SuccessEvidenceReported
-        );
+    let poisons_claim =
+        crate::session::spawn_claim::execution_evidence_poisons_claim(phase, effect, failure);
 
     let deduplicated = exact_evidence_id.is_some();
     let mut pending_sources = Vec::<RecordedEvent>::new();
@@ -3421,15 +3415,10 @@ fn do_append_spawn_execution_evidence_reconciled(
     let mut disposition_event_id = None;
 
     let target_disposition = match (effect, record.disposition) {
-        (ExternalEffectDisposition::Identified, SpawnClaimDisposition::Active)
-            if identified_progress_without_failure =>
-        {
-            None
+        (_, SpawnClaimDisposition::Active) if poisons_claim => {
+            Some(SpawnClaimDisposition::PoisonedPendingReconciliation)
         }
-        (
-            ExternalEffectDisposition::MayExist | ExternalEffectDisposition::Identified,
-            SpawnClaimDisposition::Active,
-        ) => Some(SpawnClaimDisposition::PoisonedPendingReconciliation),
+        (ExternalEffectDisposition::Identified, SpawnClaimDisposition::Active) => None,
         (
             ExternalEffectDisposition::MayExist | ExternalEffectDisposition::Identified,
             SpawnClaimDisposition::PoisonedPendingReconciliation,

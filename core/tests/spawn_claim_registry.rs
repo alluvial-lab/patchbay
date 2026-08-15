@@ -1789,6 +1789,279 @@ proptest! {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReconciledClaimConsequence {
+    Active,
+    Poisoned,
+    Released,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ReconciliationMatrixCase {
+    label: &'static str,
+    phase: SpawnExecutionPhase,
+    effect: ExternalEffectDisposition,
+    failure: FailureCode,
+    continuation: bool,
+    expected: ReconciledClaimConsequence,
+}
+
+#[tokio::test]
+async fn storage_replay_consequence_matrix_commits_every_allowed_phase_disposition_row() {
+    let cases = [
+        ReconciliationMatrixCase {
+            label: "accepted_not_offered/proved_none",
+            phase: SpawnExecutionPhase::AcceptedNotOffered,
+            effect: ExternalEffectDisposition::ProvedNone,
+            failure: FailureCode::Cancelled,
+            continuation: false,
+            expected: ReconciledClaimConsequence::Released,
+        },
+        ReconciliationMatrixCase {
+            label: "offered/proved_none",
+            phase: SpawnExecutionPhase::Offered,
+            effect: ExternalEffectDisposition::ProvedNone,
+            failure: FailureCode::DeliveryRejected,
+            continuation: false,
+            expected: ReconciledClaimConsequence::Released,
+        },
+        ReconciliationMatrixCase {
+            label: "offered/may_exist",
+            phase: SpawnExecutionPhase::Offered,
+            effect: ExternalEffectDisposition::MayExist,
+            failure: FailureCode::ExecutionOutcomeUnknown,
+            continuation: false,
+            expected: ReconciledClaimConsequence::Poisoned,
+        },
+        ReconciliationMatrixCase {
+            label: "quiescing_prior/proved_none",
+            phase: SpawnExecutionPhase::QuiescingPrior,
+            effect: ExternalEffectDisposition::ProvedNone,
+            failure: FailureCode::ExecutionFailed,
+            continuation: true,
+            expected: ReconciledClaimConsequence::Active,
+        },
+        ReconciliationMatrixCase {
+            label: "quiescing_prior/may_exist",
+            phase: SpawnExecutionPhase::QuiescingPrior,
+            effect: ExternalEffectDisposition::MayExist,
+            failure: FailureCode::ExecutionOutcomeUnknown,
+            continuation: true,
+            expected: ReconciledClaimConsequence::Poisoned,
+        },
+        ReconciliationMatrixCase {
+            label: "prior_terminated/proved_none",
+            phase: SpawnExecutionPhase::PriorTerminated,
+            effect: ExternalEffectDisposition::ProvedNone,
+            failure: FailureCode::ExecutionFailed,
+            continuation: true,
+            expected: ReconciledClaimConsequence::Active,
+        },
+        ReconciliationMatrixCase {
+            label: "prior_terminated/may_exist",
+            phase: SpawnExecutionPhase::PriorTerminated,
+            effect: ExternalEffectDisposition::MayExist,
+            failure: FailureCode::ExecutionOutcomeUnknown,
+            continuation: true,
+            expected: ReconciledClaimConsequence::Poisoned,
+        },
+        ReconciliationMatrixCase {
+            label: "launch_attempted/may_exist",
+            phase: SpawnExecutionPhase::LaunchAttempted,
+            effect: ExternalEffectDisposition::MayExist,
+            failure: FailureCode::ExecutionOutcomeUnknown,
+            continuation: false,
+            expected: ReconciledClaimConsequence::Poisoned,
+        },
+        ReconciliationMatrixCase {
+            label: "launch_attempted/identified/unspecified",
+            phase: SpawnExecutionPhase::LaunchAttempted,
+            effect: ExternalEffectDisposition::Identified,
+            failure: FailureCode::Unspecified,
+            continuation: true,
+            expected: ReconciledClaimConsequence::Poisoned,
+        },
+        ReconciliationMatrixCase {
+            label: "external_identity_known/identified/progress",
+            phase: SpawnExecutionPhase::ExternalIdentityKnown,
+            effect: ExternalEffectDisposition::Identified,
+            failure: FailureCode::Unspecified,
+            continuation: false,
+            expected: ReconciledClaimConsequence::Active,
+        },
+        ReconciliationMatrixCase {
+            label: "external_identity_known/identified/failure",
+            phase: SpawnExecutionPhase::ExternalIdentityKnown,
+            effect: ExternalEffectDisposition::Identified,
+            failure: FailureCode::DeliveryRejected,
+            continuation: false,
+            expected: ReconciledClaimConsequence::Poisoned,
+        },
+        ReconciliationMatrixCase {
+            label: "handshake_reconciling/identified/progress",
+            phase: SpawnExecutionPhase::HandshakeReconciling,
+            effect: ExternalEffectDisposition::Identified,
+            failure: FailureCode::Unspecified,
+            continuation: false,
+            expected: ReconciledClaimConsequence::Active,
+        },
+        ReconciliationMatrixCase {
+            label: "handshake_reconciling/identified/failure",
+            phase: SpawnExecutionPhase::HandshakeReconciling,
+            effect: ExternalEffectDisposition::Identified,
+            failure: FailureCode::DeliveryRejected,
+            continuation: false,
+            expected: ReconciledClaimConsequence::Poisoned,
+        },
+        ReconciliationMatrixCase {
+            label: "success_evidence_reported/identified/progress",
+            phase: SpawnExecutionPhase::SuccessEvidenceReported,
+            effect: ExternalEffectDisposition::Identified,
+            failure: FailureCode::Unspecified,
+            continuation: false,
+            expected: ReconciledClaimConsequence::Active,
+        },
+        ReconciliationMatrixCase {
+            label: "success_evidence_reported/identified/failure",
+            phase: SpawnExecutionPhase::SuccessEvidenceReported,
+            effect: ExternalEffectDisposition::Identified,
+            failure: FailureCode::DeliveryRejected,
+            continuation: false,
+            expected: ReconciledClaimConsequence::Poisoned,
+        },
+    ];
+
+    for case in cases {
+        let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+        storage
+            .append(&domain(), attachment_event(1, "pi", 3).payload)
+            .await
+            .expect("attachment appends");
+        let accepted = if case.continuation {
+            continuation_accepted("spawn-a")
+        } else {
+            fresh_accepted("spawn-a")
+        };
+        let exact_claim = accepted.claim.clone().expect("claim fixture");
+        persist_claim(&storage, accepted).await;
+
+        let (producer, proof) = match case.effect {
+            ExternalEffectDisposition::ProvedNone
+                if case.phase == SpawnExecutionPhase::AcceptedNotOffered =>
+            {
+                let decision = storage
+                    .append(
+                        &domain(),
+                        pre_delivery_terminal_decision(
+                            0,
+                            OperationState::Cancelled,
+                            FailureCode::Cancelled,
+                        )
+                        .payload,
+                    )
+                    .await
+                    .expect("pre-delivery terminal decision appends");
+                let decision_lsn = decision.lsn.expect("decision LSN").value;
+                (
+                    SpawnExecutionEvidenceProducer::Core,
+                    Some(core_proof(decision_lsn)),
+                )
+            }
+            ExternalEffectDisposition::ProvedNone if case.phase == SpawnExecutionPhase::Offered => {
+                (
+                    SpawnExecutionEvidenceProducer::CurrentAdapter,
+                    Some(refusal_proof("pi", 3)),
+                )
+            }
+            ExternalEffectDisposition::ProvedNone => (
+                SpawnExecutionEvidenceProducer::CurrentAdapter,
+                Some(supervisor_proof("pi", 3)),
+            ),
+            ExternalEffectDisposition::MayExist | ExternalEffectDisposition::Identified => {
+                (SpawnExecutionEvidenceProducer::CurrentAdapter, None)
+            }
+            ExternalEffectDisposition::Unspecified => unreachable!("matrix excludes unspecified"),
+        };
+        let identified_runtime = (case.effect == ExternalEffectDisposition::Identified)
+            .then(|| runtime(if case.continuation { 8 } else { 1 }));
+        let evidence = execution_evidence(
+            exact_claim,
+            case.phase,
+            case.effect,
+            producer,
+            case.failure,
+            proof,
+            identified_runtime.clone(),
+        );
+        let committed = storage
+            .append_spawn_execution_evidence_reconciled(&domain(), evidence)
+            .await
+            .unwrap_or_else(|error| panic!("{} did not commit: {error}", case.label));
+        assert_eq!(
+            committed.disposition_event_id.is_some(),
+            case.expected != ReconciledClaimConsequence::Active,
+            "{} disposition append",
+            case.label
+        );
+
+        let events = storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .expect("matrix prefix reads");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event.payload.kind == StoredEventKind::SpawnExecutionEvidence as i32
+                })
+                .count(),
+            1,
+            "{} must commit exactly one evidence record",
+            case.label
+        );
+        let claims = rebuild_spawn_claims_from_log(&storage, &domain())
+            .await
+            .unwrap_or_else(|error| panic!("{} did not replay: {error}", case.label));
+        let record = claims
+            .claim_for_operation(&command("spawn-a"))
+            .expect("matrix claim replays");
+        let expected_disposition = match case.expected {
+            ReconciledClaimConsequence::Active => SpawnClaimDisposition::Active,
+            ReconciledClaimConsequence::Poisoned => {
+                SpawnClaimDisposition::PoisonedPendingReconciliation
+            }
+            ReconciledClaimConsequence::Released => SpawnClaimDisposition::ReleasedNoExternalEffect,
+        };
+        assert_eq!(record.disposition, expected_disposition, "{}", case.label);
+        if let Some(identified_runtime) = identified_runtime.as_ref() {
+            assert_eq!(
+                claims.identified_runtime_for_operation(&command("spawn-a")),
+                Some(identified_runtime),
+                "{} identified runtime ownership",
+                case.label
+            );
+        }
+        if case.label == "launch_attempted/identified/unspecified" {
+            assert!(matches!(
+                claims.delivery_fence(&runtime(7)),
+                SpawnDeliveryFence::ReplacementPending { .. }
+            ));
+            assert!(matches!(
+                claims.classify_claim(&claim("spawn-b", Some(7))),
+                SpawnClaimability::Conflict(_)
+            ));
+        }
+        let commands = patchbay_core::acceptance::rebuild_from_log(&storage, &domain())
+            .await
+            .unwrap_or_else(|error| panic!("{} command replay failed: {error}", case.label));
+        assert!(
+            commands.delivery_is_suppressed(&command("spawn-a")),
+            "{} original attempt must remain suppressed",
+            case.label
+        );
+    }
+}
+
 #[tokio::test]
 async fn reconciled_ambiguity_poisons_once_survives_restart_and_suppresses_relaunch() {
     let storage = RusqliteStorage::open_in_memory().unwrap();

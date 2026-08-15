@@ -1107,15 +1107,14 @@ fn validate_transition_evidence(
                 event_lsn,
                 "external-effect evidence",
             )?;
+            let phase = required_execution_phase(typed.phase)?;
             let disposition =
                 required_external_effect_disposition(typed.external_effect_disposition)?;
-            if !matches!(
-                disposition,
-                ExternalEffectDisposition::MayExist | ExternalEffectDisposition::Identified
-            ) || !poison_failure(typed.failure_code)
-            {
+            let failure = FailureCode::try_from(typed.failure_code)
+                .map_err(|_| corrupt_record("spawn execution evidence failure code is unknown"))?;
+            if !execution_evidence_poisons_claim(phase, disposition, failure) {
                 return Err(corrupt_log(
-                    "claim poison requires typed ambiguous or identified external-effect failure evidence",
+                    "claim poison requires phase-aware ambiguous or identified external-effect evidence",
                 ));
             }
             Ok(())
@@ -1502,6 +1501,32 @@ pub const fn allowed_external_effect_disposition(
             matches!(disposition, Identified)
         }
         SpawnExecutionPhase::Unspecified => false,
+    }
+}
+
+/// Whether one valid phase/disposition/failure cell requires the exact claim to
+/// become poisoned. Launch-attempted identity is ambiguous even without a
+/// failure code; after identity is durably known, only failure evidence poisons.
+#[must_use]
+pub(crate) fn execution_evidence_poisons_claim(
+    phase: SpawnExecutionPhase,
+    disposition: ExternalEffectDisposition,
+    failure: FailureCode,
+) -> bool {
+    match disposition {
+        ExternalEffectDisposition::MayExist => poison_failure(failure as i32),
+        ExternalEffectDisposition::Identified => match phase {
+            SpawnExecutionPhase::LaunchAttempted => true,
+            SpawnExecutionPhase::ExternalIdentityKnown
+            | SpawnExecutionPhase::HandshakeReconciling
+            | SpawnExecutionPhase::SuccessEvidenceReported => failure != FailureCode::Unspecified,
+            SpawnExecutionPhase::Unspecified
+            | SpawnExecutionPhase::AcceptedNotOffered
+            | SpawnExecutionPhase::Offered
+            | SpawnExecutionPhase::QuiescingPrior
+            | SpawnExecutionPhase::PriorTerminated => false,
+        },
+        ExternalEffectDisposition::Unspecified | ExternalEffectDisposition::ProvedNone => false,
     }
 }
 

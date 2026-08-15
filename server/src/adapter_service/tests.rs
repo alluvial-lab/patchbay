@@ -3473,7 +3473,24 @@ fn managed_spawn_delivery_rejects_truncated_claim_and_authority_fields() {
     }
 }
 
-async fn ambiguous_spawn_result_case(failure: FailureCode, acknowledge_delivery: bool) {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AmbiguousResultPreState {
+    Accepted,
+    Delivered,
+    Running,
+}
+
+impl AmbiguousResultPreState {
+    const fn operation_state(self) -> OperationState {
+        match self {
+            Self::Accepted => OperationState::Accepted,
+            Self::Delivered => OperationState::Delivered,
+            Self::Running => OperationState::Running,
+        }
+    }
+}
+
+async fn ambiguous_spawn_result_case(failure: FailureCode, pre_state: AmbiguousResultPreState) {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId {
         value: "authority-main".into(),
@@ -3491,7 +3508,10 @@ async fn ambiguous_spawn_result_case(failure: FailureCode, acknowledge_delivery:
         .await
         .expect("managed delivery exists")
         .expect("managed delivery is valid");
-    if acknowledge_delivery {
+    if matches!(
+        pre_state,
+        AmbiguousResultPreState::Delivered | AmbiguousResultPreState::Running
+    ) {
         service
             .ingest_observation(authenticated_with_attachment_token(
                 delivery_acknowledgement(domain.clone(), &operation),
@@ -3500,6 +3520,32 @@ async fn ambiguous_spawn_result_case(failure: FailureCode, acknowledge_delivery:
             .await
             .expect("delivery acknowledgement commits");
     }
+    if pre_state == AmbiguousResultPreState::Running {
+        service
+            .ingest_observation(authenticated_with_attachment_token(
+                lifecycle_observation(
+                    domain.clone(),
+                    &operation,
+                    ObservationKind::Status,
+                    FailureCode::Unspecified,
+                ),
+                &attachment_token,
+            ))
+            .await
+            .expect("running transition commits before the ambiguous Result");
+    }
+    let before_result = acceptance::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("command pre-state rebuilds");
+    assert_eq!(
+        before_result
+            .get_command(operation.command_id.as_ref().expect("command id"))
+            .expect("exact command")
+            .state,
+        pre_state.operation_state(),
+        "failure={failure:?}, pre_state={pre_state:?}"
+    );
+
     service
         .ingest_observation(authenticated_with_attachment_token(
             ObservationRequest {
@@ -3525,13 +3571,26 @@ async fn ambiguous_spawn_result_case(failure: FailureCode, acknowledge_delivery:
     let claims = session::rebuild_spawn_claims_from_log(&storage, &domain)
         .await
         .expect("spawn claims rebuild");
+    let command_id = operation.command_id.as_ref().expect("command id");
     assert_eq!(
         claims
-            .claim_for_operation(operation.command_id.as_ref().unwrap())
+            .claim_for_operation(command_id)
             .expect("exact claim")
             .disposition,
         SpawnClaimDisposition::PoisonedPendingReconciliation,
-        "failure={failure:?}, acknowledge_delivery={acknowledge_delivery}"
+        "failure={failure:?}, pre_state={pre_state:?}"
+    );
+    let prior = accepted
+        .claim
+        .as_ref()
+        .and_then(|claim| claim.expected_prior.as_ref())
+        .expect("replacement claim has an exact prior");
+    assert!(
+        matches!(
+            claims.delivery_fence(prior),
+            patchbay_core::session::SpawnDeliveryFence::ReplacementPending { .. }
+        ),
+        "failure={failure:?}, pre_state={pre_state:?}"
     );
     let events = storage
         .read_after(&domain, Lsn { value: 0 })
@@ -3545,20 +3604,53 @@ async fn ambiguous_spawn_result_case(failure: FailureCode, acknowledge_delivery:
             })
             .count(),
         1,
-        "failure={failure:?}, acknowledge_delivery={acknowledge_delivery}"
+        "failure={failure:?}, pre_state={pre_state:?}"
     );
+    let commands = acceptance::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("terminal command replays");
+    let command = commands
+        .get_command(command_id)
+        .expect("exact command replays");
+    assert_eq!(command.state, OperationState::Failed);
+    assert_eq!(command.failure_code, Some(failure));
+    assert!(
+        commands.delivery_is_suppressed(command_id),
+        "failure={failure:?}, pre_state={pre_state:?}"
+    );
+
     drop(tail);
+    if pre_state == AmbiguousResultPreState::Running {
+        drop(service);
+        tokio::task::yield_now().await;
+        let restarted =
+            AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+                .await
+                .expect("service restarts from the poisoned running prefix");
+        let restarted_token = attach_generation(&restarted, domain, 2).await;
+        let mut restarted_tail = receive_from_start(&restarted, &restarted_token).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), restarted_tail.next())
+                .await
+                .is_err(),
+            "failure={failure:?}: poisoned running spawn must stay suppressed after restart"
+        );
+    }
 }
 
 #[tokio::test]
 async fn ambiguous_spawn_results_with_or_without_ack_poison_the_exact_claim() {
-    for acknowledge_delivery in [false, true] {
+    for pre_state in [
+        AmbiguousResultPreState::Accepted,
+        AmbiguousResultPreState::Delivered,
+        AmbiguousResultPreState::Running,
+    ] {
         for failure in [
             FailureCode::Cancelled,
             FailureCode::Expired,
             FailureCode::ExecutionOutcomeUnknown,
         ] {
-            ambiguous_spawn_result_case(failure, acknowledge_delivery).await;
+            ambiguous_spawn_result_case(failure, pre_state).await;
         }
     }
 }

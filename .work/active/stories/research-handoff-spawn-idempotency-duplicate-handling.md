@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-idempotency-duplicate-handling
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-registration, research-handoff-spawn-crash-external-effect-evidence-contract]
@@ -92,6 +92,48 @@ The four pass-1 mutants were re-confirmed killed: release on terminal; infer no 
 - Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 23/23 tests.
 - Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 38/38 tests including the real core/adapter restart e2e.
 - `cargo fmt --all -- --check` and `git diff --check`: **PASS**.
+
+### Fix round 2 — 2026-08-15 identified-launch and running-oracle findings
+
+- Execution capability: `openai-codex/gpt-5.6-sol` at `xhigh` thinking.
+- Consolidated the storage write-path decision on `execution_evidence_poisons_claim`: `LaunchAttempted + Identified` now always poisons the exact claim generation, including `failure_code = unspecified`; identified evidence in later phases poisons only when it carries failure evidence, so identified success remains promotable.
+- Added a storage/replay consequence matrix over every allowed phase/disposition row. Each case proves disposition, exact continuation-fence retention, identified-runtime ownership binding when applicable, competing-owner suppression, and cold-replay equivalence.
+- Expanded the real adapter-service ambiguous-Result oracle to start independently from `Accepted`, `Delivered`, and actual `Running` command prestates, then prove terminal failure, exact-claim poison, retained fence, and hot/restart delivery suppression.
+- No production change was needed in `server/src/adapter_service.rs`: `Running` was already eligible; the missing protection was a `Running`-sensitive oracle.
+- Files changed: `core/src/session/spawn_claim.rs`, `core/src/storage/rusqlite.rs`, `core/tests/spawn_claim_registry.rs`, and `server/src/adapter_service/tests.rs`.
+- Design discrepancies: none. The implementation makes the existing phase-aware design explicit without broadening failure codes or adapter semantics.
+
+#### Fix-round-2 mutation evidence
+
+Both newly requested mutants were killed, then restored:
+
+1. Restoring the old evidence-only poison predicate (`failure_code != unspecified` or `execution_outcome_unknown`) failed `storage_replay_consequence_matrix_commits_every_allowed_phase_disposition_row` on the `launch_attempted / identified / unspecified` row (`cargo test -p patchbay-core --test spawn_claim_registry ...`, exit `101`).
+2. Removing `Running` from ambiguous-Result poison eligibility failed `ambiguous_spawn_results_with_or_without_ack_poison_the_exact_claim` from the actual-running prestate (`cargo test -p patchbay-core-server --lib ...`, exit `101`).
+
+All seven prior pass-2 mutations were reconfirmed as killed (exit `101` for each focused oracle):
+
+1. remove `Accepted` from server poisoning eligibility;
+2. poison identified success evidence;
+3. bypass logical-target ownership validation;
+4. release claims on terminal command state;
+5. release from terminal-state silence;
+6. suppress typed-effect poisoning;
+7. omit identified-runtime claim-owner binding.
+
+Every mutation was restored with `git restore`; no mutant remained in the final tree.
+
+#### Fix-round-2 verification
+
+All four requested verification groups passed:
+
+```text
+cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings
+cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build
+cd operator-domain && npm run build && npm test  # 23 passed
+cd pi-adapter && npm test                         # 38 passed
+```
+
+Additional final checks passed: `cargo fmt --all -- --check`, `git diff --check`, the 39-test spawn-claim registry target, the 31-test runtime-evidence promotion target, and the 77-test server library target. Contract drift reported no generated changes; no schema or generated binding was edited.
 
 ## Mutation evidence
 
