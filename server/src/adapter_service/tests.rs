@@ -2079,7 +2079,7 @@ async fn managed_spawn_report_stages_exclusively_and_never_registers_current_ses
             Lsn {
                 value: checkpoint_lsn,
             },
-            crate::snapshot::encode_stored_session_checkpoint(&checkpoint),
+            crate::snapshot::encode_materialized_session_checkpoint(&checkpoint),
         )
         .await
         .expect("staged-only checkpoint persists");

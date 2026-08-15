@@ -38,7 +38,7 @@ use crate::{
     decision_gate::CoreDecisionGate,
     identity::random_core_generation,
     operator_session::{OperatorSessionRegistry, DEFAULT_OPERATOR_SESSION_TTL},
-    snapshot::recover_session_registry,
+    snapshot::{recover_session_registry, MaterializedSessionCheckpoint},
 };
 
 /// Server-owned concurrency boundary around core projections.
@@ -455,7 +455,7 @@ impl ProjectionState {
         &self,
         authority_domain_id: AuthorityDomainId,
         materialized_at: prost_types::Timestamp,
-    ) -> StoredSessionCheckpoint {
+    ) -> MaterializedSessionCheckpoint {
         let snapshot = self
             .materialize_session_snapshot(authority_domain_id, materialized_at)
             .await;
@@ -475,22 +475,26 @@ impl ProjectionState {
                     right.superseded_generation.value,
                 ))
         });
-        StoredSessionCheckpoint {
-            snapshot: Some(snapshot),
-            tombstones: tombstones
-                .into_iter()
-                .map(|tombstone| SessionCheckpointTombstone {
-                    adapter_id: Some(tombstone.adapter_id),
-                    deployment_scope: tombstone.deployment_scope,
-                    runtime_session_id: Some(tombstone.runtime_session_id),
-                    generation: Some(tombstone.superseded_generation),
-                    superseded_at_lsn: Some(Lsn {
-                        value: tombstone.superseded_at_lsn,
-                    }),
-                })
-                .collect(),
-            logical_targets: registry.sessions().logical_targets().checkpoint_records(),
-        }
+        let managed_lineages = registry.sessions().managed_lineage_checkpoint_records();
+        MaterializedSessionCheckpoint::new(
+            StoredSessionCheckpoint {
+                snapshot: Some(snapshot),
+                tombstones: tombstones
+                    .into_iter()
+                    .map(|tombstone| SessionCheckpointTombstone {
+                        adapter_id: Some(tombstone.adapter_id),
+                        deployment_scope: tombstone.deployment_scope,
+                        runtime_session_id: Some(tombstone.runtime_session_id),
+                        generation: Some(tombstone.superseded_generation),
+                        superseded_at_lsn: Some(Lsn {
+                            value: tombstone.superseded_at_lsn,
+                        }),
+                    })
+                    .collect(),
+                logical_targets: registry.sessions().logical_targets().checkpoint_records(),
+            },
+            managed_lineages,
+        )
     }
 
     /// Materialize the complete operational-resource projection at one applied

@@ -4,17 +4,17 @@
 //! lookup path that callers rebuild and keep current by feeding committed
 //! [`RecordedEvent`] values through [`SessionRegistry::observe`].
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
-    security_lockdown_event, session_state_event, AdapterId, AuthorityDomainId, ExternalRuntimeRef,
-    Generation, LogicalTargetCandidateReleased, LogicalTargetCandidateReserved,
+    security_lockdown_event, session_state_event, spawn_claim_event, AdapterId, AuthorityDomainId,
+    ExternalRuntimeRef, Generation, LogicalTargetCandidateReleased, LogicalTargetCandidateReserved,
     LogicalTargetCreated, LogicalTargetId, LogicalTargetInitialCurrentAssigned,
     LogicalTargetProjectionRecord, RuntimeSessionId, SecurityLockdownEvent, SessionActivityChanged,
     SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
     SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled,
-    SessionReportApplied, SessionReportSourceCursor, SessionState, SpawnPromotionCommitted,
-    SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
+    SessionReportApplied, SessionReportSourceCursor, SessionState, SpawnClaimEvent,
+    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
@@ -23,8 +23,7 @@ use crate::storage::RecordedEvent;
 use super::{
     allowed_activity_transition, allowed_connectivity_transition,
     ingest::{source_cursor_strictly_after, validate_report, validate_source_cursor},
-    ExternalRuntimeOwnership, LogicalTargetRegistry, SessionError, SessionIdentity,
-    SessionStateEvent,
+    LogicalTargetRegistry, SessionError, SessionIdentity, SessionStateEvent,
 };
 
 /// The current in-memory state of one live session generation.
@@ -52,6 +51,18 @@ pub struct SessionTombstone {
     pub superseded_at_lsn: u64,
 }
 
+/// Private checkpoint provenance for one explicitly managed logical lineage.
+///
+/// Absence means legacy, never "infer managed from the current checkpoint
+/// shape". Tombstones are repeated here deliberately: the writer records the
+/// promotion provenance independently from both checkpoint projections so
+/// hydration can require exact three-way agreement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedLineageCheckpoint {
+    pub logical_target_id: LogicalTargetId,
+    pub tombstones: Vec<SessionTombstone>,
+}
+
 /// The in-memory session projection for one authority-domain log.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRegistry {
@@ -61,6 +72,8 @@ pub struct SessionRegistry {
     sessions: HashMap<SessionLiveKey, SessionRecord>,
     tombstones: HashMap<SessionTombstoneKey, SessionTombstone>,
     logical_targets: LogicalTargetRegistry,
+    managed_lineages: HashSet<LogicalTargetId>,
+    managed_tombstone_owners: HashMap<SessionTombstoneKey, LogicalTargetId>,
     lockdown_active: bool,
 }
 
@@ -100,6 +113,8 @@ impl SessionRegistry {
             sessions: HashMap::new(),
             tombstones: HashMap::new(),
             logical_targets,
+            managed_lineages: HashSet::new(),
+            managed_tombstone_owners: HashMap::new(),
             lockdown_active: false,
         })
     }
@@ -133,6 +148,27 @@ impl SessionRegistry {
         live_records: Vec<SessionRecord>,
         tombstones: Vec<SessionTombstone>,
         logical_targets: Vec<LogicalTargetProjectionRecord>,
+        lockdown_active: bool,
+    ) -> Result<Self, SessionError> {
+        Self::from_checkpoint_with_managed_lineages(
+            authority_domain_id,
+            checkpoint_lsn,
+            live_records,
+            tombstones,
+            logical_targets,
+            Vec::new(),
+            lockdown_active,
+        )
+    }
+
+    /// Restore sessions plus explicit managed-lineage checkpoint provenance.
+    pub fn from_checkpoint_with_managed_lineages(
+        authority_domain_id: AuthorityDomainId,
+        checkpoint_lsn: u64,
+        live_records: Vec<SessionRecord>,
+        tombstones: Vec<SessionTombstone>,
+        logical_targets: Vec<LogicalTargetProjectionRecord>,
+        managed_lineages: Vec<ManagedLineageCheckpoint>,
         lockdown_active: bool,
     ) -> Result<Self, SessionError> {
         if authority_domain_id.value.is_empty() {
@@ -170,13 +206,6 @@ impl SessionRegistry {
                 runtime_session_id: tombstone.runtime_session_id.clone(),
                 generation: tombstone.superseded_generation,
             };
-            if !checkpoint_tombstone_has_current_successor(&sessions, &logical_targets, &tombstone)
-            {
-                return Err(SessionError::CorruptRecord(
-                    "session checkpoint tombstone has no later current generation in its legacy runtime slot or managed logical-target lineage"
-                        .to_owned(),
-                ));
-            }
             if retained.insert(key, tombstone).is_some() {
                 return Err(SessionError::CorruptRecord(
                     "session checkpoint contains duplicate tombstone identities".to_owned(),
@@ -205,11 +234,29 @@ impl SessionRegistry {
                 ));
             }
         }
-        if !checkpoint_logical_tombstones_have_session_counterparts(&logical_targets, &retained) {
-            return Err(SessionError::CorruptRecord(
-                "managed logical-target checkpoint tombstone has no exact session tombstone counterpart"
-                    .to_owned(),
-            ));
+        let (managed_lineages, managed_tombstone_owners) = validate_managed_lineage_checkpoint(
+            checkpoint_lsn,
+            managed_lineages,
+            &logical_targets,
+            &retained,
+        )?;
+        for (key, tombstone) in &retained {
+            let valid = if let Some(logical_target_id) = managed_tombstone_owners.get(key) {
+                checkpoint_managed_tombstone_has_current_successor(
+                    &sessions,
+                    &logical_targets,
+                    logical_target_id,
+                    tombstone,
+                )
+            } else {
+                checkpoint_legacy_tombstone_has_current_successor(&sessions, tombstone)
+            };
+            if !valid {
+                return Err(SessionError::CorruptRecord(
+                    "session checkpoint tombstone has no later current generation in its explicit managed lineage or legacy runtime slot"
+                        .to_owned(),
+                ));
+            }
         }
 
         if lockdown_active
@@ -229,6 +276,8 @@ impl SessionRegistry {
             sessions,
             tombstones: retained,
             logical_targets,
+            managed_lineages,
+            managed_tombstone_owners,
             lockdown_active,
         })
     }
@@ -286,6 +335,7 @@ impl SessionRegistry {
             kind,
             StoredEventKind::SessionState
                 | StoredEventKind::SecurityLockdown
+                | StoredEventKind::SpawnClaim
                 | StoredEventKind::SpawnSuccessorEvidenceStaged
                 | StoredEventKind::SpawnPromotionCommitted
         ) {
@@ -314,6 +364,8 @@ impl SessionRegistry {
 
         if kind == StoredEventKind::SecurityLockdown {
             self.observe_security_lockdown(event)?;
+        } else if kind == StoredEventKind::SpawnClaim {
+            self.observe_spawn_claim(event, event_lsn)?;
         } else if kind == StoredEventKind::SpawnSuccessorEvidenceStaged {
             let staged = SpawnSuccessorEvidenceStaged::decode(event.payload.payload.as_slice())
                 .map_err(|error| {
@@ -424,6 +476,34 @@ impl SessionRegistry {
         Ok(ReplayDisposition::New)
     }
 
+    /// Deterministically encode explicit managed-lineage checkpoint provenance.
+    #[must_use]
+    pub fn managed_lineage_checkpoint_records(&self) -> Vec<ManagedLineageCheckpoint> {
+        let mut logical_target_ids: Vec<_> = self.managed_lineages.iter().cloned().collect();
+        logical_target_ids.sort_by(|left, right| left.value.cmp(&right.value));
+        logical_target_ids
+            .into_iter()
+            .map(|logical_target_id| {
+                let mut tombstones: Vec<_> = self
+                    .managed_tombstone_owners
+                    .iter()
+                    .filter(|(_, owner)| *owner == &logical_target_id)
+                    .map(|(key, _)| {
+                        self.tombstones
+                            .get(key)
+                            .expect("managed tombstone provenance has a session tombstone")
+                            .clone()
+                    })
+                    .collect();
+                sort_tombstones(&mut tombstones);
+                ManagedLineageCheckpoint {
+                    logical_target_id,
+                    tombstones,
+                }
+            })
+            .collect()
+    }
+
     /// Stable logical-target projection, including exact reverse ownership.
     #[must_use]
     pub fn logical_targets(&self) -> &LogicalTargetRegistry {
@@ -500,6 +580,42 @@ impl SessionRegistry {
         Ok(())
     }
 
+    fn observe_spawn_claim(
+        &mut self,
+        event: &RecordedEvent,
+        event_lsn: u64,
+    ) -> Result<(), SessionError> {
+        let claim_event =
+            SpawnClaimEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
+                SessionError::CorruptRecord(format!(
+                    "cannot decode spawn claim at LSN {event_lsn}: {error}"
+                ))
+            })?;
+        if claim_event.authority_domain_id.as_ref() != Some(&self.authority_domain_id) {
+            return Err(SessionError::CorruptLog(format!(
+                "spawn claim at LSN {event_lsn} belongs to another authority domain"
+            )));
+        }
+        match claim_event.mutation.as_ref().ok_or_else(|| {
+            SessionError::CorruptRecord(format!(
+                "spawn claim at LSN {event_lsn} is missing mutation"
+            ))
+        })? {
+            spawn_claim_event::Mutation::Accepted(accepted) => {
+                super::validate_spawn_claim_accepted(&self.authority_domain_id, accepted)
+                    .map_err(|error| SessionError::CorruptLog(error.to_string()))?;
+                let logical_target_id = accepted
+                    .claim
+                    .as_ref()
+                    .and_then(|claim| claim.logical_target_id.clone())
+                    .expect("accepted spawn claim validated");
+                self.managed_lineages.insert(logical_target_id);
+            }
+            spawn_claim_event::Mutation::DispositionChanged(_) => {}
+        }
+        Ok(())
+    }
+
     fn observe_staged_successor(
         &mut self,
         staged: &SpawnSuccessorEvidenceStaged,
@@ -547,6 +663,7 @@ impl SessionRegistry {
                 .expect("staged successor validated"),
         )?;
         self.logical_targets = logical_targets;
+        self.managed_lineages.insert(logical_target_id.clone());
         Ok(())
     }
 
@@ -636,6 +753,21 @@ impl SessionRegistry {
             )));
         }
 
+        let managed_tombstone_key = prior_record.as_ref().map(|prior| SessionTombstoneKey {
+            adapter_id: prior.identity.adapter_id.clone(),
+            deployment_scope: prior.identity.deployment_scope.clone(),
+            runtime_session_id: prior.identity.runtime_session_id.clone(),
+            generation: prior.identity.session_generation,
+        });
+        if managed_tombstone_key
+            .as_ref()
+            .is_some_and(|key| self.managed_tombstone_owners.contains_key(key))
+        {
+            return Err(SessionError::CorruptLog(format!(
+                "spawn promotion at LSN {event_lsn} duplicates managed tombstone provenance"
+            )));
+        }
+
         self.logical_targets.commit_reserved_candidate(
             logical_target_id,
             claim.expected_prior.as_ref(),
@@ -645,16 +777,13 @@ impl SessionRegistry {
                 .expect("promotion validated"),
             event_lsn,
         )?;
+        self.managed_lineages.insert(logical_target_id.clone());
         if let Some(prior) = prior_record {
             let prior_key = live_key(&prior.identity);
             self.sessions.remove(&prior_key);
+            let tombstone_key = managed_tombstone_key.expect("prior has a tombstone key");
             self.tombstones.insert(
-                SessionTombstoneKey {
-                    adapter_id: prior.identity.adapter_id.clone(),
-                    deployment_scope: prior.identity.deployment_scope.clone(),
-                    runtime_session_id: prior.identity.runtime_session_id.clone(),
-                    generation: prior.identity.session_generation,
-                },
+                tombstone_key.clone(),
                 SessionTombstone {
                     adapter_id: prior.identity.adapter_id,
                     deployment_scope: prior.identity.deployment_scope,
@@ -663,6 +792,8 @@ impl SessionRegistry {
                     superseded_at_lsn: event_lsn,
                 },
             );
+            self.managed_tombstone_owners
+                .insert(tombstone_key, logical_target_id.clone());
         }
         self.sessions.insert(
             candidate_key,
@@ -1262,106 +1393,200 @@ fn validate_checkpoint_tombstone(
     Ok(())
 }
 
-fn checkpoint_tombstone_has_current_successor(
-    sessions: &HashMap<SessionLiveKey, SessionRecord>,
-    logical_targets: &LogicalTargetRegistry,
-    tombstone: &SessionTombstone,
-) -> bool {
-    let valid_successor = |live: &SessionRecord| {
-        tombstone.superseded_generation.value < live.identity.session_generation.value
-            && tombstone.superseded_at_lsn
-                <= live
-                    .last_authoritative_lsn
-                    .expect("checkpoint live records are validated before tombstones")
-    };
-    let superseded = ExternalRuntimeRef {
-        adapter_id: Some(tombstone.adapter_id.clone()),
-        deployment_scope: tombstone.deployment_scope.clone(),
-        runtime_session_id: Some(tombstone.runtime_session_id.clone()),
-        generation: Some(tombstone.superseded_generation),
-    };
-    let managed_target = logical_targets
-        .owner_of(&superseded)
-        .and_then(|logical_target_id| logical_targets.get(logical_target_id))
-        .or_else(|| {
-            logical_targets.records().find(|target| {
-                target
-                    .current
-                    .as_ref()
-                    .and_then(|runtime| runtime.external_runtime.as_ref())
-                    .is_some_and(|current| {
-                        current.adapter_id.as_ref() == Some(&tombstone.adapter_id)
-                            && current.deployment_scope == tombstone.deployment_scope
-                            && current.runtime_session_id.as_ref()
-                                == Some(&tombstone.runtime_session_id)
-                    })
-            })
-        });
-    if let Some(target) = managed_target {
-        if !target.tombstones.values().any(|retained| {
-            retained.external_runtime_ref == superseded
-                && retained.superseded_at_lsn == tombstone.superseded_at_lsn
-        }) {
-            return false;
-        }
-        let Some(current) = target
-            .current
-            .as_ref()
-            .and_then(|runtime| runtime.external_runtime.as_ref())
-        else {
-            return false;
-        };
-        let (Some(adapter_id), Some(runtime_session_id), Some(generation)) = (
-            current.adapter_id.as_ref(),
-            current.runtime_session_id.as_ref(),
-            current.generation,
-        ) else {
-            return false;
-        };
-        let current_key = SessionLiveKey {
-            adapter_id: adapter_id.clone(),
-            deployment_scope: current.deployment_scope.clone(),
-            runtime_session_id: runtime_session_id.clone(),
-        };
-        return sessions.get(&current_key).is_some_and(|live| {
-            live.identity.session_generation == generation && valid_successor(live)
-        });
-    }
-
-    let legacy_key = SessionLiveKey {
-        adapter_id: tombstone.adapter_id.clone(),
-        deployment_scope: tombstone.deployment_scope.clone(),
-        runtime_session_id: tombstone.runtime_session_id.clone(),
-    };
-    sessions.get(&legacy_key).is_some_and(valid_successor)
-}
-
-fn checkpoint_logical_tombstones_have_session_counterparts(
+fn validate_managed_lineage_checkpoint(
+    checkpoint_lsn: u64,
+    records: Vec<ManagedLineageCheckpoint>,
     logical_targets: &LogicalTargetRegistry,
     session_tombstones: &HashMap<SessionTombstoneKey, SessionTombstone>,
-) -> bool {
-    logical_targets.records().all(|target| {
-        target.tombstones.values().all(|logical_tombstone| {
+) -> Result<
+    (
+        HashSet<LogicalTargetId>,
+        HashMap<SessionTombstoneKey, LogicalTargetId>,
+    ),
+    SessionError,
+> {
+    let mut managed_lineages = HashSet::new();
+    let mut managed_tombstone_owners = HashMap::new();
+    for record in records {
+        if record.logical_target_id.value.is_empty() {
+            return Err(SessionError::CorruptRecord(
+                "managed-lineage checkpoint marker has an empty logical_target_id".to_owned(),
+            ));
+        }
+        if !managed_lineages.insert(record.logical_target_id.clone()) {
+            return Err(SessionError::CorruptRecord(
+                "session checkpoint contains duplicate managed-lineage markers".to_owned(),
+            ));
+        }
+        for tombstone in record.tombstones {
+            validate_checkpoint_tombstone(checkpoint_lsn, &tombstone)?;
+            let key = tombstone_key(&tombstone);
+            if session_tombstones.get(&key) != Some(&tombstone) {
+                return Err(SessionError::CorruptRecord(
+                    "managed-lineage marker has no exact session tombstone counterpart".to_owned(),
+                ));
+            }
+            if managed_tombstone_owners
+                .insert(key, record.logical_target_id.clone())
+                .is_some()
+            {
+                return Err(SessionError::CorruptRecord(
+                    "managed-lineage marker repeats a tombstone identity".to_owned(),
+                ));
+            }
+            if !logical_target_has_exact_tombstone(
+                logical_targets,
+                &record.logical_target_id,
+                &tombstone,
+            ) {
+                return Err(SessionError::CorruptRecord(
+                    "managed-lineage marker has no exact logical-target tombstone counterpart"
+                        .to_owned(),
+                ));
+            }
+        }
+    }
+
+    for target in logical_targets.records() {
+        for logical_tombstone in target.tombstones.values() {
             let external = &logical_tombstone.external_runtime_ref;
             let (Some(adapter_id), Some(runtime_session_id), Some(generation)) = (
                 external.adapter_id.as_ref(),
                 external.runtime_session_id.as_ref(),
                 external.generation,
             ) else {
-                return false;
+                return Err(SessionError::CorruptRecord(
+                    "logical-target checkpoint tombstone has malformed identity".to_owned(),
+                ));
             };
-            session_tombstones
-                .get(&SessionTombstoneKey {
-                    adapter_id: adapter_id.clone(),
-                    deployment_scope: external.deployment_scope.clone(),
-                    runtime_session_id: runtime_session_id.clone(),
-                    generation,
+            let key = SessionTombstoneKey {
+                adapter_id: adapter_id.clone(),
+                deployment_scope: external.deployment_scope.clone(),
+                runtime_session_id: runtime_session_id.clone(),
+                generation,
+            };
+            if managed_tombstone_owners.get(&key) != Some(&target.logical_target_id) {
+                return Err(SessionError::CorruptRecord(
+                    "logical-target tombstone has no explicit managed-lineage marker".to_owned(),
+                ));
+            }
+            if session_tombstones
+                .get(&key)
+                .is_none_or(|session_tombstone| {
+                    session_tombstone.superseded_at_lsn != logical_tombstone.superseded_at_lsn
                 })
-                .is_some_and(|session_tombstone| {
-                    session_tombstone.superseded_at_lsn == logical_tombstone.superseded_at_lsn
-                })
-        })
+            {
+                return Err(SessionError::CorruptRecord(
+                    "managed logical-target tombstone has no exact session tombstone counterpart"
+                        .to_owned(),
+                ));
+            }
+        }
+    }
+
+    Ok((managed_lineages, managed_tombstone_owners))
+}
+
+fn checkpoint_managed_tombstone_has_current_successor(
+    sessions: &HashMap<SessionLiveKey, SessionRecord>,
+    logical_targets: &LogicalTargetRegistry,
+    logical_target_id: &LogicalTargetId,
+    tombstone: &SessionTombstone,
+) -> bool {
+    if !logical_target_has_exact_tombstone(logical_targets, logical_target_id, tombstone) {
+        return false;
+    }
+    let Some(current) = logical_targets
+        .get(logical_target_id)
+        .and_then(|target| target.current.as_ref())
+        .and_then(|runtime| runtime.external_runtime.as_ref())
+    else {
+        return false;
+    };
+    let (Some(adapter_id), Some(runtime_session_id), Some(generation)) = (
+        current.adapter_id.as_ref(),
+        current.runtime_session_id.as_ref(),
+        current.generation,
+    ) else {
+        return false;
+    };
+    let current_key = SessionLiveKey {
+        adapter_id: adapter_id.clone(),
+        deployment_scope: current.deployment_scope.clone(),
+        runtime_session_id: runtime_session_id.clone(),
+    };
+    sessions.get(&current_key).is_some_and(|live| {
+        live.identity.session_generation == generation
+            && checkpoint_tombstone_precedes_live(tombstone, live)
     })
+}
+
+fn checkpoint_legacy_tombstone_has_current_successor(
+    sessions: &HashMap<SessionLiveKey, SessionRecord>,
+    tombstone: &SessionTombstone,
+) -> bool {
+    sessions
+        .get(&SessionLiveKey {
+            adapter_id: tombstone.adapter_id.clone(),
+            deployment_scope: tombstone.deployment_scope.clone(),
+            runtime_session_id: tombstone.runtime_session_id.clone(),
+        })
+        .is_some_and(|live| checkpoint_tombstone_precedes_live(tombstone, live))
+}
+
+fn checkpoint_tombstone_precedes_live(tombstone: &SessionTombstone, live: &SessionRecord) -> bool {
+    tombstone.superseded_generation.value < live.identity.session_generation.value
+        && tombstone.superseded_at_lsn
+            <= live
+                .last_authoritative_lsn
+                .expect("checkpoint live records are validated before tombstones")
+}
+
+fn logical_target_has_exact_tombstone(
+    logical_targets: &LogicalTargetRegistry,
+    logical_target_id: &LogicalTargetId,
+    tombstone: &SessionTombstone,
+) -> bool {
+    let superseded = ExternalRuntimeRef {
+        adapter_id: Some(tombstone.adapter_id.clone()),
+        deployment_scope: tombstone.deployment_scope.clone(),
+        runtime_session_id: Some(tombstone.runtime_session_id.clone()),
+        generation: Some(tombstone.superseded_generation),
+    };
+    logical_targets
+        .get(logical_target_id)
+        .is_some_and(|target| {
+            target.tombstones.values().any(|retained| {
+                retained.external_runtime_ref == superseded
+                    && retained.superseded_at_lsn == tombstone.superseded_at_lsn
+            })
+        })
+}
+
+fn tombstone_key(tombstone: &SessionTombstone) -> SessionTombstoneKey {
+    SessionTombstoneKey {
+        adapter_id: tombstone.adapter_id.clone(),
+        deployment_scope: tombstone.deployment_scope.clone(),
+        runtime_session_id: tombstone.runtime_session_id.clone(),
+        generation: tombstone.superseded_generation,
+    }
+}
+
+fn sort_tombstones(tombstones: &mut [SessionTombstone]) {
+    tombstones.sort_by(|left, right| {
+        (
+            &left.adapter_id.value,
+            &left.deployment_scope,
+            &left.runtime_session_id.value,
+            left.superseded_generation.value,
+        )
+            .cmp(&(
+                &right.adapter_id.value,
+                &right.deployment_scope,
+                &right.runtime_session_id.value,
+                right.superseded_generation.value,
+            ))
+    });
 }
 
 fn mutation_identity(
@@ -1483,12 +1708,14 @@ mod tests {
     use patchbay_contracts::patchbay::RuntimeGenerationRef;
 
     use super::*;
+    use crate::session::ExternalRuntimeOwnership;
 
     fn same_runtime_managed_checkpoint() -> (
         AuthorityDomainId,
         Vec<SessionRecord>,
         Vec<SessionTombstone>,
         Vec<LogicalTargetProjectionRecord>,
+        Vec<ManagedLineageCheckpoint>,
     ) {
         let authority_domain_id = AuthorityDomainId {
             value: "main".to_owned(),
@@ -1562,20 +1789,26 @@ mod tests {
         (
             authority_domain_id,
             vec![live],
-            vec![tombstone],
+            vec![tombstone.clone()],
             logical_targets.checkpoint_records(),
+            vec![ManagedLineageCheckpoint {
+                logical_target_id,
+                tombstones: vec![tombstone],
+            }],
         )
     }
 
     #[test]
     fn same_runtime_managed_checkpoint_rejects_missing_logical_tombstone() {
-        let (domain, live, tombstones, logical_targets) = same_runtime_managed_checkpoint();
-        let complete = SessionRegistry::from_checkpoint_with_logical_targets(
+        let (domain, live, tombstones, logical_targets, managed_lineages) =
+            same_runtime_managed_checkpoint();
+        let complete = SessionRegistry::from_checkpoint_with_managed_lineages(
             domain.clone(),
             6,
             live.clone(),
             tombstones.clone(),
             logical_targets.clone(),
+            managed_lineages.clone(),
             false,
         )
         .expect("the complete same-runtime managed lineage is compatible");
@@ -1604,24 +1837,32 @@ mod tests {
         let mut asymmetric = logical_targets;
         asymmetric[0].tombstones.clear();
         assert!(matches!(
-            SessionRegistry::from_checkpoint_with_logical_targets(
-                domain, 6, live, tombstones, asymmetric, false,
+            SessionRegistry::from_checkpoint_with_managed_lineages(
+                domain,
+                6,
+                live,
+                tombstones,
+                asymmetric,
+                managed_lineages,
+                false,
             ),
             Err(SessionError::CorruptRecord(message))
-                if message.contains("managed logical-target lineage")
+                if message.contains("no exact logical-target tombstone counterpart")
         ));
     }
 
     #[test]
     fn same_runtime_managed_checkpoint_rejects_missing_session_tombstone_but_legacy_hydrates() {
-        let (domain, live, tombstones, logical_targets) = same_runtime_managed_checkpoint();
+        let (domain, live, tombstones, logical_targets, managed_lineages) =
+            same_runtime_managed_checkpoint();
         assert!(matches!(
-            SessionRegistry::from_checkpoint_with_logical_targets(
+            SessionRegistry::from_checkpoint_with_managed_lineages(
                 domain.clone(),
                 6,
                 live.clone(),
                 Vec::new(),
                 logical_targets,
+                managed_lineages,
                 false,
             ),
             Err(SessionError::CorruptRecord(message))
@@ -1638,5 +1879,175 @@ mod tests {
         )
         .expect("a session-only lineage without managed runtime markers remains compatible");
         assert_eq!(legacy.tombstones().count(), 1);
+    }
+
+    #[test]
+    fn unmarked_legacy_adoption_hydrates_after_session_generation_history() {
+        let (domain, live, tombstones, _, _) = same_runtime_managed_checkpoint();
+        let logical_target_id = LogicalTargetId {
+            value: "legacy-adopted".to_owned(),
+        };
+        let current = ExternalRuntimeRef {
+            adapter_id: Some(AdapterId {
+                value: "pi".to_owned(),
+            }),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: "runtime-a".to_owned(),
+            }),
+            generation: Some(Generation { value: 2 }),
+        };
+        let mut adopted = LogicalTargetRegistry::new(domain.clone()).unwrap();
+        adopted
+            .create(
+                logical_target_id.clone(),
+                AdapterId {
+                    value: "pi".to_owned(),
+                },
+                "machine-a".to_owned(),
+            )
+            .unwrap();
+        adopted
+            .assign_initial_current(&logical_target_id, current)
+            .unwrap();
+
+        let hydrated = SessionRegistry::from_checkpoint_with_logical_targets(
+            domain,
+            6,
+            live,
+            tombstones,
+            adopted.checkpoint_records(),
+            false,
+        )
+        .expect("explicit initial-current adoption does not convert legacy history to managed");
+        assert_eq!(hydrated.tombstones().count(), 1);
+    }
+
+    #[test]
+    fn marked_changed_runtime_rejects_missing_logical_tombstone_despite_old_slot_reuse() {
+        let domain = AuthorityDomainId {
+            value: "main".to_owned(),
+        };
+        let adapter_id = AdapterId {
+            value: "pi".to_owned(),
+        };
+        let logical_target_id = LogicalTargetId {
+            value: "target-a".to_owned(),
+        };
+        let runtime = |id: &str, generation: u64| ExternalRuntimeRef {
+            adapter_id: Some(adapter_id.clone()),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: id.to_owned(),
+            }),
+            generation: Some(Generation { value: generation }),
+        };
+        let prior = runtime("runtime-a", 1);
+        let successor = runtime("runtime-b", 2);
+        let prior_ref = RuntimeGenerationRef {
+            logical_target_id: Some(logical_target_id.clone()),
+            external_runtime: Some(prior.clone()),
+        };
+        let mut logical_targets = LogicalTargetRegistry::new(domain.clone()).unwrap();
+        logical_targets
+            .create(
+                logical_target_id.clone(),
+                adapter_id.clone(),
+                "machine-a".to_owned(),
+            )
+            .unwrap();
+        logical_targets
+            .assign_initial_current(&logical_target_id, prior.clone())
+            .unwrap();
+        logical_targets
+            .reserve_candidate(&logical_target_id, successor.clone())
+            .unwrap();
+        logical_targets
+            .commit_reserved_candidate(&logical_target_id, Some(&prior_ref), &successor, 6)
+            .unwrap();
+
+        let session = |id: &str, generation: u64| SessionRecord {
+            identity: SessionIdentity {
+                adapter_id: adapter_id.clone(),
+                deployment_scope: "machine-a".to_owned(),
+                runtime_session_id: RuntimeSessionId {
+                    value: id.to_owned(),
+                },
+                session_generation: Generation { value: generation },
+            },
+            state: SessionState {
+                connectivity: SessionConnectivityState::Live as i32,
+                activity: SessionActivityState::Idle as i32,
+            },
+            project: "patchbay".to_owned(),
+            cwd: "/work/patchbay".to_owned(),
+            name: id.to_owned(),
+            model: "provider/model".to_owned(),
+            last_source_cursor: None,
+            last_authoritative_lsn: Some(7),
+            tombstoned: false,
+            superseded_at_lsn: None,
+        };
+        let tombstone = SessionTombstone {
+            adapter_id: adapter_id.clone(),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: RuntimeSessionId {
+                value: "runtime-a".to_owned(),
+            },
+            superseded_generation: Generation { value: 1 },
+            superseded_at_lsn: 6,
+        };
+        let managed_lineages = vec![ManagedLineageCheckpoint {
+            logical_target_id: logical_target_id.clone(),
+            tombstones: vec![tombstone.clone()],
+        }];
+        let complete_records = logical_targets.checkpoint_records();
+        let complete = SessionRegistry::from_checkpoint_with_managed_lineages(
+            domain.clone(),
+            7,
+            vec![session("runtime-b", 2), session("runtime-a", 2)],
+            vec![tombstone.clone()],
+            complete_records.clone(),
+            managed_lineages.clone(),
+            false,
+        )
+        .expect("complete marked changed-runtime history hydrates");
+        assert_eq!(
+            complete.logical_targets().owner_of(&prior),
+            Some(&logical_target_id)
+        );
+
+        let mut asymmetric = complete_records;
+        asymmetric[0].tombstones.clear();
+        assert!(matches!(
+            SessionRegistry::from_checkpoint_with_managed_lineages(
+                domain,
+                7,
+                vec![session("runtime-b", 2), session("runtime-a", 2)],
+                vec![tombstone],
+                asymmetric,
+                managed_lineages,
+                false,
+            ),
+            Err(SessionError::CorruptRecord(message))
+                if message.contains("no exact logical-target tombstone counterpart")
+        ));
+    }
+
+    #[test]
+    fn unmarked_logical_tombstone_is_a_cross_version_disposable_shape() {
+        let (domain, live, tombstones, logical_targets, _) = same_runtime_managed_checkpoint();
+        assert!(matches!(
+            SessionRegistry::from_checkpoint_with_logical_targets(
+                domain,
+                6,
+                live,
+                tombstones,
+                logical_targets,
+                false,
+            ),
+            Err(SessionError::CorruptRecord(message))
+                if message.contains("no explicit managed-lineage marker")
+        ));
     }
 }

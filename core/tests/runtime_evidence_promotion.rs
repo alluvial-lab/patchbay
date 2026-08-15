@@ -3238,6 +3238,46 @@ fn continuation_requires_both_live_grants_and_tombstones_n_on_n_plus_one_promoti
     assert!(logical.tombstones.values().any(|tombstone| {
         tombstone.external_runtime_ref == external(1) && tombstone.superseded_at_lsn == 13
     }));
+    let managed_lineages = sessions.managed_lineage_checkpoint_records();
+    assert_eq!(managed_lineages.len(), 1);
+    assert_eq!(managed_lineages[0].logical_target_id, logical_target_id);
+    assert_eq!(managed_lineages[0].tombstones.len(), 1);
+    assert_eq!(managed_lineages[0].tombstones[0].superseded_at_lsn, 13);
+    let checkpoint_sessions: Vec<_> = sessions.sessions().cloned().collect();
+    let checkpoint_tombstones: Vec<_> = sessions.tombstones().cloned().collect();
+    let logical_checkpoint = sessions.logical_targets().checkpoint_records();
+    let mut reused_old_slot = checkpoint_sessions[0].clone();
+    reused_old_slot.identity.runtime_session_id = RuntimeSessionId {
+        value: "runtime-a".to_owned(),
+    };
+    let mut sessions_with_reused_old_slot = checkpoint_sessions;
+    sessions_with_reused_old_slot.push(reused_old_slot);
+    let hydrated = SessionRegistry::from_checkpoint_with_managed_lineages(
+        domain(),
+        13,
+        sessions_with_reused_old_slot.clone(),
+        checkpoint_tombstones.clone(),
+        logical_checkpoint.clone(),
+        managed_lineages.clone(),
+        false,
+    )
+    .expect("the complete marked lineage tolerates a later live legacy owner in the old slot");
+    assert_eq!(
+        hydrated.logical_targets().owner_of(&external(1)),
+        Some(&logical_target_id)
+    );
+    let mut missing_logical_tombstone = logical_checkpoint;
+    missing_logical_tombstone[0].tombstones.clear();
+    assert!(SessionRegistry::from_checkpoint_with_managed_lineages(
+        domain(),
+        13,
+        sessions_with_reused_old_slot,
+        checkpoint_tombstones,
+        missing_logical_tombstone,
+        managed_lineages,
+        false,
+    )
+    .is_err());
 
     let (mut expired_prefix, expired_promotion) = continuation_fixture();
     let mut expired_replacement =

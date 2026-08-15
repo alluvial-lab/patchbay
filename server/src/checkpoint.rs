@@ -14,9 +14,12 @@ use patchbay_core::{
 };
 
 use crate::{
-    snapshot::{decode_compatible_session_checkpoint, encode_stored_session_checkpoint},
+    snapshot::{decode_compatible_session_checkpoint, encode_materialized_session_checkpoint},
     state::ProjectionState,
 };
+
+#[cfg(test)]
+use crate::snapshot::encode_stored_session_checkpoint;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionCheckpointPolicy {
@@ -320,7 +323,7 @@ where
             })?
             .value;
         drop(decision_guard);
-        let payload = encode_stored_session_checkpoint(&checkpoint);
+        let payload = encode_materialized_session_checkpoint(&checkpoint);
 
         self.storage
             .write_snapshot(
@@ -1168,9 +1171,18 @@ mod tests {
                 .collect(),
             logical_targets: managed_targets.checkpoint_records(),
         };
+        let managed_lineages = vec![patchbay_core::session::ManagedLineageCheckpoint {
+            logical_target_id: logical_target_id.clone(),
+            tombstones: compatible.registry.tombstones().cloned().collect(),
+        }];
         let checkpoint_row = |checkpoint| StoredSnapshot {
             event_id: stored.event_id.clone(),
-            payload: encode_stored_session_checkpoint(&checkpoint),
+            payload: crate::snapshot::encode_materialized_session_checkpoint(
+                &crate::snapshot::MaterializedSessionCheckpoint::new(
+                    checkpoint,
+                    managed_lineages.clone(),
+                ),
+            ),
         };
         assert!(crate::snapshot::decode_compatible_session_checkpoint(
             &checkpoint_row(managed_complete.clone()),
@@ -1178,7 +1190,7 @@ mod tests {
             &generation,
         )
         .is_ok());
-        let mut missing_session_tombstone = managed_complete;
+        let mut missing_session_tombstone = managed_complete.clone();
         missing_session_tombstone.tombstones.clear();
         let mismatched = checkpoint_row(missing_session_tombstone);
         assert!(crate::snapshot::decode_compatible_session_checkpoint(
@@ -1208,6 +1220,48 @@ mod tests {
         );
         assert_eq!(
             symmetric_fallback
+                .registry
+                .logical_targets()
+                .checkpoint_records(),
+            fresh.logical_targets().checkpoint_records()
+        );
+
+        let mut missing_logical_tombstone = managed_complete;
+        missing_logical_tombstone.logical_targets[0]
+            .tombstones
+            .clear();
+        let inverse_mismatch = checkpoint_row(missing_logical_tombstone);
+        assert!(crate::snapshot::decode_compatible_session_checkpoint(
+            &inverse_mismatch,
+            &domain(),
+            &generation,
+        )
+        .is_err());
+        storage
+            .write_snapshot(
+                &domain(),
+                Lsn { value: 2 },
+                inverse_mismatch.payload.clone(),
+            )
+            .await
+            .unwrap();
+        let inverse_fallback =
+            crate::snapshot::recover_session_registry(&storage, &domain(), &generation)
+                .await
+                .unwrap();
+        assert!(inverse_fallback.checkpoint_rejected);
+        assert_eq!(inverse_fallback.checkpoint_lsn, 0);
+        assert_eq!(inverse_fallback.replayed_event_count, 3);
+        assert_eq!(
+            inverse_fallback.registry.sessions().collect::<Vec<_>>(),
+            fresh.sessions().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            inverse_fallback.registry.tombstones().collect::<Vec<_>>(),
+            fresh.tombstones().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            inverse_fallback
                 .registry
                 .logical_targets()
                 .checkpoint_records(),
@@ -1428,7 +1482,7 @@ mod tests {
         append_events(&storage, 2).await;
         let state = ProjectionState::rebuild(&storage, &domain()).await.unwrap();
         let guard = state.submit_guard().await;
-        let prior_payload = encode_stored_session_checkpoint(
+        let prior_payload = encode_materialized_session_checkpoint(
             &state
                 .materialize_session_checkpoint(
                     domain(),

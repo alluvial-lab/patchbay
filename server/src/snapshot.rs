@@ -1,17 +1,22 @@
 use std::collections::{HashMap, HashSet};
 
 use patchbay_contracts::patchbay::{
-    AuthorityDomainId, Generation, SessionActivityState, SessionCheckpointTombstone,
-    SessionConnectivityState, SessionSnapshot, StoredSessionCheckpoint, TargetScopeKind,
+    AuthorityDomainId, Generation, LogicalTargetId, SessionActivityState,
+    SessionCheckpointTombstone, SessionConnectivityState, SessionSnapshot, StoredSessionCheckpoint,
+    TargetScopeKind,
 };
 use patchbay_core::{
-    session::{SessionError, SessionIdentity, SessionRecord, SessionRegistry, SessionTombstone},
+    session::{
+        ManagedLineageCheckpoint, SessionError, SessionIdentity, SessionRecord, SessionRegistry,
+        SessionTombstone,
+    },
     storage::{recover, Storage, StoredSnapshot},
 };
 use prost::Message;
 
 const CHECKPOINT_MAGIC: &[u8] = b"\x89PATCHBAY-CHECKPOINT\r\n\x1a\n";
-const CHECKPOINT_FORMAT_VERSION: u32 = 2;
+const LEGACY_CHECKPOINT_FORMAT_VERSION: u32 = 2;
+const CHECKPOINT_FORMAT_VERSION: u32 = 3;
 const CHECKPOINT_VERSION_BYTES: usize = std::mem::size_of::<u32>();
 const CHECKPOINT_KIND_BYTES: usize = std::mem::size_of::<u8>();
 const CHECKPOINT_HEADER_BYTES: usize =
@@ -56,6 +61,50 @@ impl std::fmt::Display for SessionCheckpointRejection {
 
 impl std::error::Error for SessionCheckpointRejection {}
 
+#[derive(Clone, PartialEq, Message)]
+struct SessionCheckpointPayloadV3 {
+    #[prost(message, optional, tag = "1")]
+    checkpoint: Option<StoredSessionCheckpoint>,
+    #[prost(message, repeated, tag = "2")]
+    managed_lineages: Vec<ManagedLineageMarkerV3>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ManagedLineageMarkerV3 {
+    #[prost(message, optional, tag = "1")]
+    logical_target_id: Option<LogicalTargetId>,
+    #[prost(message, repeated, tag = "2")]
+    tombstones: Vec<SessionCheckpointTombstone>,
+}
+
+/// Complete private checkpoint materialized by the session projection writer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaterializedSessionCheckpoint {
+    pub checkpoint: StoredSessionCheckpoint,
+    pub managed_lineages: Vec<ManagedLineageCheckpoint>,
+}
+
+impl MaterializedSessionCheckpoint {
+    #[must_use]
+    pub fn new(
+        checkpoint: StoredSessionCheckpoint,
+        managed_lineages: Vec<ManagedLineageCheckpoint>,
+    ) -> Self {
+        Self {
+            checkpoint,
+            managed_lineages,
+        }
+    }
+}
+
+impl std::ops::Deref for MaterializedSessionCheckpoint {
+    type Target = StoredSessionCheckpoint;
+
+    fn deref(&self) -> &Self::Target {
+        &self.checkpoint
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompatibleSessionCheckpoint {
     pub snapshot: SessionSnapshot,
@@ -71,10 +120,35 @@ pub struct RecoveredSessionRegistry {
     pub checkpoint_rejected: bool,
 }
 
-/// Encode a complete private checkpoint payload.
+/// Encode an unmarked private checkpoint fixture as the current format.
+///
+/// Production writers use [`encode_materialized_session_checkpoint`] so
+/// managed provenance cannot be inferred or silently omitted.
 #[must_use]
 pub fn encode_stored_session_checkpoint(checkpoint: &StoredSessionCheckpoint) -> Vec<u8> {
-    encode_checkpoint(CheckpointKind::Session, &checkpoint.encode_to_vec())
+    encode_session_checkpoint_v3(checkpoint, &[])
+}
+
+/// Encode the production writer's complete private checkpoint payload.
+#[must_use]
+pub fn encode_materialized_session_checkpoint(
+    checkpoint: &MaterializedSessionCheckpoint,
+) -> Vec<u8> {
+    encode_session_checkpoint_v3(&checkpoint.checkpoint, &checkpoint.managed_lineages)
+}
+
+fn encode_session_checkpoint_v3(
+    checkpoint: &StoredSessionCheckpoint,
+    managed_lineages: &[ManagedLineageCheckpoint],
+) -> Vec<u8> {
+    let payload = SessionCheckpointPayloadV3 {
+        checkpoint: Some(checkpoint.clone()),
+        managed_lineages: managed_lineages
+            .iter()
+            .map(managed_lineage_to_wire)
+            .collect(),
+    };
+    encode_checkpoint(CheckpointKind::Session, &payload.encode_to_vec())
 }
 
 pub fn decode_compatible_session_checkpoint(
@@ -91,9 +165,26 @@ pub fn decode_compatible_session_checkpoint(
         .as_ref()
         .filter(|lsn| lsn.value > 0)
         .ok_or(SessionCheckpointRejection::Lsn)?;
-    let payload = decode_session_checkpoint_envelope(&stored.payload)?;
-    let checkpoint =
-        StoredSessionCheckpoint::decode(payload).map_err(|_| SessionCheckpointRejection::Decode)?;
+    let (format_version, payload) = decode_session_checkpoint_envelope(&stored.payload)?;
+    let (checkpoint, managed_lineages) = if format_version == LEGACY_CHECKPOINT_FORMAT_VERSION {
+        (
+            StoredSessionCheckpoint::decode(payload)
+                .map_err(|_| SessionCheckpointRejection::Decode)?,
+            Vec::new(),
+        )
+    } else {
+        let payload = SessionCheckpointPayloadV3::decode(payload)
+            .map_err(|_| SessionCheckpointRejection::Decode)?;
+        let checkpoint = payload
+            .checkpoint
+            .ok_or(SessionCheckpointRejection::Decode)?;
+        let managed_lineages = payload
+            .managed_lineages
+            .into_iter()
+            .map(managed_lineage_from_wire)
+            .collect::<Result<Vec<_>, _>>()?;
+        (checkpoint, managed_lineages)
+    };
     let snapshot = checkpoint
         .snapshot
         .ok_or(SessionCheckpointRejection::Decode)?;
@@ -247,12 +338,13 @@ pub fn decode_compatible_session_checkpoint(
         .ok_or(SessionCheckpointRejection::Semantic)?;
     validate_checkpoint_lockdown(lockdown, expected_domain, stored_lsn.value)?;
     let lockdown_active = lockdown.active;
-    let registry = SessionRegistry::from_checkpoint_with_logical_targets(
+    let registry = SessionRegistry::from_checkpoint_with_managed_lineages(
         expected_domain.clone(),
         stored_lsn.value,
         live_records,
         tombstones,
         checkpoint.logical_targets,
+        managed_lineages,
         lockdown_active,
     )
     .map_err(|_| SessionCheckpointRejection::Semantic)?;
@@ -402,16 +494,57 @@ fn checkpoint_tombstone_to_domain(
     })
 }
 
+fn managed_lineage_to_wire(record: &ManagedLineageCheckpoint) -> ManagedLineageMarkerV3 {
+    ManagedLineageMarkerV3 {
+        logical_target_id: Some(record.logical_target_id.clone()),
+        tombstones: record
+            .tombstones
+            .iter()
+            .map(|tombstone| SessionCheckpointTombstone {
+                adapter_id: Some(tombstone.adapter_id.clone()),
+                deployment_scope: tombstone.deployment_scope.clone(),
+                runtime_session_id: Some(tombstone.runtime_session_id.clone()),
+                generation: Some(tombstone.superseded_generation),
+                superseded_at_lsn: Some(patchbay_contracts::patchbay::Lsn {
+                    value: tombstone.superseded_at_lsn,
+                }),
+            })
+            .collect(),
+    }
+}
+
+fn managed_lineage_from_wire(
+    record: ManagedLineageMarkerV3,
+) -> Result<ManagedLineageCheckpoint, SessionCheckpointRejection> {
+    Ok(ManagedLineageCheckpoint {
+        logical_target_id: record
+            .logical_target_id
+            .filter(|id| !id.value.is_empty())
+            .ok_or(SessionCheckpointRejection::Semantic)?,
+        tombstones: record
+            .tombstones
+            .into_iter()
+            .map(checkpoint_tombstone_to_domain)
+            .collect::<Result<Vec<_>, _>>()?,
+    })
+}
+
 fn encode_checkpoint(kind: CheckpointKind, payload: &[u8]) -> Vec<u8> {
+    encode_checkpoint_version(CHECKPOINT_FORMAT_VERSION, kind, payload)
+}
+
+fn encode_checkpoint_version(version: u32, kind: CheckpointKind, payload: &[u8]) -> Vec<u8> {
     let mut encoded = Vec::with_capacity(CHECKPOINT_HEADER_BYTES + payload.len());
     encoded.extend_from_slice(CHECKPOINT_MAGIC);
-    encoded.extend_from_slice(&CHECKPOINT_FORMAT_VERSION.to_be_bytes());
+    encoded.extend_from_slice(&version.to_be_bytes());
     encoded.push(kind as u8);
     encoded.extend_from_slice(payload);
     encoded
 }
 
-fn decode_session_checkpoint_envelope(encoded: &[u8]) -> Result<&[u8], SessionCheckpointRejection> {
+fn decode_session_checkpoint_envelope(
+    encoded: &[u8],
+) -> Result<(u32, &[u8]), SessionCheckpointRejection> {
     if encoded.len() < CHECKPOINT_HEADER_BYTES || !encoded.starts_with(CHECKPOINT_MAGIC) {
         return Err(SessionCheckpointRejection::Undiscriminated);
     }
@@ -422,13 +555,16 @@ fn decode_session_checkpoint_envelope(encoded: &[u8]) -> Result<&[u8], SessionCh
             .try_into()
             .expect("checkpoint version slice has a fixed width"),
     );
-    if version != CHECKPOINT_FORMAT_VERSION {
+    if !matches!(
+        version,
+        LEGACY_CHECKPOINT_FORMAT_VERSION | CHECKPOINT_FORMAT_VERSION
+    ) {
         return Err(SessionCheckpointRejection::UnsupportedVersion);
     }
     if encoded[version_end] != CheckpointKind::Session as u8 {
         return Err(SessionCheckpointRejection::WrongType);
     }
-    Ok(&encoded[CHECKPOINT_HEADER_BYTES..])
+    Ok((version, &encoded[CHECKPOINT_HEADER_BYTES..]))
 }
 
 #[cfg(test)]
@@ -619,12 +755,22 @@ mod tests {
             }],
             logical_targets: logical_targets.checkpoint_records(),
         };
+        let managed_lineages = vec![ManagedLineageCheckpoint {
+            logical_target_id: logical_target_id.clone(),
+            tombstones: vec![
+                checkpoint_tombstone_to_domain(complete.tombstones[0].clone())
+                    .expect("managed tombstone fixture"),
+            ],
+        }];
         let stored = |checkpoint: &StoredSessionCheckpoint| StoredSnapshot {
             event_id: EventId {
                 authority_domain_id: Some(domain("main")),
                 lsn: Some(Lsn { value: 7 }),
             },
-            payload: encode_stored_session_checkpoint(checkpoint),
+            payload: encode_materialized_session_checkpoint(&MaterializedSessionCheckpoint::new(
+                checkpoint.clone(),
+                managed_lineages.clone(),
+            )),
         };
         let mut missing_session_tombstone = complete.clone();
         missing_session_tombstone.tombstones.clear();
@@ -822,6 +968,29 @@ mod tests {
             ),
             Err(SessionCheckpointRejection::UnsupportedVersion)
         );
+
+        let legacy_v2 = StoredSnapshot {
+            event_id: EventId {
+                authority_domain_id: Some(domain("main")),
+                lsn: Some(Lsn { value: 7 }),
+            },
+            payload: encode_checkpoint_version(
+                LEGACY_CHECKPOINT_FORMAT_VERSION,
+                CheckpointKind::Session,
+                &StoredSessionCheckpoint {
+                    snapshot: Some(valid_snapshot()),
+                    tombstones: Vec::new(),
+                    logical_targets: Vec::new(),
+                }
+                .encode_to_vec(),
+            ),
+        };
+        assert!(decode_compatible_session_checkpoint(
+            &legacy_v2,
+            &domain("main"),
+            &Generation { value: 11 },
+        )
+        .is_ok());
     }
 
     #[test]

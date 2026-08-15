@@ -27,7 +27,7 @@ pub use logical_target::{
     LogicalTargetRecord, LogicalTargetRegistry, LogicalTargetTombstone,
 };
 pub use patchbay_contracts::patchbay::SessionReport;
-pub use registry::{SessionRecord, SessionRegistry, SessionTombstone};
+pub use registry::{ManagedLineageCheckpoint, SessionRecord, SessionRegistry, SessionTombstone};
 pub use replay::rebuild_from_log;
 pub(crate) use runtime_evidence::validate_spawn_promotion_result_order;
 pub use runtime_evidence::{
