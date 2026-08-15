@@ -496,28 +496,25 @@ fn generated_runtime_ingress_families() -> BTreeSet<RuntimeIngressFamily> {
         let suffix = kind
             .strip_prefix("OBSERVATION_KIND_")
             .expect("ObservationKind uses the generated registry prefix");
-        let family = match suffix {
-            "UNSPECIFIED" => continue,
-            "RESULT" => {
-                assert!(
-                    candidate_fields.contains("observation"),
-                    "Result ingress requires the generated Observation quarantine arm"
-                );
-                "result".to_owned()
-            }
-            _ => {
-                assert!(
-                    candidate_fields.contains("transcript_status"),
-                    "Event/Status/Delta ingress requires the generated transcript/status quarantine arm"
-                );
-                if suffix == "EVENT" {
-                    "transcript_event".to_owned()
-                } else {
-                    suffix.to_ascii_lowercase()
-                }
-            }
-        };
-        families.insert(RuntimeIngressFamily::ObservationKind(family));
+        if suffix == "UNSPECIFIED" {
+            continue;
+        }
+        match suffix {
+            "RESULT" => assert!(
+                candidate_fields.contains("observation"),
+                "Result ingress requires the generated Observation quarantine arm"
+            ),
+            _ => assert!(
+                candidate_fields.contains("transcript_status"),
+                "Event/Status/Delta ingress requires the generated transcript/status quarantine arm"
+            ),
+        }
+        // Identity is the RAW generated enum value name — never a normalized
+        // string. Proto enum value names are unique within their enum, so two
+        // generated kinds can never collide into one family key (a normalized
+        // `EVENT` -> `transcript_event` collided with a future
+        // `TRANSCRIPT_EVENT` and silently skipped its fixture).
+        families.insert(RuntimeIngressFamily::ObservationKind(kind));
     }
     families
 }
@@ -639,12 +636,14 @@ impl RuntimeIngressInventoryFixture {
                 runtime_elicitation_request(self.domain.clone(), withdrawn)
             }
             (RuntimeIngressFamily::CandidateArm(_), "observation")
-            | (RuntimeIngressFamily::ObservationKind(_), "result") => lifecycle_observation(
-                self.domain.clone(),
-                &self.result_operation,
-                ObservationKind::Result,
-                FailureCode::Unspecified,
-            ),
+            | (RuntimeIngressFamily::ObservationKind(_), "OBSERVATION_KIND_RESULT") => {
+                lifecycle_observation(
+                    self.domain.clone(),
+                    &self.result_operation,
+                    ObservationKind::Result,
+                    FailureCode::Unspecified,
+                )
+            }
             (RuntimeIngressFamily::CandidateArm(_), "session_report") => {
                 let mut stale_report = session_report(SessionConnectivityState::Live);
                 stale_report.source_cursor.as_mut().unwrap().revision = 2;
@@ -656,7 +655,7 @@ impl RuntimeIngressInventoryFixture {
                 }
             }
             (RuntimeIngressFamily::CandidateArm(_), "transcript_status")
-            | (RuntimeIngressFamily::ObservationKind(_), "transcript_event") => {
+            | (RuntimeIngressFamily::ObservationKind(_), "OBSERVATION_KIND_EVENT") => {
                 runtime_fact_request(
                     self.domain.clone(),
                     self.runtime_scope.clone(),
@@ -664,18 +663,22 @@ impl RuntimeIngressInventoryFixture {
                     "patchbay.pi.TranscriptEvent.v1",
                 )
             }
-            (RuntimeIngressFamily::ObservationKind(_), "status") => runtime_fact_request(
-                self.domain.clone(),
-                self.runtime_scope.clone(),
-                ObservationKind::Status,
-                "patchbay.pi.DeliveryStatus.v1",
-            ),
-            (RuntimeIngressFamily::ObservationKind(_), "delta") => runtime_fact_request(
-                self.domain.clone(),
-                self.runtime_scope.clone(),
-                ObservationKind::Delta,
-                "patchbay.pi.TranscriptDelta.v1",
-            ),
+            (RuntimeIngressFamily::ObservationKind(_), "OBSERVATION_KIND_STATUS") => {
+                runtime_fact_request(
+                    self.domain.clone(),
+                    self.runtime_scope.clone(),
+                    ObservationKind::Status,
+                    "patchbay.pi.DeliveryStatus.v1",
+                )
+            }
+            (RuntimeIngressFamily::ObservationKind(_), "OBSERVATION_KIND_DELTA") => {
+                runtime_fact_request(
+                    self.domain.clone(),
+                    self.runtime_scope.clone(),
+                    ObservationKind::Delta,
+                    "patchbay.pi.TranscriptDelta.v1",
+                )
+            }
             generated_but_unmapped => panic!(
                 "generated runtime ingress family {generated_but_unmapped:?} needs a distinct real authenticated fixture"
             ),
@@ -756,10 +759,14 @@ async fn runtime_ingress_inventory_enumerates_generated_rpc_and_observation_fami
                 let name = match ObservationKind::try_from(observation.kind)
                     .expect("known generated ObservationKind")
                 {
-                    ObservationKind::Event => "transcript_event",
-                    ObservationKind::Status => "status",
-                    ObservationKind::Delta => "delta",
-                    ObservationKind::Result => "result",
+                    // Raw generated value names — must stay identical to the
+                    // proto registry identities enumerated above. The match is
+                    // exhaustive over today's variants; a NEW generated variant
+                    // breaks compilation here, forcing fixture coverage.
+                    ObservationKind::Event => "OBSERVATION_KIND_EVENT",
+                    ObservationKind::Status => "OBSERVATION_KIND_STATUS",
+                    ObservationKind::Delta => "OBSERVATION_KIND_DELTA",
+                    ObservationKind::Result => "OBSERVATION_KIND_RESULT",
                     ObservationKind::Unspecified => "unexpected_unspecified_kind",
                 };
                 RuntimeIngressFamily::ObservationKind(name.to_owned())
