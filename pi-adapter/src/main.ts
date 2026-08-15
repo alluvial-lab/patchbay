@@ -18,6 +18,11 @@ import {
   type AdapterDiagnosticSessionRef,
 } from "./adapter_diagnostics.js";
 import { DeliveryTranslator, UnsupportedCommandError } from "./delivery.js";
+import {
+  authorizeDeploymentIfRequired,
+  type DeploymentAuthorityRequest,
+  type DeploymentAuthorityResolver,
+} from "./deployment_authority.js";
 import { composeAdapterDiagnostics, CoreDiagnosticsForwarder } from "./core_diagnostics_forwarder.js";
 import { PiSession, type PiSessionOptions } from "./pi_session.js";
 import {
@@ -46,6 +51,7 @@ export interface AdapterProcessOptions {
   createSession?: (options: PreprovisionedSession) => Promise<PiSession>;
   diagnostics?: AdapterDiagnostics;
   forwardDiagnostics?: boolean;
+  deploymentAuthorityResolver?: DeploymentAuthorityResolver;
 }
 
 interface StartedDelivery {
@@ -212,6 +218,27 @@ export class AdapterProcess {
         event: "session.register.failed",
         level: "error",
         session: this.#sessionRef(entry),
+        error: diagnosticError(error),
+      });
+      throw error;
+    }
+  }
+
+  /** Launch-time precondition used by the downstream spawn supervisor. */
+  async authorizeDeployment(
+    request: DeploymentAuthorityRequest,
+    now: Date,
+  ): Promise<{ readonly credentialHandle: string } | undefined> {
+    try {
+      return await authorizeDeploymentIfRequired(
+        this.#options.deploymentAuthorityResolver,
+        request,
+        now,
+      );
+    } catch (error) {
+      this.#record({
+        event: "deployment.authority.denied",
+        level: "warn",
         error: diagnosticError(error),
       });
       throw error;

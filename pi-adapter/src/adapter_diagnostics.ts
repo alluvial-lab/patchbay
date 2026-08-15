@@ -33,6 +33,7 @@ export const ADAPTER_DIAGNOSTIC_EVENTS = [
   "delivery.completed",
   "delivery.rejected",
   "delivery.failed",
+  "deployment.authority.denied",
   "observation.failed",
   "observation.flush_failed",
   "log.records_dropped",
