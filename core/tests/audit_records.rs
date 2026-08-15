@@ -394,7 +394,7 @@ async fn legacy_data_survives_versioned_migration() {
 }
 
 #[tokio::test]
-async fn v2_audit_schema_migrates_through_v3_to_v5_without_losing_rows() {
+async fn v2_audit_schema_migrates_to_latest_without_losing_rows() {
     let directory = TempDir::new().unwrap();
     let path = directory.path().join("v2.sqlite3");
     let source_payload = StoredEventPayload {
@@ -534,7 +534,7 @@ async fn v2_audit_schema_migrates_through_v3_to_v5_without_losing_rows() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 5);
+    assert_eq!(version, 6);
     assert_eq!((event_count, audit_count), (2, 1));
     assert_eq!(migrated_grant_id, None);
 }
@@ -610,7 +610,7 @@ async fn v3_to_latest_migration_preserves_all_durable_rows_without_allocating_ls
     let version: u32 = db
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 5);
+    assert_eq!(version, 6);
     for table in ["events", "idempotency_keys", "snapshots", "audit_records"] {
         let count: u64 = db
             .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
@@ -720,7 +720,7 @@ async fn malformed_v4_metadata_constraints_are_rejected_without_repair_or_versio
         let version: u32 = db
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 5, "metadata mutation {name} changed version");
+        assert_eq!(version, 6, "metadata mutation {name} changed version");
         let schema_after: String = db
             .query_row(
                 "SELECT sql FROM sqlite_master

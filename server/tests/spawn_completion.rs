@@ -1057,8 +1057,12 @@ async fn migrated_v4_complete_prefix_with_duplicate_descendant_bootstraps_and_re
             ],
         )
         .unwrap();
-        db.execute_batch("DROP TABLE grant_identities; PRAGMA user_version = 4;")
-            .unwrap();
+        db.execute_batch(
+            "DROP TABLE staged_successor_reconciliations;
+             DROP TABLE grant_identities;
+             PRAGMA user_version = 4;",
+        )
+        .unwrap();
     }
 
     let migrated = AuditedStorage::new(RusqliteStorage::open(path.to_str().unwrap()).unwrap());

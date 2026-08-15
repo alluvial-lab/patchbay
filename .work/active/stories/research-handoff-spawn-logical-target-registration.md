@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-logical-target-registration
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, security]
 parent: research-handoff-spawn
 depends_on: [spawn-delivery-atomic-claim-idempotency-generation]
@@ -68,4 +68,18 @@ Depends on an atomically accepted exclusive claim/fence. Duplicate reconciliatio
 - Verification group 4 — `cd pi-adapter && npm test`: **PASS** (38/38 tests, including the real-core loop).
 - Simplification: removed server-side reconstruction of a second `ClaimedSuccessor` disposition and the poisoned/promoted claim-state staging branch; the generated disposition returned by the classifier is now the only new-stage authority. No `.proto` or generated-contract edits were made.
 - Discrepancies from design: the classifier/validation contracts were already landed in `runtime_evidence.rs`, identity/claim contracts were already complete in `logical_target.rs` and `spawn_claim.rs`, and ordinary-ingress exclusion was already complete in `ingest.rs`. The remaining production integration owners were the session registry fold, dedicated storage boundary, and adapter service; no duplicate implementation was added to the named landed files.
+- Adjacent issues parked: none.
+
+### Fix round — bounded indexed late-retry reconciliation
+
+- Execution/dispatch: retained caller-selected `openai-codex/gpt-5.6-sol` and `thorough` review weight. Direct-read only: the material finding named one storage/service path and the existing SQLite identity-index pattern answered the integration questions without exploratory fan-out.
+- Mechanism: schema v6 adds `staged_successor_reconciliations`, atomically maintained by `append_spawn_successor_staged_idempotent`, with unique authority-domain-qualified claim and canonical external-runtime indexes plus the original source LSN and canonical staged bytes. A v5→v6 migration validates and backfills existing staged events without consuming an event LSN. The new storage-owned read-only reconciliation port joins the indexed row to its durable event, validates the exact index/envelope relationship, and returns the original id only for exact durable claim + report + authenticated source-attachment equality. Adapter ingress calls that bounded port while retaining the existing global decision-gate ordering; it no longer reads the authority log for late retry reconciliation.
+- Behavior retained: exact pre-promotion and post-promotion retries resolve to the original staged event; changed report/source/claim evidence returns no reconciliation authority and follows the existing fail-closed conflict/quarantine path. Dedicated append conflict semantics and exact external-runtime ownership remain unchanged.
+- Tests: added a 4,096-row SQLite `StatementStatus::FullscanStep == 0` oracle for both claim and external-runtime lookup indexes; expanded staged retry coverage for exact and changed evidence before promotion; added post-promotion original-id reconciliation; added v5 index-backfill/no-LSN-consumption coverage; updated legacy schema-downgrade fixtures for schema v6.
+- Controlled fix-round mutations, all killed and restored with `git restore`: disabling index use produced 2,047 full-scan steps and failed the bounded-work oracle; omitting report/source exactness failed the changed-evidence retry oracle. The pass-1 mutations were re-run and remained killed: disabling managed staging failed `exact_continuation_report_stages_n_plus_one_without_publishing_it`; removing candidate reservation failed `duplicate_staged_runtime_rejection_is_atomic_for_a_fresh_hot_fold`; dropping prior ownership on tombstoning failed `slot_transitions_are_exact_and_tombstones_retain_ownership`; omitting claimed-generation equality failed `classifier_kills_each_attachment_claim_prior_deployment_and_generation_mutation`.
+- Verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS** (including mandatory warnings-as-errors clippy).
+- Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS** (54 vectors, 17 promoted vectors, 22 implementation checks, 38 killed mutation witnesses; 54 model promotion blocks).
+- Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS** (23/23 tests).
+- Verification group 4 — `cd pi-adapter && npm test`: **PASS** (38/38 tests, including the real-core loop).
+- Discrepancies from the review recommendation: none. No `.proto`, generated-contract, foundation-doc, or unrelated `.work/` edits were required.
 - Adjacent issues parked: none.

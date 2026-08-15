@@ -423,32 +423,15 @@ async fn existing_staged_successor_retry<S: Storage>(
     source_attachment: &RuntimeEvidenceSourceAttachment,
     claim_record: &session::SpawnClaimRecord,
 ) -> Result<Option<EventId>, Status> {
-    let events = storage
-        .read_after(domain, patchbay_contracts::patchbay::Lsn { value: 0 })
+    storage
+        .reconcile_spawn_successor_staged_retry(
+            domain,
+            claim_record.claim.clone(),
+            report.clone(),
+            source_attachment.clone(),
+        )
         .await
-        .map_err(map_storage_error_to_status)?;
-    let mut exact = None;
-    for event in events {
-        if event.payload.kind != StoredEventKind::SpawnSuccessorEvidenceStaged as i32 {
-            continue;
-        }
-        let staged = SpawnSuccessorEvidenceStaged::decode(event.payload.payload.as_slice())
-            .map_err(|error| {
-                Status::internal(format!("cannot decode durable staged successor: {error}"))
-            })?;
-        session::validate_staged_successor(&staged)
-            .map_err(|error| Status::internal(error.to_string()))?;
-        if staged.exact_claim.as_ref() == Some(&claim_record.claim)
-            && staged.report.as_ref() == Some(report)
-            && staged.source_attachment.as_ref() == Some(source_attachment)
-            && exact.replace(event.event_id).is_some()
-        {
-            return Err(Status::internal(
-                "durable prefix contains duplicate exact staged-successor evidence",
-            ));
-        }
-    }
-    Ok(exact)
+        .map_err(map_storage_error_to_status)
 }
 
 fn staged_successor_for_claim(

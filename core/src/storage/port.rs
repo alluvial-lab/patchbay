@@ -24,8 +24,8 @@ use patchbay_contracts::patchbay::{
     ActorId, AdapterDiagnosticDetail, AuditEventKind, AuditPage, AuthorityDomainId, CommandId,
     CommandTransition, EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn,
     Observation, ObservationKind, OperationKind, OperationState, QuarantinedRuntimeEvidence,
-    SpawnClaimAccepted, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventPayload,
-    TargetScope,
+    RuntimeEvidenceSourceAttachment, SessionReport, SpawnClaimAccepted, SpawnGenerationClaim,
+    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventPayload, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -797,6 +797,21 @@ pub trait Storage: Send + Sync {
         _authority_domain_id: &AuthorityDomainId,
         _staged: SpawnSuccessorEvidenceStaged,
     ) -> impl std::future::Future<Output = Result<EventId, StorageError>> + Send {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    /// Reconcile a late staged-successor retry through the storage-owned exact
+    /// identity index. This read never reconstructs staging authority: it
+    /// returns the original event only when the durable claim, report, and
+    /// authenticated source attachment all match exactly. Callers serialize
+    /// this lookup with claim poison/promotion through the core decision gate.
+    fn reconcile_spawn_successor_staged_retry(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _exact_claim: SpawnGenerationClaim,
+        _report: SessionReport,
+        _source_attachment: RuntimeEvidenceSourceAttachment,
+    ) -> impl std::future::Future<Output = Result<Option<EventId>, StorageError>> + Send {
         async { Err(StorageError::UnsupportedOperation) }
     }
 

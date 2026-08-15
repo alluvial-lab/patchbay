@@ -10,7 +10,8 @@
 use patchbay_contracts::patchbay::{
     AcceptedOperation, AuditEventKind, AuthorityDomainId, CommandTransition, FailureCode,
     Observation, ObservationKind, OperationKind, OperatorRecord, QuarantinedRuntimeEvidence,
-    Revocation, SecurityLockdownEvent, SpawnClaimAccepted, SpawnPromotionCommitted,
+    Revocation, RuntimeEvidenceSourceAttachment, SecurityLockdownEvent, SessionReport,
+    SpawnClaimAccepted, SpawnGenerationClaim, SpawnPromotionCommitted,
     SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
@@ -625,6 +626,23 @@ where
     ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
         self.inner
             .append_spawn_successor_staged_idempotent(authority_domain_id, staged)
+            .await
+    }
+
+    async fn reconcile_spawn_successor_staged_retry(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        exact_claim: SpawnGenerationClaim,
+        report: SessionReport,
+        source_attachment: RuntimeEvidenceSourceAttachment,
+    ) -> Result<Option<patchbay_contracts::patchbay::EventId>, StorageError> {
+        self.inner
+            .reconcile_spawn_successor_staged_retry(
+                authority_domain_id,
+                exact_claim,
+                report,
+                source_attachment,
+            )
             .await
     }
 

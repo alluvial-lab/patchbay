@@ -710,8 +710,12 @@ async fn prepare_v4_grant_log(path: &Path, sources: &[StoredEventPayload]) {
     drop(storage);
     tokio::task::yield_now().await;
     let db = rusqlite::Connection::open(path).unwrap();
-    db.execute_batch("DROP TABLE grant_identities; PRAGMA user_version = 4;")
-        .unwrap();
+    db.execute_batch(
+        "DROP TABLE staged_successor_reconciliations;
+         DROP TABLE grant_identities;
+         PRAGMA user_version = 4;",
+    )
+    .unwrap();
     for (index, source) in sources.iter().enumerate() {
         db.execute(
             "INSERT INTO events (lsn, authority_domain_id, kind, payload) VALUES (?1, ?2, ?3, ?4)",
@@ -769,7 +773,7 @@ async fn v4_migration_backfills_earliest_exact_grant_identity_without_consuming_
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(version, 5);
+    assert_eq!(version, 6);
     assert_eq!(source_lsn, 1);
 }
 
@@ -803,7 +807,7 @@ async fn migration_and_open_reject_conflicting_or_inconsistent_grant_identity_hi
         .unwrap());
     drop(db);
 
-    let inconsistent_path = directory.path().join("v5-missing-index.sqlite3");
+    let inconsistent_path = directory.path().join("v6-missing-index.sqlite3");
     prepare_v4_grant_log(
         &inconsistent_path,
         &[grant_source("legacy", OperationKind::Spawn)],

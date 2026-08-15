@@ -971,8 +971,32 @@ async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_
     assert_eq!(first, event_id(8));
     assert_eq!(retry, first);
 
+    let exact = staged();
+    assert_eq!(
+        storage
+            .reconcile_spawn_successor_staged_retry(
+                &domain(),
+                exact.exact_claim.clone().unwrap(),
+                exact.report.clone().unwrap(),
+                exact.source_attachment.clone().unwrap(),
+            )
+            .await
+            .expect("indexed pre-promotion retry lookup succeeds"),
+        Some(first.clone())
+    );
+
     let mut changed = staged();
     changed.report.as_mut().unwrap().name = "changed-retry".to_owned();
+    assert!(storage
+        .reconcile_spawn_successor_staged_retry(
+            &domain(),
+            changed.exact_claim.clone().unwrap(),
+            changed.report.clone().unwrap(),
+            changed.source_attachment.clone().unwrap(),
+        )
+        .await
+        .expect("changed indexed retry lookup stays read-only")
+        .is_none());
     assert!(matches!(
         storage
             .append_spawn_successor_staged_idempotent(&domain(), changed)
@@ -1005,6 +1029,78 @@ async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_
             .and_then(|target| target.reserved_candidate.as_ref()),
         Some(&external(1))
     );
+}
+
+#[tokio::test]
+async fn v5_migration_backfills_staged_successor_reconciliation_without_consuming_lsn() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("v5-staged-successor.sqlite");
+    let path_string = path.to_string_lossy().into_owned();
+    let storage = RusqliteStorage::open(&path_string).unwrap();
+    let mut prefix = valid_prefix();
+    prefix.truncate(7);
+    append_prefix(&storage, prefix).await;
+    let original = storage
+        .append_spawn_successor_staged_idempotent(&domain(), staged())
+        .await
+        .expect("staged successor commits before migration fixture downgrade");
+    assert_eq!(original, event_id(8));
+    drop(storage);
+    tokio::task::yield_now().await;
+
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute(
+        "INSERT INTO grant_identities (authority_domain_id, grant_id, source_lsn)
+         VALUES (?1, ?2, 2)",
+        rusqlite::params![domain().value, parent_grant().grant_id.unwrap().value,],
+    )
+    .unwrap();
+    db.execute_batch(
+        "DROP TABLE staged_successor_reconciliations;
+         PRAGMA user_version = 5;",
+    )
+    .unwrap();
+    drop(db);
+
+    let migrated = RusqliteStorage::open(&path_string).unwrap();
+    let exact = staged();
+    assert_eq!(
+        migrated
+            .reconcile_spawn_successor_staged_retry(
+                &domain(),
+                exact.exact_claim.unwrap(),
+                exact.report.unwrap(),
+                exact.source_attachment.unwrap(),
+            )
+            .await
+            .expect("migrated indexed lookup succeeds"),
+        Some(original)
+    );
+    assert_eq!(
+        migrated
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap()
+            .len(),
+        8,
+        "index backfill must not consume a durable LSN"
+    );
+    drop(migrated);
+    tokio::task::yield_now().await;
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    let indexed_lsn: u64 = db
+        .query_row(
+            "SELECT source_lsn FROM staged_successor_reconciliations
+             WHERE authority_domain_id = ?1 AND claim_operation_id = ?2",
+            rusqlite::params![domain().value, command().value],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, 6);
+    assert_eq!(indexed_lsn, 8);
 }
 
 #[tokio::test]
@@ -3104,6 +3200,20 @@ async fn storage_stamps_and_commits_complete_promotion_plus_audit_atomically() {
     assert_eq!(committed.source_event_id, event_id(11));
     assert_eq!(committed.audit_event_id, event_id(12));
     assert_eq!(committed.promotion.promotion_event_id, Some(event_id(11)));
+    let exact_retry = staged();
+    assert_eq!(
+        storage
+            .reconcile_spawn_successor_staged_retry(
+                &domain(),
+                exact_retry.exact_claim.unwrap(),
+                exact_retry.report.unwrap(),
+                exact_retry.source_attachment.unwrap(),
+            )
+            .await
+            .expect("post-promotion indexed retry lookup succeeds"),
+        Some(event_id(10)),
+        "promotion retains the original staged event as retry authority"
+    );
     assert_eq!(
         committed.promotion.completion_audit_event_id,
         Some(event_id(12))

@@ -34,8 +34,9 @@ use patchbay_contracts::patchbay::{
     AuditPage, AuditRecord, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
     EventId, FailureCode, Generation, Grant, IdempotencyKey, Lsn, Observation, ObservationKind,
     OperationKind, OperationState, QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason,
-    SpawnClaimAccepted, SpawnClaimEvent, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged,
-    StoredEventKind, StoredEventPayload,
+    RuntimeEvidenceSourceAttachment, SessionReport, SpawnClaimAccepted, SpawnClaimEvent,
+    SpawnGenerationClaim, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind,
+    StoredEventPayload,
 };
 use prost::Message;
 use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
@@ -49,7 +50,7 @@ use super::port::{
     SpawnPromotionAppend, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 
-pub const LATEST_SCHEMA_VERSION: u32 = 5;
+pub const LATEST_SCHEMA_VERSION: u32 = 6;
 
 const MIGRATION_1: &str = r#"
 CREATE TABLE IF NOT EXISTS events (
@@ -122,6 +123,62 @@ CREATE TABLE grant_identities (
     PRIMARY KEY (authority_domain_id, grant_id),
     FOREIGN KEY (source_lsn) REFERENCES events(lsn)
 );
+"#;
+
+const MIGRATION_6_TABLE: &str = r#"
+CREATE TABLE staged_successor_reconciliations (
+    authority_domain_id TEXT NOT NULL,
+    claim_operation_id TEXT NOT NULL,
+    external_runtime_bytes BLOB NOT NULL,
+    source_lsn INTEGER NOT NULL PRIMARY KEY CHECK(source_lsn > 0),
+    staged_bytes BLOB NOT NULL,
+    FOREIGN KEY (source_lsn) REFERENCES events(lsn)
+);
+"#;
+
+const MIGRATION_6: &str = r#"
+CREATE TABLE staged_successor_reconciliations (
+    authority_domain_id TEXT NOT NULL,
+    claim_operation_id TEXT NOT NULL,
+    external_runtime_bytes BLOB NOT NULL,
+    source_lsn INTEGER NOT NULL PRIMARY KEY CHECK(source_lsn > 0),
+    staged_bytes BLOB NOT NULL,
+    FOREIGN KEY (source_lsn) REFERENCES events(lsn)
+);
+CREATE UNIQUE INDEX idx_staged_successor_claim
+    ON staged_successor_reconciliations(authority_domain_id, claim_operation_id);
+CREATE UNIQUE INDEX idx_staged_successor_external_runtime
+    ON staged_successor_reconciliations(authority_domain_id, external_runtime_bytes);
+"#;
+
+const STAGED_SUCCESSOR_BY_CLAIM_SQL: &str = r#"
+SELECT reconciliations.source_lsn,
+       reconciliations.authority_domain_id,
+       reconciliations.claim_operation_id,
+       reconciliations.external_runtime_bytes,
+       reconciliations.staged_bytes,
+       events.authority_domain_id,
+       events.kind,
+       events.payload
+FROM staged_successor_reconciliations AS reconciliations
+JOIN events ON events.lsn = reconciliations.source_lsn
+WHERE reconciliations.authority_domain_id = ?1
+  AND reconciliations.claim_operation_id = ?2
+"#;
+
+const STAGED_SUCCESSOR_BY_EXTERNAL_SQL: &str = r#"
+SELECT reconciliations.source_lsn,
+       reconciliations.authority_domain_id,
+       reconciliations.claim_operation_id,
+       reconciliations.external_runtime_bytes,
+       reconciliations.staged_bytes,
+       events.authority_domain_id,
+       events.kind,
+       events.payload
+FROM staged_successor_reconciliations AS reconciliations
+JOIN events ON events.lsn = reconciliations.source_lsn
+WHERE reconciliations.authority_domain_id = ?1
+  AND reconciliations.external_runtime_bytes = ?2
 "#;
 
 fn table_exists(db: &Connection, name: &str) -> Result<bool, StorageError> {
@@ -532,6 +589,290 @@ fn backfill_grant_identity_index(tx: &rusqlite::Transaction<'_>) -> Result<(), S
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct StagedSuccessorIndexIdentity {
+    authority_domain_id: String,
+    claim_operation_id: String,
+    external_runtime_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StagedSuccessorIndexEntry {
+    identity: StagedSuccessorIndexIdentity,
+    source_lsn: i64,
+    staged_bytes: Vec<u8>,
+}
+
+fn staged_successor_index_identity(
+    staged: &SpawnSuccessorEvidenceStaged,
+) -> Result<StagedSuccessorIndexIdentity, StorageError> {
+    crate::session::validate_staged_successor(staged)
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let authority_domain_id = staged
+        .authority_domain_id
+        .as_ref()
+        .expect("staged successor validated")
+        .value
+        .clone();
+    let claim_operation_id = staged
+        .exact_claim
+        .as_ref()
+        .and_then(|claim| claim.claim_operation_id.as_ref())
+        .expect("staged successor validated")
+        .value
+        .clone();
+    let external_runtime_bytes = staged
+        .external_runtime_reservation
+        .as_ref()
+        .expect("staged successor validated")
+        .encode_to_vec();
+    Ok(StagedSuccessorIndexIdentity {
+        authority_domain_id,
+        claim_operation_id,
+        external_runtime_bytes,
+    })
+}
+
+fn authoritative_staged_successor_reconciliations(
+    db: &Connection,
+) -> Result<Vec<StagedSuccessorIndexEntry>, StorageError> {
+    let mut statement = db
+        .prepare(
+            "SELECT lsn, authority_domain_id, kind, payload
+             FROM events
+             WHERE kind = ?1
+             ORDER BY lsn",
+        )
+        .map_err(map_write_err)?;
+    let rows = statement
+        .query_map(
+            [StoredEventKind::SpawnSuccessorEvidenceStaged as i32],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i32>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                ))
+            },
+        )
+        .map_err(map_write_err)?;
+    let mut entries = Vec::new();
+    let mut claims = BTreeMap::new();
+    let mut external_runtimes = BTreeMap::new();
+    for row in rows {
+        let (source_lsn, row_domain, sql_kind, envelope_bytes) = row.map_err(map_write_err)?;
+        if source_lsn <= 0 {
+            return Err(StorageError::CorruptRecord(format!(
+                "staged-successor source has invalid LSN {source_lsn}"
+            )));
+        }
+        let envelope = decode_payload(&envelope_bytes)?;
+        if envelope.kind != sql_kind
+            || StoredEventKind::try_from(envelope.kind).ok()
+                != Some(StoredEventKind::SpawnSuccessorEvidenceStaged)
+        {
+            return Err(StorageError::CorruptRecord(format!(
+                "staged-successor source kind disagrees at LSN {source_lsn}"
+            )));
+        }
+        let staged =
+            SpawnSuccessorEvidenceStaged::decode(envelope.payload.as_slice()).map_err(|error| {
+                StorageError::CorruptRecord(format!(
+                    "cannot decode staged successor at LSN {source_lsn}: {error}"
+                ))
+            })?;
+        let identity = staged_successor_index_identity(&staged)?;
+        if identity.authority_domain_id != row_domain {
+            return Err(StorageError::CorruptRecord(format!(
+                "staged successor at LSN {source_lsn} embeds authority domain {}, row belongs to {row_domain}",
+                identity.authority_domain_id
+            )));
+        }
+        let claim_key = (
+            identity.authority_domain_id.clone(),
+            identity.claim_operation_id.clone(),
+        );
+        if let Some(existing_lsn) = claims.insert(claim_key, source_lsn) {
+            return Err(StorageError::CorruptRecord(format!(
+                "staged-successor claim identity repeats at LSNs {existing_lsn} and {source_lsn}"
+            )));
+        }
+        let external_key = (
+            identity.authority_domain_id.clone(),
+            identity.external_runtime_bytes.clone(),
+        );
+        if let Some(existing_lsn) = external_runtimes.insert(external_key, source_lsn) {
+            return Err(StorageError::CorruptRecord(format!(
+                "staged-successor external runtime repeats at LSNs {existing_lsn} and {source_lsn}"
+            )));
+        }
+        entries.push(StagedSuccessorIndexEntry {
+            identity,
+            source_lsn,
+            staged_bytes: staged.encode_to_vec(),
+        });
+    }
+    Ok(entries)
+}
+
+fn validate_staged_successor_named_index(
+    db: &Connection,
+    name: &str,
+    expected_columns: &[&str],
+) -> Result<(), StorageError> {
+    let metadata = db
+        .query_row(
+            "SELECT \"unique\", origin, partial
+             FROM pragma_index_list('staged_successor_reconciliations')
+             WHERE name = ?1",
+            [name],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)? != 0,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)? != 0,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_write_err)?;
+    if metadata != Some((true, "c".to_owned(), false)) {
+        return Err(StorageError::MalformedSchema(format!(
+            "index {name} must be a non-partial unique created index"
+        )));
+    }
+    let mut statement = db
+        .prepare("SELECT name FROM pragma_index_info(?1) ORDER BY seqno")
+        .map_err(map_write_err)?;
+    let columns = statement
+        .query_map([name], |row| row.get::<_, String>(0))
+        .map_err(map_write_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_write_err)?;
+    if columns != expected_columns {
+        return Err(StorageError::MalformedSchema(format!(
+            "index {name} has columns {columns:?}, expected {expected_columns:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_staged_successor_reconciliation_schema(db: &Connection) -> Result<(), StorageError> {
+    validate_columns(
+        db,
+        "staged_successor_reconciliations",
+        &[
+            "authority_domain_id",
+            "claim_operation_id",
+            "external_runtime_bytes",
+            "source_lsn",
+            "staged_bytes",
+        ],
+    )?;
+    let column_count: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('staged_successor_reconciliations')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_write_err)?;
+    if column_count != 5 {
+        return Err(StorageError::MalformedSchema(format!(
+            "table staged_successor_reconciliations must have exactly 5 columns, found {column_count}"
+        )));
+    }
+    let create_sql: String = db
+        .query_row(
+            "SELECT sql FROM sqlite_master
+             WHERE type = 'table' AND name = 'staged_successor_reconciliations'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(map_write_err)?;
+    if normalize_schema_sql(&create_sql) != normalize_schema_sql(MIGRATION_6_TABLE) {
+        return Err(StorageError::MalformedSchema(
+            "table staged_successor_reconciliations must match the canonical v6 definition"
+                .to_owned(),
+        ));
+    }
+    validate_staged_successor_named_index(
+        db,
+        "idx_staged_successor_claim",
+        &["authority_domain_id", "claim_operation_id"],
+    )?;
+    validate_staged_successor_named_index(
+        db,
+        "idx_staged_successor_external_runtime",
+        &["authority_domain_id", "external_runtime_bytes"],
+    )
+}
+
+fn validate_staged_successor_reconciliation_index(db: &Connection) -> Result<(), StorageError> {
+    let expected = authoritative_staged_successor_reconciliations(db)?;
+    let mut statement = db
+        .prepare(
+            "SELECT authority_domain_id, claim_operation_id, external_runtime_bytes,
+                    source_lsn, staged_bytes
+             FROM staged_successor_reconciliations
+             ORDER BY source_lsn",
+        )
+        .map_err(map_write_err)?;
+    let actual = statement
+        .query_map([], |row| {
+            Ok(StagedSuccessorIndexEntry {
+                identity: StagedSuccessorIndexIdentity {
+                    authority_domain_id: row.get(0)?,
+                    claim_operation_id: row.get(1)?,
+                    external_runtime_bytes: row.get(2)?,
+                },
+                source_lsn: row.get(3)?,
+                staged_bytes: row.get(4)?,
+            })
+        })
+        .map_err(map_write_err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_write_err)?;
+    if actual != expected {
+        return Err(StorageError::CorruptRecord(format!(
+            "staged-successor reconciliation index has {} rows, expected {} exact rows",
+            actual.len(),
+            expected.len()
+        )));
+    }
+    Ok(())
+}
+
+fn insert_staged_successor_reconciliation(
+    db: &Connection,
+    entry: &StagedSuccessorIndexEntry,
+) -> Result<(), StorageError> {
+    db.execute(
+        "INSERT INTO staged_successor_reconciliations (
+             authority_domain_id, claim_operation_id, external_runtime_bytes,
+             source_lsn, staged_bytes
+         ) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![
+            entry.identity.authority_domain_id,
+            entry.identity.claim_operation_id,
+            entry.identity.external_runtime_bytes,
+            entry.source_lsn,
+            entry.staged_bytes,
+        ],
+    )
+    .map_err(map_write_err)?;
+    Ok(())
+}
+
+fn backfill_staged_successor_reconciliations(
+    tx: &rusqlite::Transaction<'_>,
+) -> Result<(), StorageError> {
+    for entry in authoritative_staged_successor_reconciliations(tx)? {
+        insert_staged_successor_reconciliation(tx, &entry)?;
+    }
+    Ok(())
+}
+
 fn migrate(db: &mut Connection) -> Result<(), StorageError> {
     // Complete every schema check before changing a persistent pragma or
     // user_version. A malformed legacy database must remain byte-for-byte
@@ -614,6 +955,17 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
         validate_grant_identities_schema(db)?;
         validate_grant_identity_index(db)?;
     }
+    let staged_successor_reconciliations_exists =
+        table_exists(db, "staged_successor_reconciliations")?;
+    if staged_successor_reconciliations_exists && version < 6 {
+        return Err(StorageError::MalformedSchema(
+            "table staged_successor_reconciliations exists before schema version 6".to_owned(),
+        ));
+    }
+    if version >= 6 {
+        validate_staged_successor_reconciliation_schema(db)?;
+        validate_staged_successor_reconciliation_index(db)?;
+    }
 
     db.execute_batch(
         "PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;",
@@ -667,8 +1019,125 @@ fn migrate(db: &mut Connection) -> Result<(), StorageError> {
             .map_err(map_write_err)?;
         tx.commit().map_err(map_write_err)?;
     }
+    let version: u32 = db
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(map_write_err)?;
+    if version < 6 {
+        let tx = db.transaction().map_err(map_write_err)?;
+        tx.execute_batch(MIGRATION_6).map_err(map_write_err)?;
+        backfill_staged_successor_reconciliations(&tx)?;
+        tx.execute_batch("PRAGMA user_version = 6")
+            .map_err(map_write_err)?;
+        tx.commit().map_err(map_write_err)?;
+    }
     validate_grant_identities_schema(db)?;
-    validate_grant_identity_index(db)
+    validate_grant_identity_index(db)?;
+    validate_staged_successor_reconciliation_schema(db)?;
+    validate_staged_successor_reconciliation_index(db)
+}
+
+#[derive(Debug)]
+struct IndexedStagedSuccessorRow {
+    entry: StagedSuccessorIndexEntry,
+    event_domain: String,
+    event_kind: i32,
+    event_bytes: Vec<u8>,
+}
+
+fn indexed_staged_successor_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<IndexedStagedSuccessorRow> {
+    Ok(IndexedStagedSuccessorRow {
+        entry: StagedSuccessorIndexEntry {
+            source_lsn: row.get(0)?,
+            identity: StagedSuccessorIndexIdentity {
+                authority_domain_id: row.get(1)?,
+                claim_operation_id: row.get(2)?,
+                external_runtime_bytes: row.get(3)?,
+            },
+            staged_bytes: row.get(4)?,
+        },
+        event_domain: row.get(5)?,
+        event_kind: row.get(6)?,
+        event_bytes: row.get(7)?,
+    })
+}
+
+fn decode_indexed_staged_successor(
+    row: IndexedStagedSuccessorRow,
+) -> Result<(EventId, SpawnSuccessorEvidenceStaged), StorageError> {
+    if row.entry.source_lsn <= 0 || row.event_domain != row.entry.identity.authority_domain_id {
+        return Err(StorageError::CorruptRecord(
+            "staged-successor reconciliation index points outside its authority domain".to_owned(),
+        ));
+    }
+    let event_payload = decode_payload(&row.event_bytes)?;
+    if event_payload.kind != row.event_kind
+        || StoredEventKind::try_from(event_payload.kind).ok()
+            != Some(StoredEventKind::SpawnSuccessorEvidenceStaged)
+    {
+        return Err(StorageError::CorruptRecord(format!(
+            "staged-successor reconciliation index points to non-staged LSN {}",
+            row.entry.source_lsn
+        )));
+    }
+    let staged = SpawnSuccessorEvidenceStaged::decode(event_payload.payload.as_slice()).map_err(
+        |error| {
+            StorageError::CorruptRecord(format!(
+                "cannot decode indexed staged successor at LSN {}: {error}",
+                row.entry.source_lsn
+            ))
+        },
+    )?;
+    if staged_successor_index_identity(&staged)? != row.entry.identity
+        || staged.encode_to_vec() != row.entry.staged_bytes
+    {
+        return Err(StorageError::CorruptRecord(format!(
+            "staged-successor reconciliation index disagrees with LSN {}",
+            row.entry.source_lsn
+        )));
+    }
+    Ok((
+        event_id(
+            AuthorityDomainId {
+                value: row.event_domain,
+            },
+            row.entry.source_lsn as u64,
+        ),
+        staged,
+    ))
+}
+
+fn indexed_staged_successor_by_claim(
+    db: &Connection,
+    authority_domain_id: &str,
+    claim_operation_id: &str,
+) -> Result<Option<(EventId, SpawnSuccessorEvidenceStaged)>, StorageError> {
+    db.query_row(
+        STAGED_SUCCESSOR_BY_CLAIM_SQL,
+        rusqlite::params![authority_domain_id, claim_operation_id],
+        indexed_staged_successor_row,
+    )
+    .optional()
+    .map_err(map_read_err)?
+    .map(decode_indexed_staged_successor)
+    .transpose()
+}
+
+fn indexed_staged_successor_by_external(
+    db: &Connection,
+    authority_domain_id: &str,
+    identity: &StagedSuccessorIndexIdentity,
+) -> Result<Option<(EventId, SpawnSuccessorEvidenceStaged)>, StorageError> {
+    db.query_row(
+        STAGED_SUCCESSOR_BY_EXTERNAL_SQL,
+        rusqlite::params![authority_domain_id, identity.external_runtime_bytes],
+        indexed_staged_successor_row,
+    )
+    .optional()
+    .map_err(map_read_err)?
+    .map(decode_indexed_staged_successor)
+    .transpose()
 }
 
 /// Commands sent to the writer actor.
@@ -2816,26 +3285,33 @@ fn do_append_spawn_successor_staged_idempotent(
         .expect("staged successor validated")
         .clone();
 
+    let candidate_identity = staged_successor_index_identity(&staged)?;
     let tx = db.transaction().map_err(map_write_err)?;
-    let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
-    let mut existing_exact = None;
-    for event in &events {
-        if event.payload.kind != StoredEventKind::SpawnSuccessorEvidenceStaged as i32 {
-            continue;
+    let mut indexed_matches = Vec::new();
+    if let Some(existing) = indexed_staged_successor_by_claim(
+        &tx,
+        authority_domain_id,
+        &candidate_identity.claim_operation_id,
+    )? {
+        indexed_matches.push(existing);
+    }
+    if let Some(existing) =
+        indexed_staged_successor_by_external(&tx, authority_domain_id, &candidate_identity)?
+    {
+        if indexed_matches
+            .iter()
+            .all(|(event_id, _)| event_id != &existing.0)
+        {
+            indexed_matches.push(existing);
         }
-        let existing = SpawnSuccessorEvidenceStaged::decode(event.payload.payload.as_slice())
-            .map_err(|error| {
-                StorageError::CorruptRecord(format!(
-                    "cannot decode durable staged successor: {error}"
-                ))
-            })?;
-        crate::session::validate_staged_successor(&existing)
-            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
-        let existing_command = existing
-            .exact_claim
-            .as_ref()
-            .and_then(|claim| claim.claim_operation_id.as_ref())
-            .expect("durable staged successor validated");
+    }
+    indexed_matches.sort_by_key(|(event_id, _)| {
+        event_id
+            .lsn
+            .expect("indexed staged successor has an LSN")
+            .value
+    });
+    if let Some((event_id, existing)) = indexed_matches.into_iter().next() {
         let existing_external = existing
             .external_runtime_reservation
             .as_ref()
@@ -2851,30 +3327,20 @@ fn do_append_spawn_successor_staged_idempotent(
                 attempted_owner: attempted_owner.value.clone(),
             });
         }
-        if existing_command == &command_id || existing_external == &external {
-            let existing_lsn = event
-                .event_id
-                .lsn
-                .as_ref()
-                .expect("recorded event has an LSN")
-                .value;
-            if existing == staged {
-                if existing_exact.is_some() {
-                    return Err(StorageError::CorruptRecord(format!(
-                        "durable prefix contains duplicate exact staged successor for claim {}",
-                        command_id.value
-                    )));
-                }
-                existing_exact = Some(event.event_id.clone());
-            } else {
-                return Err(StorageError::StagedSuccessorConflict {
-                    command_id: command_id.value.clone(),
-                    existing_lsn,
-                });
-            }
+        if existing == staged {
+            tx.commit().map_err(map_write_err)?;
+            return Ok(event_id);
         }
+        return Err(StorageError::StagedSuccessorConflict {
+            command_id: command_id.value.clone(),
+            existing_lsn: event_id
+                .lsn
+                .expect("indexed staged successor has an LSN")
+                .value,
+        });
     }
 
+    let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
     let mut adapters = crate::adapter::AdapterRegistry::new();
     let mut sessions = crate::session::SessionRegistry::new(domain.clone())
         .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
@@ -2895,11 +3361,6 @@ fn do_append_spawn_successor_staged_idempotent(
             .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
         previous_lsn = validated.lsn;
     }
-    if let Some(event_id) = existing_exact {
-        tx.commit().map_err(map_write_err)?;
-        return Ok(event_id);
-    }
-
     let claim = crate::session::SpawnClaimQuery::claim_for_operation(&claims, &command_id)
         .ok_or_else(|| {
             StorageError::CorruptRecord(
@@ -2954,6 +3415,14 @@ fn do_append_spawn_successor_staged_idempotent(
             previous_lsn.saturating_add(1)
         )));
     }
+    insert_staged_successor_reconciliation(
+        &tx,
+        &StagedSuccessorIndexEntry {
+            identity: candidate_identity,
+            source_lsn,
+            staged_bytes: staged.encode_to_vec(),
+        },
+    )?;
     tx.commit().map_err(map_write_err)?;
     Ok(candidate.event_id)
 }
@@ -3996,6 +4465,37 @@ impl Storage for RusqliteStorage {
             .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
     }
 
+    async fn reconcile_spawn_successor_staged_retry(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        exact_claim: SpawnGenerationClaim,
+        report: SessionReport,
+        source_attachment: RuntimeEvidenceSourceAttachment,
+    ) -> Result<Option<EventId>, StorageError> {
+        let claim_operation_id = exact_claim
+            .claim_operation_id
+            .as_ref()
+            .filter(|command_id| !command_id.value.is_empty())
+            .ok_or_else(|| {
+                StorageError::CorruptRecord(
+                    "staged-successor reconciliation claim has no operation id".to_owned(),
+                )
+            })?;
+        let db = self.read_db.lock().await;
+        let indexed = indexed_staged_successor_by_claim(
+            &db,
+            &authority_domain_id.value,
+            &claim_operation_id.value,
+        )?;
+        let Some((event_id, staged)) = indexed else {
+            return Ok(None);
+        };
+        Ok((staged.exact_claim.as_ref() == Some(&exact_claim)
+            && staged.report.as_ref() == Some(&report)
+            && staged.source_attachment.as_ref() == Some(&source_attachment))
+        .then_some(event_id))
+    }
+
     async fn append_spawn_claim_accepted(
         &self,
         authority_domain_id: &AuthorityDomainId,
@@ -4418,5 +4918,88 @@ fn map_read_err(e: rusqlite::Error) -> StorageError {
     StorageError::ReadFailed {
         message: e.to_string(),
         retryable,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::StatementStatus;
+
+    #[test]
+    fn staged_successor_reconciliation_queries_do_no_full_scan_with_large_unrelated_prefix() {
+        let mut db = Connection::open_in_memory().expect("SQLite opens");
+        migrate(&mut db).expect("schema migrates");
+        let tx = db.transaction().expect("seed transaction starts");
+        {
+            let mut insert_event = tx
+                .prepare(
+                    "INSERT INTO events (lsn, authority_domain_id, kind, payload)
+                     VALUES (?1, ?2, ?3, ?4)",
+                )
+                .expect("event insert prepares");
+            let mut insert_reconciliation = tx
+                .prepare(
+                    "INSERT INTO staged_successor_reconciliations (
+                         authority_domain_id, claim_operation_id, external_runtime_bytes,
+                         source_lsn, staged_bytes
+                     ) VALUES (?1, ?2, ?3, ?4, ?5)",
+                )
+                .expect("reconciliation insert prepares");
+            for index in 1_i64..=4_096 {
+                let authority_domain_id = "authority-main";
+                let claim_operation_id = format!("claim-{index}");
+                let external_runtime_bytes = index.to_be_bytes();
+                insert_event
+                    .execute(rusqlite::params![
+                        index,
+                        authority_domain_id,
+                        StoredEventKind::SpawnSuccessorEvidenceStaged as i32,
+                        [0_u8],
+                    ])
+                    .expect("event row seeds");
+                insert_reconciliation
+                    .execute(rusqlite::params![
+                        authority_domain_id,
+                        claim_operation_id,
+                        external_runtime_bytes,
+                        index,
+                        [0_u8],
+                    ])
+                    .expect("reconciliation row seeds");
+            }
+        }
+        tx.commit().expect("seed transaction commits");
+
+        let mut by_claim = db
+            .prepare(STAGED_SUCCESSOR_BY_CLAIM_SQL)
+            .expect("claim lookup prepares");
+        let claim_lsn: i64 = by_claim
+            .query_row(rusqlite::params!["authority-main", "claim-2048"], |row| {
+                row.get(0)
+            })
+            .expect("claim lookup finds one row");
+        assert_eq!(claim_lsn, 2_048);
+        assert_eq!(
+            by_claim.get_status(StatementStatus::FullscanStep),
+            0,
+            "claim reconciliation must use idx_staged_successor_claim"
+        );
+
+        let mut by_external = db
+            .prepare(STAGED_SUCCESSOR_BY_EXTERNAL_SQL)
+            .expect("external-runtime lookup prepares");
+        let external_lsn: i64 = by_external
+            .query_row(
+                rusqlite::params!["authority-main", 2_048_i64.to_be_bytes()],
+                |row| row.get(0),
+            )
+            .expect("external-runtime lookup finds one row");
+        assert_eq!(external_lsn, 2_048);
+        assert_eq!(
+            by_external.get_status(StatementStatus::FullscanStep),
+            0,
+            "runtime reservation must use idx_staged_successor_external_runtime"
+        );
     }
 }
