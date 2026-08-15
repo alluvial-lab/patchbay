@@ -6,3 +6,12 @@
 # this [env] is the universal layer.) build.rs in core/server ensures the dir.
 [env]
 TMPDIR = { value = "target/test-tmp", relative = true, force = true }
+
+# Disk-footprint guard #3 (2026-08-15): the workspace is built primarily by
+# one-shot agent verification rounds (build+test+clippy full suite), where
+# incremental compilation buys almost nothing — but cargo never GCs one-off
+# incremental sessions, and they regrow target/debug/incremental by 15-30G per
+# convergence session (two ENOSPC events). Disable incremental at the source.
+# Humans doing iterative edits can override per-shell with CARGO_INCREMENTAL=1.
+[build]
+incremental = false
