@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn
 kind: feature
-stage: implementing
+stage: review
 tags: [adapter, protocol, v1]
 parent: epic-public-product-contract
 depends_on: []
