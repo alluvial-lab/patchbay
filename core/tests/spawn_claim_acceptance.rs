@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use patchbay_contracts::patchbay::{
-    spawn_claim_event, AcceptedOperation, ActorEndpointRef, ActorId, AdapterId, AuditEventKind,
-    AuthorityDomainId, CommandId, CommandTransition, ContinuationAuthorityProvenance, DeviceId,
-    EndpointId, ExternalRuntimeRef, FailureCode, Generation, GrantId, IdempotencyKey,
-    LogicalTargetId, Lsn, Operation, OperationKind, OperationState, RuntimeGenerationRef,
-    RuntimeSessionId, SpawnClaimAccepted, SpawnClaimEvent, SpawnGenerationClaim,
-    SpawnPendingReplacementFence, SpawnPriorWorkDisposition, StoredEventKind, StoredEventPayload,
-    TargetScope, TargetScopeKind,
+    spawn_claim_event, spawn_request, AcceptedOperation, ActorEndpointRef, ActorId, AdapterId,
+    AuditEventKind, AuthorityDomainId, CommandId, CommandTransition,
+    ContinuationAuthorityProvenance, DeviceId, EndpointId, ExternalRuntimeRef, FailureCode,
+    FreshSpawn, Generation, GrantId, IdempotencyKey, LogicalTargetId, Lsn, Operation,
+    OperationKind, OperationState, PayloadContentType, PayloadEnvelope, RuntimeGenerationRef,
+    RuntimeSessionId, SpawnClaimAccepted, SpawnClaimEvent, SpawnContinuation, SpawnGenerationClaim,
+    SpawnPendingReplacementFence, SpawnPriorWorkDisposition, SpawnRequest, SpawnTargetSpec,
+    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use patchbay_core::{
     acceptance::CommandIndex,
@@ -73,6 +74,38 @@ fn prior() -> RuntimeGenerationRef {
     }
 }
 
+fn spawn_payload(expected_prior: RuntimeGenerationRef) -> PayloadEnvelope {
+    PayloadEnvelope {
+        payload: SpawnRequest {
+            intent: Some(spawn_request::Intent::Continuation(SpawnContinuation {
+                prior: Some(expected_prior),
+            })),
+            target_spec: Some(SpawnTargetSpec {
+                shape: "session".to_owned(),
+                ..SpawnTargetSpec::default()
+            }),
+        }
+        .encode_to_vec(),
+        content_type: PayloadContentType::Protobuf as i32,
+        schema_ref: patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA.to_owned(),
+    }
+}
+
+fn fresh_spawn_payload() -> PayloadEnvelope {
+    PayloadEnvelope {
+        payload: SpawnRequest {
+            intent: Some(spawn_request::Intent::Fresh(FreshSpawn {})),
+            target_spec: Some(SpawnTargetSpec {
+                shape: "session".to_owned(),
+                ..SpawnTargetSpec::default()
+            }),
+        }
+        .encode_to_vec(),
+        content_type: PayloadContentType::Protobuf as i32,
+        schema_ref: patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA.to_owned(),
+    }
+}
+
 fn spawn_operation(command_id: &str, idempotency_key: &str) -> Operation {
     Operation {
         command_id: Some(command(command_id)),
@@ -85,6 +118,7 @@ fn spawn_operation(command_id: &str, idempotency_key: &str) -> Operation {
             ..TargetScope::default()
         }),
         idempotency_key: idempotency_key.to_owned(),
+        payload: Some(spawn_payload(prior())),
         ..Operation::default()
     }
 }
@@ -350,6 +384,90 @@ async fn exact_retry_returns_original_claim_and_changed_payload_is_inert() {
             .unwrap(),
         before_conflict
     );
+}
+
+async fn assert_claim_candidate_rejected_without_writes(
+    dimension: &str,
+    candidate: SpawnClaimAccepted,
+) {
+    let storage = RusqliteStorage::open_in_memory().unwrap();
+    assert!(
+        matches!(
+            append_claim(&storage, candidate).await,
+            Err(StorageError::CorruptRecord(_))
+        ),
+        "dedicated writer accepted {dimension}"
+    );
+    assert!(
+        storage
+            .read_after(&domain(), Lsn { value: 0 })
+            .await
+            .unwrap()
+            .is_empty(),
+        "dedicated writer changed durable state for {dimension}"
+    );
+}
+
+#[tokio::test]
+async fn dedicated_writer_rejects_fresh_payload_with_continuation_claim_without_writes() {
+    let mut candidate = accepted_claim("fresh-payload", "fresh-payload-key", "replacement-grant");
+    candidate
+        .accepted_operation
+        .as_mut()
+        .unwrap()
+        .operation
+        .as_mut()
+        .unwrap()
+        .payload = Some(fresh_spawn_payload());
+    assert_claim_candidate_rejected_without_writes(
+        "fresh payload with continuation claim",
+        candidate,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dedicated_writer_rejects_payload_prior_claim_prior_mismatch_without_writes() {
+    let mut candidate = accepted_claim("prior-mismatch", "prior-mismatch-key", "replacement-grant");
+    let mut other_prior = prior();
+    other_prior.external_runtime.as_mut().unwrap().generation = Some(Generation { value: 6 });
+    candidate
+        .accepted_operation
+        .as_mut()
+        .unwrap()
+        .operation
+        .as_mut()
+        .unwrap()
+        .payload = Some(spawn_payload(other_prior));
+    assert_claim_candidate_rejected_without_writes(
+        "payload prior differs from claim prior",
+        candidate,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dedicated_writer_rejects_same_grant_in_both_authority_slots_without_writes() {
+    assert_claim_candidate_rejected_without_writes(
+        "same Grant id in both authority slots",
+        accepted_claim("same-grant", "same-grant-key", "spawn-grant"),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn dedicated_writer_rejects_non_successor_claimed_generation_without_writes() {
+    let mut candidate = accepted_claim(
+        "wrong-generation",
+        "wrong-generation-key",
+        "replacement-grant",
+    );
+    candidate.claim.as_mut().unwrap().claimed_generation = Some(Generation { value: 9 });
+    assert_claim_candidate_rejected_without_writes(
+        "claimed generation is not exact N+1",
+        candidate,
+    )
+    .await;
 }
 
 #[tokio::test]

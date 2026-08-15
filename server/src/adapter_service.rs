@@ -13,9 +13,9 @@ use patchbay_contracts::patchbay::{
     AuthorityDomainId, Delivery, EventId, FailureCode, Generation, Observation, ObservationRequest,
     ObservationResult, OperationState, ReceiveRequest, RuntimeEvidenceQuarantineReason,
     RuntimeEvidenceSourceAttachment, RuntimeGenerationClaimedSuccessor,
-    RuntimeGenerationDisposition, RuntimeGenerationRef, SpawnClaimDisposition, SpawnClaimEvent,
-    SpawnEvidenceAttachment, SpawnExecutionEvidenceProducer, SpawnSuccessorEvidenceStaged,
-    StoredEventKind, TargetScopeKind,
+    RuntimeGenerationDisposition, RuntimeGenerationRef, SpawnClaimAccepted, SpawnClaimDisposition,
+    SpawnClaimEvent, SpawnEvidenceAttachment, SpawnExecutionEvidenceProducer,
+    SpawnSuccessorEvidenceStaged, StoredEventKind, TargetScopeKind,
 };
 use patchbay_core::{
     acceptance::{self, CommandIndex, OperationStateExt},
@@ -572,12 +572,26 @@ async fn catch_up_command_projection<S: Storage>(
     Ok(events)
 }
 
-fn accepted_operation_for_delivery(
-    event: &RecordedEvent,
-) -> Result<Option<AcceptedOperation>, Status> {
+enum DeliveryAcceptance {
+    Operation(Box<AcceptedOperation>),
+    ManagedSpawn(Box<SpawnClaimAccepted>),
+}
+
+impl DeliveryAcceptance {
+    fn accepted_operation(&self) -> Option<&AcceptedOperation> {
+        match self {
+            Self::Operation(accepted) => Some(accepted),
+            Self::ManagedSpawn(accepted) => accepted.accepted_operation.as_ref(),
+        }
+    }
+}
+
+fn acceptance_for_delivery(event: &RecordedEvent) -> Result<Option<DeliveryAcceptance>, Status> {
     match StoredEventKind::try_from(event.payload.kind).ok() {
         Some(StoredEventKind::Operation) => {
             AcceptedOperation::decode(event.payload.payload.as_slice())
+                .map(Box::new)
+                .map(DeliveryAcceptance::Operation)
                 .map(Some)
                 .map_err(|error| {
                     Status::internal(format!("cannot decode accepted operation: {error}"))
@@ -588,9 +602,27 @@ fn accepted_operation_for_delivery(
                 SpawnClaimEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
                     Status::internal(format!("cannot decode accepted spawn claim: {error}"))
                 })?;
+            let event_domain = event
+                .event_id
+                .authority_domain_id
+                .as_ref()
+                .filter(|domain| !domain.value.is_empty())
+                .ok_or_else(|| Status::internal("accepted spawn claim event has no domain"))?;
+            if claim.authority_domain_id.as_ref() != Some(event_domain) {
+                return Err(Status::internal(
+                    "accepted spawn claim payload domain differs from its event",
+                ));
+            }
             match claim.mutation {
                 Some(spawn_claim_event::Mutation::Accepted(accepted)) => {
-                    Ok(accepted.accepted_operation)
+                    session::validate_spawn_claim_accepted(event_domain, &accepted).map_err(
+                        |error| {
+                            Status::internal(format!(
+                                "accepted spawn delivery envelope is invalid: {error}"
+                            ))
+                        },
+                    )?;
+                    Ok(Some(DeliveryAcceptance::ManagedSpawn(Box::new(accepted))))
                 }
                 Some(spawn_claim_event::Mutation::DispositionChanged(_)) => Ok(None),
                 None => Err(Status::internal("spawn claim event has no mutation")),
@@ -615,9 +647,12 @@ fn deliveries_for_events(
                 .as_ref()
                 .is_some_and(|lsn| lsn.value > after_cursor)
         })
-        .filter_map(|event| match accepted_operation_for_delivery(event) {
-            Ok(Some(accepted)) => {
-                let operation = match accepted.operation {
+        .filter_map(|event| match acceptance_for_delivery(event) {
+            Ok(Some(acceptance)) => {
+                let operation = match acceptance
+                    .accepted_operation()
+                    .and_then(|accepted| accepted.operation.clone())
+                {
                     Some(operation) => operation,
                     None => {
                         return Some(Err(Status::internal("accepted operation has no operation")))
@@ -638,6 +673,10 @@ fn deliveries_for_events(
                 (targets_adapter && remains_deliverable).then_some(Ok(Delivery {
                     operation: Some(operation),
                     delivery_event_id: Some(event.event_id.clone()),
+                    accepted_spawn: match acceptance {
+                        DeliveryAcceptance::Operation(_) => None,
+                        DeliveryAcceptance::ManagedSpawn(accepted) => Some(*accepted),
+                    },
                 }))
             }
             Ok(None) => None,

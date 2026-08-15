@@ -495,6 +495,17 @@ impl SpawnDescendantTail {
         let Some(spawn_claim_event::Mutation::Accepted(accepted)) = claim.mutation else {
             return Ok(());
         };
+        let generation_claim = accepted.claim.as_ref().ok_or_else(|| {
+            AuthorityError::CorruptRecord(format!(
+                "accepted spawn claim at LSN {event_lsn} has no generation claim"
+            ))
+        })?;
+        // Managed continuations are completed only by Unit 7's atomic
+        // promotion owner. Translating them into this legacy one-Grant tail
+        // would discard exact-prior and replacement-Grant provenance.
+        if generation_claim.expected_prior.is_some() {
+            return Ok(());
+        }
         let accepted_operation = accepted.accepted_operation.ok_or_else(|| {
             AuthorityError::CorruptRecord(format!(
                 "accepted spawn claim at LSN {event_lsn} has no operation"

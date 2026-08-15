@@ -4,11 +4,11 @@ use std::sync::{
 };
 
 use patchbay_contracts::patchbay::{
-    observation_request, resource_report, resource_report_mutation, spawn_request,
-    typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability,
-    AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity,
-    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
-    AuditEventKind, AuthorityDomainId, CommandId, CommandTransition,
+    observation_request, resource_report, resource_report_mutation, spawn_claim_event,
+    spawn_request, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
+    AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport,
+    AdapterDiagnosticSeverity, AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory,
+    AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition,
     ContinuationAuthorityProvenance, EndpointId, ExternalRuntimeRef, FailureCode, FreshSpawn,
     Generation, GrantId, IdempotencyKey, LogicalTargetCreated, LogicalTargetId, Lsn, Observation,
     ObservationKind, Operation, OperationKind, PayloadContentType, PayloadEnvelope, ReceiveRequest,
@@ -16,9 +16,10 @@ use patchbay_contracts::patchbay::{
     ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshotReport,
     ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport, RuntimeGenerationRef,
     RuntimeSessionId, SchemaDescriptor, SecurityLockdownEntered, SessionActivityState,
-    SessionConnectivityState, SessionReportSourceCursor, SpawnClaimAccepted, SpawnGenerationClaim,
-    SpawnPendingReplacementFence, SpawnRequest, SpawnTargetSpec, StoredEventKind,
-    StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
+    SessionConnectivityState, SessionReportSourceCursor, SpawnClaimAccepted, SpawnClaimEvent,
+    SpawnContinuation, SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnRequest,
+    SpawnTargetSpec, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+    TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
@@ -1799,6 +1800,18 @@ async fn managed_spawn_report_stages_exclusively_and_never_registers_current_ses
         adapter_id: Some(adapter_id()),
         ..TargetScope::default()
     });
+    operation.payload = Some(PayloadEnvelope {
+        payload: SpawnRequest {
+            intent: Some(spawn_request::Intent::Fresh(FreshSpawn {})),
+            target_spec: Some(SpawnTargetSpec {
+                shape: "session".to_owned(),
+                ..SpawnTargetSpec::default()
+            }),
+        }
+        .encode_to_vec(),
+        content_type: PayloadContentType::Protobuf as i32,
+        schema_ref: patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA.to_owned(),
+    });
     let accepted = AcceptedOperation {
         operation: Some(operation.clone()),
         authorizing_grant_id: Some(patchbay_contracts::patchbay::GrantId {
@@ -2846,6 +2859,141 @@ async fn delivery_and_continuation_acceptance_barrier_has_explicit_before_and_af
 }
 
 #[tokio::test]
+async fn managed_spawn_delivery_preserves_the_exact_durable_envelope_hot_and_after_restart() {
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let (service, attachment_token) = attached_service(storage.clone(), domain.clone()).await;
+    let accepted = append_replacement_claim(&storage, &domain, "replacement-delivery").await;
+
+    let mut hot_tail = receive_from_start(&service, &attachment_token).await;
+    let hot = hot_tail
+        .next()
+        .await
+        .expect("hot delivery exists")
+        .expect("hot delivery is valid");
+    let hot_envelope = hot
+        .accepted_spawn
+        .as_ref()
+        .expect("managed spawn carries its accepted envelope");
+    assert_eq!(hot_envelope, &accepted);
+    assert_eq!(hot_envelope.encode_to_vec(), accepted.encode_to_vec());
+    assert_eq!(
+        hot.operation.as_ref(),
+        accepted
+            .accepted_operation
+            .as_ref()
+            .and_then(|accepted| accepted.operation.as_ref())
+    );
+    drop(hot_tail);
+    drop(service);
+
+    let restarted = AdapterControlServiceImpl::new(storage, domain.clone(), evidence_verifier())
+        .await
+        .expect("service restarts from durable claim bytes");
+    let restarted_token = attach_generation(&restarted, domain, 2).await;
+    let mut restarted_tail = receive_from_start(&restarted, &restarted_token).await;
+    let replayed = restarted_tail
+        .next()
+        .await
+        .expect("restart delivery exists")
+        .expect("restart delivery is valid");
+    let replayed_envelope = replayed
+        .accepted_spawn
+        .as_ref()
+        .expect("restart delivery carries accepted envelope");
+    assert_eq!(replayed_envelope, &accepted);
+    assert_eq!(replayed_envelope.encode_to_vec(), accepted.encode_to_vec());
+    assert_eq!(
+        replayed_envelope.claim, accepted.claim,
+        "claim logical target, exact prior, and claimed generation are replay-identical"
+    );
+    assert_eq!(
+        replayed_envelope
+            .accepted_operation
+            .as_ref()
+            .and_then(|accepted| accepted.authorizing_grant_id.as_ref()),
+        accepted
+            .accepted_operation
+            .as_ref()
+            .and_then(|accepted| accepted.authorizing_grant_id.as_ref()),
+        "spawning Grant is replay-identical"
+    );
+    assert_eq!(
+        replayed_envelope.compound_authority, accepted.compound_authority,
+        "replacement Grant and compound exact prior are replay-identical"
+    );
+}
+
+#[test]
+fn managed_spawn_delivery_rejects_truncated_claim_and_authority_fields() {
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let accepted = replacement_claim(domain.clone(), "replacement-delivery");
+    let event = |accepted: SpawnClaimAccepted| RecordedEvent {
+        event_id: patchbay_core::storage::event_id(domain.clone(), 1),
+        payload: StoredEventPayload {
+            kind: StoredEventKind::SpawnClaim as i32,
+            payload: SpawnClaimEvent {
+                authority_domain_id: Some(domain.clone()),
+                mutation: Some(spawn_claim_event::Mutation::Accepted(accepted)),
+            }
+            .encode_to_vec(),
+        },
+    };
+    let valid_event = event(accepted.clone());
+    let mut commands = CommandIndex::new();
+    commands
+        .apply(&valid_event)
+        .expect("valid command projection");
+
+    let mut missing_claim = accepted.clone();
+    missing_claim.claim = None;
+    let mut missing_spawning_grant = accepted.clone();
+    missing_spawning_grant
+        .accepted_operation
+        .as_mut()
+        .unwrap()
+        .authorizing_grant_id = None;
+    let mut missing_replacement_grant = accepted.clone();
+    missing_replacement_grant
+        .compound_authority
+        .as_mut()
+        .unwrap()
+        .replacement_grant_id = None;
+    let mut missing_exact_prior = accepted.clone();
+    missing_exact_prior
+        .compound_authority
+        .as_mut()
+        .unwrap()
+        .exact_prior = None;
+    let mut missing_claimed_generation = accepted;
+    missing_claimed_generation
+        .claim
+        .as_mut()
+        .unwrap()
+        .claimed_generation = None;
+
+    for (field, mutated) in [
+        ("full claim", missing_claim),
+        ("spawning Grant", missing_spawning_grant),
+        ("replacement Grant", missing_replacement_grant),
+        ("compound exact prior", missing_exact_prior),
+        ("claimed generation", missing_claimed_generation),
+    ] {
+        let offered = deliveries_for_events(&[event(mutated)], &commands, &adapter_id(), 0);
+        assert_eq!(offered.len(), 1, "{field} mutation must be inspected");
+        let error =
+            offered.into_iter().next().unwrap().expect_err(
+                "truncated accepted-spawn envelope must not reach adapter authorization",
+            );
+        assert_eq!(error.code(), tonic::Code::Internal, "field={field}");
+    }
+}
+
+#[tokio::test]
 async fn abnormal_delivery_stream_drop_marks_adapter_sessions_stale() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId {
@@ -3285,6 +3433,20 @@ fn replacement_claim(domain: AuthorityDomainId, command_id: &str) -> SpawnClaimA
             ..TargetScope::default()
         }),
         idempotency_key: format!("{command_id}-key"),
+        payload: Some(PayloadEnvelope {
+            payload: SpawnRequest {
+                intent: Some(spawn_request::Intent::Continuation(SpawnContinuation {
+                    prior: Some(exact_prior.clone()),
+                })),
+                target_spec: Some(SpawnTargetSpec {
+                    shape: "session".to_owned(),
+                    ..SpawnTargetSpec::default()
+                }),
+            }
+            .encode_to_vec(),
+            content_type: PayloadContentType::Protobuf as i32,
+            schema_ref: patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA.to_owned(),
+        }),
         ..Operation::default()
     };
     SpawnClaimAccepted {
@@ -3323,8 +3485,9 @@ async fn append_replacement_claim(
     storage: &RusqliteStorage,
     domain: &AuthorityDomainId,
     command_id: &str,
-) {
+) -> SpawnClaimAccepted {
     let accepted = replacement_claim(domain.clone(), command_id);
+    let expected = accepted.clone();
     let accepted_operation = accepted.accepted_operation.as_ref().unwrap();
     let operation = accepted_operation.operation.as_ref().unwrap();
     let mut audit = AuditRecordDraft::new(
@@ -3353,6 +3516,7 @@ async fn append_replacement_claim(
         )
         .await
         .expect("replacement claim appends");
+    expected
 }
 
 fn resource_targeted_operation(domain: AuthorityDomainId, command: &str) -> Operation {

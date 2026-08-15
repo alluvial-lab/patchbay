@@ -43,9 +43,10 @@ pub use runtime_evidence::{
 pub use spawn_claim::{
     allowed_external_effect_disposition, allowed_spawn_claim_transition, encode_spawn_claim_event,
     encode_spawn_execution_evidence, rebuild_spawn_claims_from_log,
-    runtime_ref_matches_target_scope, validate_execution_evidence_contract, SpawnClaimError,
-    SpawnClaimKey, SpawnClaimQuery, SpawnClaimRecord, SpawnClaimRegistry, SpawnClaimability,
-    SpawnDeliveryFence, REPLACEMENT_PENDING_REASON,
+    runtime_ref_matches_target_scope, validate_execution_evidence_contract,
+    validate_spawn_claim_accepted, SpawnClaimError, SpawnClaimKey, SpawnClaimQuery,
+    SpawnClaimRecord, SpawnClaimRegistry, SpawnClaimability, SpawnDeliveryFence,
+    REPLACEMENT_PENDING_REASON,
 };
 pub use state::{
     allowed_activity_transition, allowed_connectivity_transition, effective_connectivity,

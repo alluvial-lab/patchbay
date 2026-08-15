@@ -1,10 +1,10 @@
 use patchbay_contracts::patchbay::{
-    quarantined_runtime_evidence, runtime_generation_disposition, spawn_claim_event,
+    quarantined_runtime_evidence, runtime_generation_disposition, spawn_claim_event, spawn_request,
     typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
     AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AuditEventKind,
     AuditRecord, AuthorityDomainId, CommandId, CommandTransition, ContinuationAuthorityProvenance,
     DescendantGrant, DescendantGrantProvenance, Elicitation, ElicitationId, ElicitationState,
-    EndpointId, EventId, ExternalRuntimeRef, FailureCode, Generation, Grant, GrantId,
+    EndpointId, EventId, ExternalRuntimeRef, FailureCode, FreshSpawn, Generation, Grant, GrantId,
     GrantProvenance, GrantRevocationPolicy, IdempotencyKey, LogicalTargetCreated, LogicalTargetId,
     LogicalTargetInitialCurrentAssigned, Lsn, Observation, ObservationKind, Operation,
     OperationKind, OperationState, PayloadContentType, PayloadEnvelope, QuarantinedRuntimeEvidence,
@@ -14,10 +14,11 @@ use patchbay_contracts::patchbay::{
     RuntimeGenerationUnknown, RuntimeSessionId, RuntimeTranscriptStatusEvidence,
     SessionActivityState, SessionConnectivityState, SessionRegistered, SessionReport,
     SessionReportSourceCursor, SessionState, SpawnClaimAccepted, SpawnClaimDisposition,
-    SpawnClaimEvent, SpawnGenerationClaim, SpawnPendingReplacementFence,
+    SpawnClaimEvent, SpawnContinuation, SpawnGenerationClaim, SpawnPendingReplacementFence,
     SpawnPromotionAuthorityEvidence, SpawnPromotionCommitted, SpawnPromotionLifecycleEvidence,
-    SpawnPromotionResultEvidence, SpawnPromotionStagedEvidence, SpawnSuccessorEvidenceStaged,
-    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
+    SpawnPromotionResultEvidence, SpawnPromotionStagedEvidence, SpawnRequest,
+    SpawnSuccessorEvidenceStaged, SpawnTargetSpec, StoredEventKind, StoredEventPayload,
+    TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{CommandIndex, ElicitationSlotLayer},
@@ -106,6 +107,18 @@ fn accepted_operation() -> AcceptedOperation {
                 ..TargetScope::default()
             }),
             idempotency_key: "spawn-key".to_owned(),
+            payload: Some(PayloadEnvelope {
+                payload: SpawnRequest {
+                    intent: Some(spawn_request::Intent::Fresh(FreshSpawn {})),
+                    target_spec: Some(SpawnTargetSpec {
+                        shape: "session".to_owned(),
+                        ..SpawnTargetSpec::default()
+                    }),
+                }
+                .encode_to_vec(),
+                content_type: PayloadContentType::Protobuf as i32,
+                schema_ref: patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA.to_owned(),
+            }),
             ..Operation::default()
         }),
         authorizing_grant_id: Some(GrantId {
@@ -1529,8 +1542,27 @@ fn continuation_fixture() -> (Vec<RecordedEvent>, SpawnPromotionCommitted) {
         claimed_generation: Some(Generation { value: 2 }),
         ..claim()
     };
+    let mut continuation_operation = accepted_operation();
+    continuation_operation
+        .operation
+        .as_mut()
+        .expect("accepted operation")
+        .payload = Some(PayloadEnvelope {
+        payload: SpawnRequest {
+            intent: Some(spawn_request::Intent::Continuation(SpawnContinuation {
+                prior: Some(prior.clone()),
+            })),
+            target_spec: Some(SpawnTargetSpec {
+                shape: "session".to_owned(),
+                ..SpawnTargetSpec::default()
+            }),
+        }
+        .encode_to_vec(),
+        content_type: PayloadContentType::Protobuf as i32,
+        schema_ref: patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA.to_owned(),
+    });
     let continuation_accepted = SpawnClaimAccepted {
-        accepted_operation: Some(accepted_operation()),
+        accepted_operation: Some(continuation_operation),
         claim: Some(continuation_claim.clone()),
         compound_authority: Some(continuation.clone()),
         pending_replacement: Some(SpawnPendingReplacementFence {

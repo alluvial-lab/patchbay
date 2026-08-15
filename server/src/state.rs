@@ -1341,11 +1341,11 @@ mod tests {
     #[tokio::test]
     async fn spawn_promotion_catch_up_and_restart_publish_one_complete_aggregate() {
         use patchbay_contracts::patchbay::{
-            runtime_generation_disposition, spawn_claim_event, typed_correlation,
+            runtime_generation_disposition, spawn_claim_event, spawn_request, typed_correlation,
             AcceptedOperation, ActorEndpointRef, AdapterCapability, AdapterId, AdapterRegistration,
             AdapterSnapshotSupport, AdapterTargetCategory, AuditEventKind, CommandTransition,
             DescendantGrant, DescendantGrantProvenance, EndpointId, ExternalRuntimeRef,
-            FailureCode, Grant, GrantId, GrantProvenance, GrantRevocationPolicy,
+            FailureCode, FreshSpawn, Grant, GrantId, GrantProvenance, GrantRevocationPolicy,
             LogicalTargetCreated, LogicalTargetId, Observation, ObservationKind, Operation,
             OperationState, PayloadContentType, PayloadEnvelope, RuntimeEvidenceSourceAttachment,
             RuntimeGenerationClaimedSuccessor, RuntimeGenerationDisposition, RuntimeGenerationRef,
@@ -1353,8 +1353,8 @@ mod tests {
             SessionReportSourceCursor, SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent,
             SpawnGenerationClaim, SpawnPromotionAuthorityEvidence, SpawnPromotionCommitted,
             SpawnPromotionLifecycleEvidence, SpawnPromotionResultEvidence,
-            SpawnPromotionStagedEvidence, SpawnSuccessorEvidenceStaged, TargetScope,
-            TypedCorrelation,
+            SpawnPromotionStagedEvidence, SpawnRequest, SpawnSuccessorEvidenceStaged,
+            SpawnTargetSpec, TargetScope, TypedCorrelation,
         };
         use patchbay_core::{
             authority::DESCENDANT_GRANT_ALLOWED_KINDS,
@@ -1406,6 +1406,18 @@ mod tests {
                 ..TargetScope::default()
             }),
             idempotency_key: "spawn-key".to_owned(),
+            payload: Some(PayloadEnvelope {
+                payload: SpawnRequest {
+                    intent: Some(spawn_request::Intent::Fresh(FreshSpawn {})),
+                    target_spec: Some(SpawnTargetSpec {
+                        shape: "session".to_owned(),
+                        ..SpawnTargetSpec::default()
+                    }),
+                }
+                .encode_to_vec(),
+                content_type: PayloadContentType::Protobuf as i32,
+                schema_ref: patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA.to_owned(),
+            }),
             ..Operation::default()
         };
         let accepted_operation = AcceptedOperation {

@@ -23,7 +23,10 @@ use patchbay_contracts::patchbay::{
 use prost::Message;
 
 use crate::{
-    acceptance::exact_command_correlation,
+    acceptance::{
+        exact_command_correlation, validate_spawn_authority_carriage,
+        validate_spawn_operation_payload,
+    },
     adapter::AdapterRegistry,
     storage::{validate_next_replay_event, RecordedEvent, Storage},
 };
@@ -290,7 +293,7 @@ impl SpawnClaimRegistry {
         accepted: SpawnClaimAccepted,
         event_lsn: u64,
     ) -> Result<(), SpawnClaimError> {
-        validate_accepted_decision(&self.authority_domain_id, &accepted)?;
+        validate_spawn_claim_accepted(&self.authority_domain_id, &accepted)?;
         let claim = accepted.claim.clone().expect("validated claim");
         let command_id = required_command_id(&claim)?.clone();
         if self.records.contains_key(&command_id) {
@@ -612,7 +615,12 @@ pub fn encode_spawn_execution_evidence(event: &SpawnExecutionEvidence) -> Stored
     }
 }
 
-fn validate_accepted_decision(
+/// Validate one complete accepted-spawn envelope at durable and delivery boundaries.
+///
+/// This binds the untrusted nested request intent to the core-prepared claim,
+/// fence, and two-Grant authority carriage so no self-consistent claim can
+/// disagree with the Operation that an adapter will execute.
+pub fn validate_spawn_claim_accepted(
     domain: &AuthorityDomainId,
     accepted: &SpawnClaimAccepted,
 ) -> Result<(), SpawnClaimError> {
@@ -635,7 +643,21 @@ fn validate_accepted_decision(
             "accepted operation command_id does not match claim_operation_id",
         ));
     }
-
+    let request = validate_spawn_operation_payload(operation).map_err(|error| {
+        corrupt_log(format!(
+            "accepted spawn operation payload is not canonical: {error}"
+        ))
+    })?;
+    validate_spawn_authority_carriage(
+        &request,
+        accepted_operation.authorizing_grant_id.as_ref(),
+        accepted.compound_authority.as_ref(),
+    )
+    .map_err(|error| {
+        corrupt_log(format!(
+            "accepted spawn authority carriage is not canonical: {error}"
+        ))
+    })?;
     match claim.expected_prior.as_ref() {
         None => {
             if accepted.compound_authority.is_some()

@@ -1,11 +1,12 @@
 use patchbay_contracts::patchbay::{
-    no_external_effect_proof, observation_request, AcceptedOperation, ActorEndpointRef, ActorId,
-    AdapterCapability, AdapterId, AdapterRefusalBeforeDeliveryProof, AdapterRegistration,
-    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind,
-    AuthorityDomainId, CommandId, DeviceId, EndpointId, ExternalEffectDisposition, FailureCode,
-    Generation, GrantId, IdempotencyKey, LogicalTargetId, Lsn, NoExternalEffectProof,
-    ObservationRequest, Operation, OperationKind, SpawnClaimAccepted, SpawnExecutionEvidence,
-    SpawnExecutionEvidenceProducer, SpawnExecutionPhase, SpawnGenerationClaim, StoredEventKind,
+    no_external_effect_proof, observation_request, spawn_request, AcceptedOperation,
+    ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRefusalBeforeDeliveryProof,
+    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
+    AuditEventKind, AuthorityDomainId, CommandId, DeviceId, EndpointId, ExternalEffectDisposition,
+    FailureCode, FreshSpawn, Generation, GrantId, IdempotencyKey, LogicalTargetId, Lsn,
+    NoExternalEffectProof, ObservationRequest, Operation, OperationKind, PayloadContentType,
+    PayloadEnvelope, SpawnClaimAccepted, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer,
+    SpawnExecutionPhase, SpawnGenerationClaim, SpawnRequest, SpawnTargetSpec, StoredEventKind,
     TargetScope, TargetScopeKind,
 };
 use patchbay_core::storage::{AuditRecordDraft, RusqliteStorage, Storage, TargetKey};
@@ -115,6 +116,18 @@ async fn authenticated_evidence_is_canonicalized_and_wrong_claim_is_not_appended
             ..TargetScope::default()
         }),
         idempotency_key: "spawn-evidence-key".into(),
+        payload: Some(PayloadEnvelope {
+            payload: SpawnRequest {
+                intent: Some(spawn_request::Intent::Fresh(FreshSpawn {})),
+                target_spec: Some(SpawnTargetSpec {
+                    shape: "session".to_owned(),
+                    ..SpawnTargetSpec::default()
+                }),
+            }
+            .encode_to_vec(),
+            content_type: PayloadContentType::Protobuf as i32,
+            schema_ref: patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA.to_owned(),
+        }),
         ..Operation::default()
     };
     let accepted = SpawnClaimAccepted {

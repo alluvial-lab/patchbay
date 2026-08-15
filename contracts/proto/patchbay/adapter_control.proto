@@ -123,6 +123,10 @@ message ReceiveRequest {
 }
 
 message Delivery {
+  // Ordinary accepted work carries the accepted Operation. Managed spawn also
+  // keeps this compatibility view, but adapters must authorize and execute it
+  // from accepted_spawn, the exact durable acceptance envelope.
   Operation operation = 1;
   EventId delivery_event_id = 2;
+  SpawnClaimAccepted accepted_spawn = 3;
 }

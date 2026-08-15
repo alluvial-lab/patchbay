@@ -3163,10 +3163,15 @@ pub struct ReceiveRequest {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Delivery {
+    /// Ordinary accepted work carries the accepted Operation. Managed spawn also
+    /// keeps this compatibility view, but adapters must authorize and execute it
+    /// from accepted_spawn, the exact durable acceptance envelope.
     #[prost(message, optional, tag="1")]
     pub operation: ::core::option::Option<Operation>,
     #[prost(message, optional, tag="2")]
     pub delivery_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag="3")]
+    pub accepted_spawn: ::core::option::Option<SpawnClaimAccepted>,
 }
 /// Exact orchestration phase at the last durable spawn-execution observation.
 /// No phase is a catch-all liveness assertion: each phase has a closed set of

@@ -618,6 +618,18 @@ async fn seed_spawn_claim<S: Storage>(storage: &S) {
         kind: OperationKind::Spawn as i32,
         target_scope: Some(adapter_scope()),
         idempotency_key: "spawn-1-key".to_owned(),
+        payload: Some(PayloadEnvelope {
+            payload: SpawnRequest {
+                intent: Some(spawn_request::Intent::Fresh(FreshSpawn {})),
+                target_spec: Some(SpawnTargetSpec {
+                    shape: "session".to_owned(),
+                    ..SpawnTargetSpec::default()
+                }),
+            }
+            .encode_to_vec(),
+            content_type: PayloadContentType::Protobuf as i32,
+            schema_ref: SPAWN_REQUEST_SCHEMA.to_owned(),
+        }),
         ..Operation::default()
     };
     let accepted_operation = AcceptedOperation {

@@ -2,21 +2,23 @@ use std::sync::{Arc, Mutex};
 
 use patchbay_contracts::patchbay::{
     no_external_effect_proof, session_state_event, spawn_claim_disposition_changed,
-    spawn_claim_event, AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
-    AdapterRefusalBeforeDeliveryProof, AdapterRegistration, AdapterSnapshotSupport,
-    AdapterTargetCategory, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition,
-    ContinuationAuthorityProvenance, EndpointId, EventId, ExternalEffectDisposition,
-    ExternalRuntimeRef, FailureCode, Generation, GrantId, IdempotencyKey, LogicalTargetId, Lsn,
-    NoExternalEffectProof, Observation, ObservationKind, Operation, OperationKind, OperationState,
-    PayloadContentType, PayloadEnvelope, RuntimeGenerationRef, RuntimeSessionId,
-    SessionConnectivityChanged, SessionConnectivityState, SessionStateEvent,
-    SpawnClaimAbandonmentEvidence, SpawnClaimAccepted, SpawnClaimAmbiguityEvidence,
-    SpawnClaimCheckpoint, SpawnClaimCheckpointRecord, SpawnClaimDisposition,
-    SpawnClaimDispositionChanged, SpawnClaimEvent, SpawnClaimNoEffectRelease,
-    SpawnClaimPromotionEvidence, SpawnEvidenceAttachment, SpawnExecutionEvidence,
-    SpawnExecutionEvidenceProducer, SpawnExecutionPhase, SpawnGenerationClaim,
-    SpawnPendingReplacementFence, SpawnPriorWorkDisposition, SpawnPriorWorkEffect, StoredEventKind,
-    StoredEventPayload, SupervisorPreLaunchFailureProof, TargetScope, TargetScopeKind,
+    spawn_claim_event, spawn_request, AcceptedOperation, ActorEndpointRef, ActorId,
+    AdapterCapability, AdapterId, AdapterRefusalBeforeDeliveryProof, AdapterRegistration,
+    AdapterSnapshotSupport, AdapterTargetCategory, AuditEventKind, AuthorityDomainId, CommandId,
+    CommandTransition, ContinuationAuthorityProvenance, EndpointId, EventId,
+    ExternalEffectDisposition, ExternalRuntimeRef, FailureCode, FreshSpawn, Generation, GrantId,
+    IdempotencyKey, LogicalTargetId, Lsn, NoExternalEffectProof, Observation, ObservationKind,
+    Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
+    RuntimeGenerationRef, RuntimeSessionId, SessionConnectivityChanged, SessionConnectivityState,
+    SessionStateEvent, SpawnClaimAbandonmentEvidence, SpawnClaimAccepted,
+    SpawnClaimAmbiguityEvidence, SpawnClaimCheckpoint, SpawnClaimCheckpointRecord,
+    SpawnClaimDisposition, SpawnClaimDispositionChanged, SpawnClaimEvent,
+    SpawnClaimNoEffectRelease, SpawnClaimPromotionEvidence, SpawnContinuation,
+    SpawnEvidenceAttachment, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer,
+    SpawnExecutionPhase, SpawnGenerationClaim, SpawnPendingReplacementFence,
+    SpawnPriorWorkDisposition, SpawnPriorWorkEffect, SpawnRequest, SpawnTargetSpec,
+    StoredEventKind, StoredEventPayload, SupervisorPreLaunchFailureProof, TargetScope,
+    TargetScopeKind,
 };
 use patchbay_core::session::{
     allowed_spawn_claim_transition, encode_spawn_claim_event, encode_spawn_execution_evidence,
@@ -157,7 +159,15 @@ fn claim(command_id: &str, expected_prior: Option<u64>) -> SpawnGenerationClaim 
     }
 }
 
-fn accepted_operation(command_id: &str) -> AcceptedOperation {
+fn accepted_operation(command_id: &str, expected_prior: Option<u64>) -> AcceptedOperation {
+    let intent = expected_prior.map_or_else(
+        || spawn_request::Intent::Fresh(FreshSpawn {}),
+        |generation| {
+            spawn_request::Intent::Continuation(SpawnContinuation {
+                prior: Some(runtime(generation)),
+            })
+        },
+    );
     AcceptedOperation {
         operation: Some(Operation {
             command_id: Some(command(command_id)),
@@ -171,6 +181,18 @@ fn accepted_operation(command_id: &str) -> AcceptedOperation {
                 ..TargetScope::default()
             }),
             idempotency_key: format!("{command_id}-key"),
+            payload: Some(PayloadEnvelope {
+                payload: SpawnRequest {
+                    intent: Some(intent),
+                    target_spec: Some(SpawnTargetSpec {
+                        shape: "session".to_owned(),
+                        ..SpawnTargetSpec::default()
+                    }),
+                }
+                .encode_to_vec(),
+                content_type: PayloadContentType::Protobuf as i32,
+                schema_ref: patchbay_core::acceptance::SPAWN_REQUEST_SCHEMA.to_owned(),
+            }),
             ..Operation::default()
         }),
         authorizing_grant_id: Some(GrantId {
@@ -191,7 +213,7 @@ fn continuation_authority(prior: u64) -> ContinuationAuthorityProvenance {
 
 fn continuation_accepted(command_id: &str) -> SpawnClaimAccepted {
     SpawnClaimAccepted {
-        accepted_operation: Some(accepted_operation(command_id)),
+        accepted_operation: Some(accepted_operation(command_id, Some(7))),
         claim: Some(claim(command_id, Some(7))),
         compound_authority: Some(continuation_authority(7)),
         pending_replacement: Some(SpawnPendingReplacementFence {
@@ -220,7 +242,7 @@ fn continuation_accepted(command_id: &str) -> SpawnClaimAccepted {
 
 fn fresh_accepted(command_id: &str) -> SpawnClaimAccepted {
     SpawnClaimAccepted {
-        accepted_operation: Some(accepted_operation(command_id)),
+        accepted_operation: Some(accepted_operation(command_id, None)),
         claim: Some(claim(command_id, None)),
         compound_authority: None,
         pending_replacement: None,

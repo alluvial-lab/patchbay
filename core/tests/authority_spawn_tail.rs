@@ -1,11 +1,14 @@
 use patchbay_contracts::patchbay::{
-    session_state_event, typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId,
-    AdapterId, AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, CommandTransition,
-    DescendantGrant, DescendantGrantProvenance, DeviceId, EndpointId, EventId, FailureCode,
-    Generation, Grant, GrantId, GrantProvenance, GrantRevocationEffect, GrantRevocationPolicy, Lsn,
+    session_state_event, spawn_claim_event, typed_correlation, AcceptedOperation, ActorEndpointRef,
+    ActorId, AdapterId, AuditEventKind, AuditRecord, AuthorityDomainId, CommandId,
+    CommandTransition, ContinuationAuthorityProvenance, DescendantGrant, DescendantGrantProvenance,
+    DeviceId, EndpointId, EventId, ExternalRuntimeRef, FailureCode, Generation, Grant, GrantId,
+    GrantProvenance, GrantRevocationEffect, GrantRevocationPolicy, LogicalTargetId, Lsn,
     Observation, ObservationKind, Operation, OperationKind, OperationState, Revocation,
-    RuntimeSessionId, SessionGenerationBumped, SessionRegistered, SessionStateEvent,
-    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
+    RuntimeGenerationRef, RuntimeSessionId, SessionGenerationBumped, SessionRegistered,
+    SessionStateEvent, SpawnClaimAccepted, SpawnClaimEvent, SpawnGenerationClaim,
+    SpawnPendingReplacementFence, StoredEventKind, StoredEventPayload, TargetScope,
+    TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::CommandIndex,
@@ -129,6 +132,87 @@ fn spawn_event(lsn: u64) -> RecordedEvent {
                 ..Operation::default()
             }),
             authorizing_grant_id: Some(grant_id("spawn-grant")),
+        },
+    )
+}
+
+fn managed_spawn_claim_event(
+    lsn: u64,
+    expected_prior: Option<RuntimeGenerationRef>,
+) -> RecordedEvent {
+    let accepted_operation =
+        AcceptedOperation::decode(spawn_event(lsn).payload.payload.as_slice()).unwrap();
+    let claimed_generation = expected_prior
+        .as_ref()
+        .and_then(|prior| prior.external_runtime.as_ref())
+        .and_then(|external| external.generation.as_ref())
+        .map_or(1, |generation| generation.value + 1);
+    let continuation_authority =
+        expected_prior
+            .as_ref()
+            .map(|prior| ContinuationAuthorityProvenance {
+                exact_prior: Some(prior.clone()),
+                replacement_grant_id: Some(grant_id("replacement-grant")),
+                replacement_authority_kind: OperationKind::SessionManagement as i32,
+            });
+    let pending_replacement = expected_prior
+        .as_ref()
+        .map(|prior| SpawnPendingReplacementFence {
+            exact_prior: Some(prior.clone()),
+            failure_code: FailureCode::Superseded as i32,
+            reason_code: "replacement_pending".to_owned(),
+        });
+    recorded(
+        lsn,
+        StoredEventKind::SpawnClaim,
+        &SpawnClaimEvent {
+            authority_domain_id: Some(domain("authority-main")),
+            mutation: Some(spawn_claim_event::Mutation::Accepted(SpawnClaimAccepted {
+                accepted_operation: Some(accepted_operation),
+                claim: Some(SpawnGenerationClaim {
+                    authority_domain_id: Some(domain("authority-main")),
+                    claim_operation_id: Some(command("spawn-1")),
+                    logical_target_id: Some(LogicalTargetId {
+                        value: "logical-a".to_owned(),
+                    }),
+                    expected_prior,
+                    claimed_generation: Some(Generation {
+                        value: claimed_generation,
+                    }),
+                }),
+                compound_authority: continuation_authority,
+                pending_replacement,
+                prior_work_effects: Vec::new(),
+            })),
+        },
+    )
+}
+
+fn replacement_grant_event(lsn: u64, prior: &RuntimeGenerationRef) -> RecordedEvent {
+    let external = prior.external_runtime.as_ref().unwrap();
+    recorded(
+        lsn,
+        StoredEventKind::Grant,
+        &Grant {
+            grant_id: Some(grant_id("replacement-grant")),
+            authority_domain_id: Some(domain("authority-main")),
+            subject_actor_id: Some(actor("operator")),
+            subject_endpoint_id: Some(endpoint("browser")),
+            target_scope: Some(TargetScope {
+                kind: TargetScopeKind::RuntimeSession as i32,
+                adapter_id: external.adapter_id.clone(),
+                deployment_scope: external.deployment_scope.clone(),
+                runtime_session_id: external.runtime_session_id.clone(),
+                session_generation: external.generation,
+                ..TargetScope::default()
+            }),
+            allowed_operation_kinds: vec![OperationKind::SessionManagement as i32],
+            provenance: Some(GrantProvenance {
+                reason: "replacement authority fixture".into(),
+                ..GrantProvenance::default()
+            }),
+            revocation_policy: GrantRevocationPolicy::Continue as i32,
+            ..Grant::default()
         },
     )
 }
@@ -317,6 +401,70 @@ fn registration_and_generation_bump_produce_the_same_ordered_actions() {
         assert_eq!(commit.from_state, OperationState::Delivered);
         assert_eq!(commit.spawn_operation_id, command("spawn-1"));
     }
+}
+
+#[test]
+fn fresh_managed_claim_keeps_the_legacy_completion_bridge() {
+    let mut tail = SpawnDescendantTail::new();
+    observe_all(
+        &mut tail,
+        &[
+            parent_grant_event(1),
+            managed_spawn_claim_event(2, None),
+            transition_event(3, OperationState::Accepted, OperationState::Delivered),
+            result_event(4),
+            registration_event(5),
+        ],
+    );
+    assert!(matches!(
+        tail.next_action().unwrap(),
+        Some(SpawnCompletionAction::RecordAudit(_))
+    ));
+}
+
+#[test]
+fn managed_continuation_never_enters_the_legacy_one_grant_completion_tail() {
+    let prior = RuntimeGenerationRef {
+        logical_target_id: Some(LogicalTargetId {
+            value: "logical-a".to_owned(),
+        }),
+        external_runtime: Some(ExternalRuntimeRef {
+            adapter_id: Some(AdapterId { value: "pi".into() }),
+            deployment_scope: "machine-a".to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: "spawned-session".to_owned(),
+            }),
+            generation: Some(Generation { value: 6 }),
+        }),
+    };
+    let mut tail = SpawnDescendantTail::new();
+    observe_all(
+        &mut tail,
+        &[
+            parent_grant_event(1),
+            replacement_grant_event(2, &prior),
+            managed_spawn_claim_event(3, Some(prior)),
+            transition_event(4, OperationState::Accepted, OperationState::Delivered),
+            recorded(
+                5,
+                StoredEventKind::Revocation,
+                &Revocation {
+                    authority_domain_id: Some(domain("authority-main")),
+                    grant_id: Some(grant_id("replacement-grant")),
+                    revocation_generation: Some(Generation { value: 1 }),
+                    accepted_operation_policy: GrantRevocationPolicy::Continue as i32,
+                    ..Revocation::default()
+                },
+            ),
+            result_event(6),
+            registration_event(7),
+        ],
+    );
+    assert_eq!(
+        tail.next_action().unwrap(),
+        None,
+        "continuation acceptance, qualifying evidence, and replacement-Grant revocation must not produce a legacy audit, descendant Grant, or completion action"
+    );
 }
 
 #[test]
