@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-idempotency-duplicate-handling
 kind: story
-stage: review
+stage: implementing
 tags: [adapter, protocol, verification]
 parent: research-handoff-spawn
 depends_on: [research-handoff-spawn-logical-target-registration, research-handoff-spawn-crash-external-effect-evidence-contract]
