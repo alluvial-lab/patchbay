@@ -1013,11 +1013,22 @@ function quarantinedObservationsFromDatabase(databasePath: string) {
     return rows
       .map((row) => fromBinary(StoredEventPayloadSchema, row.payload))
       .map((payload) => fromBinary(QuarantinedRuntimeEvidenceSchema, payload.payload))
-      .flatMap((quarantined) =>
-        quarantined.candidate.case === "observation"
-          ? [quarantined.candidate.value]
-          : [],
-      );
+      .flatMap((quarantined) => {
+        // Runtime-targeted Event/Status/Delta observations quarantine inside the
+        // typed RuntimeTranscriptStatusEvidence wrapper (Unit 5); Results and
+        // SessionReports stay directly nested. Flatten every admitted shape so
+        // this reader keeps observing ALL quarantined observations.
+        switch (quarantined.candidate.case) {
+          case "observation":
+            return [quarantined.candidate.value];
+          case "transcriptStatus":
+            return quarantined.candidate.value.observation
+              ? [quarantined.candidate.value.observation]
+              : [];
+          default:
+            return [];
+        }
+      });
   } finally {
     database.close();
   }
