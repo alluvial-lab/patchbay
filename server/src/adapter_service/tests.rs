@@ -1,5 +1,5 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 
@@ -156,6 +156,158 @@ impl Storage for BlockingReadStorage {
         audit: AuditRecordDraft,
     ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
         self.inner.append_audit(authority_domain_id, audit).await
+    }
+}
+
+#[derive(Clone)]
+struct FullScanRejectingStorage {
+    inner: RusqliteStorage,
+    reject_full_scans: Arc<AtomicBool>,
+    full_scan_attempts: Arc<AtomicUsize>,
+    reconciliation_attempts: Arc<AtomicUsize>,
+}
+
+impl FullScanRejectingStorage {
+    fn new() -> Self {
+        Self {
+            inner: RusqliteStorage::open_in_memory().expect("storage opens"),
+            reject_full_scans: Arc::new(AtomicBool::new(false)),
+            full_scan_attempts: Arc::new(AtomicUsize::new(0)),
+            reconciliation_attempts: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn reject_full_scans(&self) {
+        self.full_scan_attempts.store(0, Ordering::SeqCst);
+        self.reconciliation_attempts.store(0, Ordering::SeqCst);
+        self.reject_full_scans.store(true, Ordering::SeqCst);
+    }
+}
+
+impl CoreGenerationStore for FullScanRejectingStorage {
+    async fn load_or_create_core_generation(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        candidate: Generation,
+    ) -> Result<Generation, StorageError> {
+        self.inner
+            .load_or_create_core_generation(authority_domain_id, candidate)
+            .await
+    }
+}
+
+impl Storage for FullScanRejectingStorage {
+    async fn append(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        payload: StoredEventPayload,
+    ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        self.inner.append(authority_domain_id, payload).await
+    }
+
+    async fn append_dedup(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        key: &IdempotencyKey,
+        target: &TargetKey,
+        payload: StoredEventPayload,
+    ) -> Result<DedupOutcome, StorageError> {
+        self.inner
+            .append_dedup(authority_domain_id, key, target, payload)
+            .await
+    }
+
+    async fn read_after(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        cursor: Lsn,
+    ) -> Result<Vec<RecordedEvent>, StorageError> {
+        if self.reject_full_scans.load(Ordering::SeqCst) && cursor.value == 0 {
+            self.full_scan_attempts.fetch_add(1, Ordering::SeqCst);
+            return Err(StorageError::Unavailable(
+                "test oracle rejected a full authority-log scan".to_owned(),
+            ));
+        }
+        self.inner.read_after(authority_domain_id, cursor).await
+    }
+
+    async fn write_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        snapshot_lsn: Lsn,
+        snapshot_payload: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        self.inner
+            .write_snapshot(authority_domain_id, snapshot_lsn, snapshot_payload)
+            .await
+    }
+
+    async fn load_latest_snapshot(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        at_or_before: Option<Lsn>,
+    ) -> Result<Option<StoredSnapshot>, StorageError> {
+        self.inner
+            .load_latest_snapshot(authority_domain_id, at_or_before)
+            .await
+    }
+
+    async fn append_audit(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        audit: AuditRecordDraft,
+    ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        self.inner.append_audit(authority_domain_id, audit).await
+    }
+
+    async fn append_decision(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        source: StoredEventPayload,
+        audit: AuditRecordDraft,
+    ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        self.inner
+            .append_decision(authority_domain_id, source, audit)
+            .await
+    }
+
+    async fn append_batch_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        sources: Vec<StoredEventPayload>,
+        audit: AuditRecordDraft,
+    ) -> Result<AuditedBatchAppend, StorageError> {
+        self.inner
+            .append_batch_audited(authority_domain_id, sources, audit)
+            .await
+    }
+
+    async fn append_spawn_successor_staged_idempotent(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        staged: patchbay_contracts::patchbay::SpawnSuccessorEvidenceStaged,
+    ) -> Result<patchbay_contracts::patchbay::EventId, StorageError> {
+        self.inner
+            .append_spawn_successor_staged_idempotent(authority_domain_id, staged)
+            .await
+    }
+
+    async fn reconcile_spawn_successor_staged_retry(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        claim_operation_id: CommandId,
+        report: patchbay_contracts::patchbay::SessionReport,
+        source_attachment: patchbay_contracts::patchbay::RuntimeEvidenceSourceAttachment,
+    ) -> Result<Option<patchbay_contracts::patchbay::EventId>, StorageError> {
+        self.reconciliation_attempts.fetch_add(1, Ordering::SeqCst);
+        self.inner
+            .reconcile_spawn_successor_staged_retry(
+                authority_domain_id,
+                claim_operation_id,
+                report,
+                source_attachment,
+            )
+            .await
     }
 }
 
@@ -1943,6 +2095,116 @@ async fn managed_spawn_report_stages_exclusively_and_never_registers_current_ses
             .get(&logical_target_id)
             .and_then(|target| target.reserved_candidate.as_ref()),
         hot_target.reserved_candidate.as_ref()
+    );
+}
+
+#[tokio::test]
+async fn exact_late_staged_retry_exits_before_any_full_rebuild_under_the_decision_gate() {
+    let storage = FullScanRejectingStorage::new();
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
+    let attachment_token = attach_generation(&service, domain.clone(), 1).await;
+    let accepted_claim = append_fresh_claim(
+        &storage.inner,
+        &domain,
+        "bounded-managed-spawn",
+        LogicalTargetId {
+            value: "logical-bounded-retry".to_owned(),
+        },
+    )
+    .await;
+
+    let unrelated = vec![
+        StoredEventPayload {
+            kind: StoredEventKind::Observation as i32,
+            payload: Observation::default().encode_to_vec(),
+        };
+        4_096
+    ];
+    let mut audit = AuditRecordDraft::new(
+        Timestamp {
+            seconds: 10,
+            nanos: 0,
+        },
+        AuditEventKind::CommandRunning,
+    );
+    audit.reason_code = "bounded_retry_prefix".to_owned();
+    storage
+        .inner
+        .append_batch_audited(&domain, unrelated, audit)
+        .await
+        .expect("large unrelated durable prefix appends");
+
+    let mut report = session_report(SessionConnectivityState::Live);
+    report.spawn_origin = Some(TypedCorrelation {
+        r#ref: Some(typed_correlation::Ref::CommandId(
+            accepted_claim
+                .claim
+                .as_ref()
+                .and_then(|claim| claim.claim_operation_id.clone())
+                .expect("claim operation id"),
+        )),
+    });
+    let first = service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    report.clone(),
+                )),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("managed report stages after the large prefix")
+        .into_inner();
+
+    storage.reject_full_scans();
+    let unauthenticated = service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::SessionReport(
+                    report.clone(),
+                )),
+            },
+            "not-the-current-attachment-token",
+        ))
+        .await
+        .expect_err("attachment authentication remains ahead of indexed retry reconciliation");
+    assert_eq!(unauthenticated.code(), tonic::Code::Unauthenticated);
+    assert_eq!(
+        storage.reconciliation_attempts.load(Ordering::SeqCst),
+        0,
+        "unauthenticated evidence must not reach the indexed storage port"
+    );
+
+    let retry = service
+        .ingest_observation(authenticated_with_attachment_token(
+            ObservationRequest {
+                authority_domain_id: Some(domain),
+                observation: Some(observation_request::Observation::SessionReport(report)),
+            },
+            &attachment_token,
+        ))
+        .await
+        .expect("exact authenticated late retry stays bounded")
+        .into_inner();
+    assert_eq!(retry.event_id, first.event_id);
+    assert_eq!(
+        storage.full_scan_attempts.load(Ordering::SeqCst),
+        0,
+        "the gate-held exact retry must return before session or claim full replay"
+    );
+    assert_eq!(
+        storage.reconciliation_attempts.load(Ordering::SeqCst),
+        1,
+        "the exact retry must traverse the production indexed storage method once"
     );
 }
 

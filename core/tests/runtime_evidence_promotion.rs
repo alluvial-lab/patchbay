@@ -976,7 +976,7 @@ async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_
         storage
             .reconcile_spawn_successor_staged_retry(
                 &domain(),
-                exact.exact_claim.clone().unwrap(),
+                command(),
                 exact.report.clone().unwrap(),
                 exact.source_attachment.clone().unwrap(),
             )
@@ -990,7 +990,7 @@ async fn staged_successor_storage_reuses_exact_retry_and_rejects_changes_before_
     assert!(storage
         .reconcile_spawn_successor_staged_retry(
             &domain(),
-            changed.exact_claim.clone().unwrap(),
+            command(),
             changed.report.clone().unwrap(),
             changed.source_attachment.clone().unwrap(),
         )
@@ -1068,7 +1068,7 @@ async fn v5_migration_backfills_staged_successor_reconciliation_without_consumin
         migrated
             .reconcile_spawn_successor_staged_retry(
                 &domain(),
-                exact.exact_claim.unwrap(),
+                command(),
                 exact.report.unwrap(),
                 exact.source_attachment.unwrap(),
             )
@@ -3205,7 +3205,7 @@ async fn storage_stamps_and_commits_complete_promotion_plus_audit_atomically() {
         storage
             .reconcile_spawn_successor_staged_retry(
                 &domain(),
-                exact_retry.exact_claim.unwrap(),
+                command(),
                 exact_retry.report.unwrap(),
                 exact_retry.source_attachment.unwrap(),
             )

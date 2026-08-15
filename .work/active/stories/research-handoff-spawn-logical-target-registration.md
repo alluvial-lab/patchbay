@@ -1,7 +1,7 @@
 ---
 id: research-handoff-spawn-logical-target-registration
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, security]
 parent: research-handoff-spawn
 depends_on: [spawn-delivery-atomic-claim-idempotency-generation]
@@ -9,7 +9,7 @@ release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
 created: 2026-08-12
-updated: 2026-08-14
+updated: 2026-08-15
 ---
 
 # Claimed-successor staging and external-runtime reservation
@@ -82,4 +82,18 @@ Depends on an atomically accepted exclusive claim/fence. Duplicate reconciliatio
 - Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS** (23/23 tests).
 - Verification group 4 — `cd pi-adapter && npm test`: **PASS** (38/38 tests, including the real-core loop).
 - Discrepancies from the review recommendation: none. No `.proto`, generated-contract, foundation-doc, or unrelated `.work/` edits were required.
+- Adjacent issues parked: none.
+
+### Fix round 2 — early indexed retry exit and production-path bounded oracle
+
+- Execution/dispatch: retained caller-selected `openai-codex/gpt-5.6-sol` and caller-selected `thorough` review weight. Direct-read only: pass 2 named the exact server/storage path, and the existing authenticated-ingress, storage-port, and SQLite-index boundaries resolved the implementation without exploratory fan-out.
+- Mechanism: SessionReport ingress now authenticates the current attachment, binds the domain and adapter, validates required source-cursor framing, canonicalizes the adapter id, and then performs exact indexed reconciliation before either session recovery or the full claim fold. The storage port takes the report's non-empty claim Operation correlation rather than a rebuilt `SpawnClaimRecord`; it validates the indexed durable staged envelope and returns the original event id only when the complete report and current authenticated source attachment match exactly. That equality reuses the staged envelope's original full validation, and the read-only return creates no admission, classification, projection, or authority decision, so the skipped rebuild-dependent checks are unnecessary even after claim poison/promotion. A miss or changed report/source continues through the unchanged full classifier/conflict/quarantine path.
+- Simplification: removed the late-retry dependency on a fully rebuilt claim projection and narrowed the reconciliation input to evidence already present at authenticated ingress. Non-retry behavior and the schema-v6 writer/index contract are unchanged; no `.proto`, generated-contract, or foundation-doc edit was required.
+- Tests: replaced the detached SQL-constant oracle with a 4,096-row test that calls the production `RusqliteStorage::reconcile_spawn_successor_staged_retry` method under a SQLite progress fuse covering every statement on that connection, and asserts changed evidence returns no authority. Added a gate-held production `ingest_observation` test over 4,096 unrelated durable events using a storage wrapper that rejects/counts every `read_after(domain, Lsn { value: 0 })`; it proves invalid attachment evidence never reaches reconciliation and an exact authenticated retry returns the original staged event with zero full reads.
+- Controlled round-2 mutations, all killed and restored with `git restore`: (1) the pass-2 surviving `authoritative_staged_successor_reconciliations` full events-table scan before the indexed production lookup was interrupted by the new production-method oracle; (2) a full claim rebuild reinserted before the server's indexed early exit was rejected by the gate-held storage wrapper; (3) removing report/source exactness failed the changed-evidence assertion; (4) forcing the claim query `NOT INDEXED` exceeded the production-method progress bound; and (5) allowing staged evidence through generic raw append failed the class-barrier integration oracle. The pass-1 set remained killed: disabling the managed staging branch failed `exact_continuation_report_stages_n_plus_one_without_publishing_it`; removing staged external-runtime reservation failed `duplicate_staged_runtime_rejection_is_atomic_for_a_fresh_hot_fold`; dropping tombstone ownership failed `slot_transitions_are_exact_and_tombstones_retain_ownership`; and omitting claimed-generation equality failed `classifier_kills_each_attachment_claim_prior_deployment_and_generation_mutation`.
+- Verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS** (including mandatory warnings-as-errors clippy and the new production storage/ingress oracles).
+- Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS** (54 vectors, 17 promoted vectors, 22 implementation checks, 38 killed mutation witnesses; 54 model promotion blocks).
+- Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS** (23/23 tests).
+- Verification group 4 — `cd pi-adapter && npm test`: **PASS** (38/38 tests, including the real-core loop).
+- Discrepancies from the pass-2 direction: none. The indexed early exit remains under `CoreDecisionGate`, attachment authentication remains ahead of it, and every non-exact route retains its prior semantics.
 - Adjacent issues parked: none.

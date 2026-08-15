@@ -24,8 +24,8 @@ use patchbay_contracts::patchbay::{
     ActorId, AdapterDiagnosticDetail, AuditEventKind, AuditPage, AuthorityDomainId, CommandId,
     CommandTransition, EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn,
     Observation, ObservationKind, OperationKind, OperationState, QuarantinedRuntimeEvidence,
-    RuntimeEvidenceSourceAttachment, SessionReport, SpawnClaimAccepted, SpawnGenerationClaim,
-    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventPayload, TargetScope,
+    RuntimeEvidenceSourceAttachment, SessionReport, SpawnClaimAccepted, SpawnPromotionCommitted,
+    SpawnSuccessorEvidenceStaged, StoredEventPayload, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -801,14 +801,16 @@ pub trait Storage: Send + Sync {
     }
 
     /// Reconcile a late staged-successor retry through the storage-owned exact
-    /// identity index. This read never reconstructs staging authority: it
-    /// returns the original event only when the durable claim, report, and
-    /// authenticated source attachment all match exactly. Callers serialize
-    /// this lookup with claim poison/promotion through the core decision gate.
+    /// identity index. This read never reconstructs staging authority: the
+    /// report's claim correlation selects one immutable indexed envelope, and
+    /// the original event is returned only when the complete report and current
+    /// authenticated source attachment match that envelope exactly. Callers
+    /// serialize this lookup with claim poison/promotion through the core
+    /// decision gate.
     fn reconcile_spawn_successor_staged_retry(
         &self,
         _authority_domain_id: &AuthorityDomainId,
-        _exact_claim: SpawnGenerationClaim,
+        _claim_operation_id: CommandId,
         _report: SessionReport,
         _source_attachment: RuntimeEvidenceSourceAttachment,
     ) -> impl std::future::Future<Output = Result<Option<EventId>, StorageError>> + Send {

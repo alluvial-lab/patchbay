@@ -419,14 +419,14 @@ async fn append_quarantined_session_report<S: Storage>(
 async fn existing_staged_successor_retry<S: Storage>(
     storage: &S,
     domain: &AuthorityDomainId,
+    claim_operation_id: patchbay_contracts::patchbay::CommandId,
     report: &patchbay_contracts::patchbay::SessionReport,
     source_attachment: &RuntimeEvidenceSourceAttachment,
-    claim_record: &session::SpawnClaimRecord,
 ) -> Result<Option<EventId>, Status> {
     storage
         .reconcile_spawn_successor_staged_retry(
             domain,
-            claim_record.claim.clone(),
+            claim_operation_id,
             report.clone(),
             source_attachment.clone(),
         )
@@ -1089,6 +1089,33 @@ where
                 // classification so stale-producer evidence can be quarantined
                 // atomically rather than escaping as a standalone audit.
                 report.adapter_id = Some(authenticated_adapter.clone());
+
+                // Exact staged retries are a read-only response reconciliation,
+                // not a fresh classification decision. Authentication, current
+                // attachment lookup, domain/adapter binding, and required source
+                // cursor framing have already run under the decision gate. The
+                // indexed durable envelope was fully validated before staging;
+                // complete report equality therefore re-proves every report and
+                // claim-correlation check, while source-attachment equality
+                // proves the same authenticated attachment generation/event.
+                // No session/claim projection is needed to return its immutable
+                // event id, including after claim poison or promotion.
+                if let Some(claim_operation_id) = session_report_claim_operation(&report).cloned() {
+                    if let Some(event_id) = existing_staged_successor_retry(
+                        &self.storage,
+                        &domain,
+                        claim_operation_id,
+                        &report,
+                        &source_attachment,
+                    )
+                    .await?
+                    {
+                        return Ok(Response::new(ObservationResult {
+                            event_id: Some(event_id),
+                        }));
+                    }
+                }
+
                 // The adapter owns an independent session projection. Rebuild
                 // it at the gate boundary before deriving the next report
                 // delta; otherwise a lockdown (or any core-side append) can
@@ -1197,27 +1224,6 @@ where
                     disposition.disposition.as_ref(),
                     Some(runtime_generation_disposition::Disposition::ClaimedSuccessor(_))
                 );
-                if !claimed_successor {
-                    if let Some(claim_record) = correlated_claim {
-                        // This is reconciliation only, never admission: the
-                        // shared classifier has already refused a new stage.
-                        // An immutable exact staged envelope may still predate
-                        // claim poison/promotion and an RPC response loss.
-                        if let Some(event_id) = existing_staged_successor_retry(
-                            &self.storage,
-                            &domain,
-                            &report,
-                            &source_attachment,
-                            claim_record,
-                        )
-                        .await?
-                        {
-                            return Ok(Response::new(ObservationResult {
-                                event_id: Some(event_id),
-                            }));
-                        }
-                    }
-                }
                 if claimed_successor {
                     let claim_record = correlated_claim.ok_or_else(|| {
                         Status::internal("managed successor report lost its durable claim")

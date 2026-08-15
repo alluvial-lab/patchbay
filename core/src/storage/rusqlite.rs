@@ -35,8 +35,7 @@ use patchbay_contracts::patchbay::{
     EventId, FailureCode, Generation, Grant, IdempotencyKey, Lsn, Observation, ObservationKind,
     OperationKind, OperationState, QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason,
     RuntimeEvidenceSourceAttachment, SessionReport, SpawnClaimAccepted, SpawnClaimEvent,
-    SpawnGenerationClaim, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind,
-    StoredEventPayload,
+    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
@@ -4468,19 +4467,15 @@ impl Storage for RusqliteStorage {
     async fn reconcile_spawn_successor_staged_retry(
         &self,
         authority_domain_id: &AuthorityDomainId,
-        exact_claim: SpawnGenerationClaim,
+        claim_operation_id: CommandId,
         report: SessionReport,
         source_attachment: RuntimeEvidenceSourceAttachment,
     ) -> Result<Option<EventId>, StorageError> {
-        let claim_operation_id = exact_claim
-            .claim_operation_id
-            .as_ref()
-            .filter(|command_id| !command_id.value.is_empty())
-            .ok_or_else(|| {
-                StorageError::CorruptRecord(
-                    "staged-successor reconciliation claim has no operation id".to_owned(),
-                )
-            })?;
+        if claim_operation_id.value.is_empty() {
+            return Err(StorageError::CorruptRecord(
+                "staged-successor reconciliation has no claim operation id".to_owned(),
+            ));
+        }
         let db = self.read_db.lock().await;
         let indexed = indexed_staged_successor_by_claim(
             &db,
@@ -4490,7 +4485,11 @@ impl Storage for RusqliteStorage {
         let Some((event_id, staged)) = indexed else {
             return Ok(None);
         };
-        Ok((staged.exact_claim.as_ref() == Some(&exact_claim)
+        let indexed_claim_operation_id = staged
+            .exact_claim
+            .as_ref()
+            .and_then(|claim| claim.claim_operation_id.as_ref());
+        Ok((indexed_claim_operation_id == Some(&claim_operation_id)
             && staged.report.as_ref() == Some(&report)
             && staged.source_attachment.as_ref() == Some(&source_attachment))
         .then_some(event_id))
@@ -4923,83 +4922,182 @@ fn map_read_err(e: rusqlite::Error) -> StorageError {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    use patchbay_contracts::patchbay::{
+        runtime_generation_disposition, typed_correlation, AdapterId, CommandId,
+        ExternalRuntimeRef, Generation, LogicalTargetId, RuntimeGenerationClaimedSuccessor,
+        RuntimeGenerationDisposition, RuntimeGenerationRef, RuntimeSessionId, SessionActivityState,
+        SessionConnectivityState, SessionReport, SessionReportSourceCursor, SpawnGenerationClaim,
+        TypedCorrelation,
+    };
+
     use super::*;
-    use rusqlite::StatementStatus;
 
-    #[test]
-    fn staged_successor_reconciliation_queries_do_no_full_scan_with_large_unrelated_prefix() {
-        let mut db = Connection::open_in_memory().expect("SQLite opens");
-        migrate(&mut db).expect("schema migrates");
-        let tx = db.transaction().expect("seed transaction starts");
-        {
-            let mut insert_event = tx
-                .prepare(
-                    "INSERT INTO events (lsn, authority_domain_id, kind, payload)
-                     VALUES (?1, ?2, ?3, ?4)",
-                )
-                .expect("event insert prepares");
-            let mut insert_reconciliation = tx
-                .prepare(
-                    "INSERT INTO staged_successor_reconciliations (
-                         authority_domain_id, claim_operation_id, external_runtime_bytes,
-                         source_lsn, staged_bytes
-                     ) VALUES (?1, ?2, ?3, ?4, ?5)",
-                )
-                .expect("reconciliation insert prepares");
-            for index in 1_i64..=4_096 {
-                let authority_domain_id = "authority-main";
-                let claim_operation_id = format!("claim-{index}");
-                let external_runtime_bytes = index.to_be_bytes();
-                insert_event
-                    .execute(rusqlite::params![
-                        index,
-                        authority_domain_id,
-                        StoredEventKind::SpawnSuccessorEvidenceStaged as i32,
-                        [0_u8],
-                    ])
-                    .expect("event row seeds");
-                insert_reconciliation
-                    .execute(rusqlite::params![
-                        authority_domain_id,
-                        claim_operation_id,
-                        external_runtime_bytes,
-                        index,
-                        [0_u8],
-                    ])
-                    .expect("reconciliation row seeds");
-            }
+    fn staged_successor(index: u64) -> SpawnSuccessorEvidenceStaged {
+        let domain = AuthorityDomainId {
+            value: "authority-main".to_owned(),
+        };
+        let adapter_id = AdapterId {
+            value: "adapter-main".to_owned(),
+        };
+        let command_id = CommandId {
+            value: format!("claim-{index}"),
+        };
+        let generation = Generation { value: 1 };
+        let external = ExternalRuntimeRef {
+            adapter_id: Some(adapter_id.clone()),
+            deployment_scope: "deployment-main".to_owned(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: format!("runtime-{index}"),
+            }),
+            generation: Some(generation),
+        };
+        let claim = SpawnGenerationClaim {
+            authority_domain_id: Some(domain.clone()),
+            claim_operation_id: Some(command_id.clone()),
+            logical_target_id: Some(LogicalTargetId {
+                value: format!("logical-{index}"),
+            }),
+            expected_prior: None,
+            claimed_generation: Some(generation),
+        };
+        let report = SessionReport {
+            adapter_id: Some(adapter_id.clone()),
+            deployment_scope: external.deployment_scope.clone(),
+            runtime_session_id: external.runtime_session_id.clone(),
+            session_generation: Some(generation),
+            connectivity: SessionConnectivityState::Live as i32,
+            activity: SessionActivityState::Idle as i32,
+            spawn_origin: Some(TypedCorrelation {
+                r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
+            }),
+            source_cursor: Some(SessionReportSourceCursor {
+                adapter_generation: Some(generation),
+                revision: 1,
+            }),
+            ..SessionReport::default()
+        };
+        SpawnSuccessorEvidenceStaged {
+            authority_domain_id: Some(domain.clone()),
+            exact_claim: Some(claim.clone()),
+            report: Some(report),
+            classified_target: Some(RuntimeGenerationRef {
+                logical_target_id: claim.logical_target_id.clone(),
+                external_runtime: Some(external.clone()),
+            }),
+            disposition: Some(RuntimeGenerationDisposition {
+                disposition: Some(
+                    runtime_generation_disposition::Disposition::ClaimedSuccessor(
+                        RuntimeGenerationClaimedSuccessor {
+                            claim_operation_id: Some(command_id),
+                            expected_prior: None,
+                            claimed_generation: Some(generation),
+                        },
+                    ),
+                ),
+            }),
+            source_attachment: Some(RuntimeEvidenceSourceAttachment {
+                adapter_id: Some(adapter_id),
+                adapter_generation: Some(generation),
+                attachment_event_id: Some(event_id(domain, 1)),
+            }),
+            external_runtime_reservation: Some(external),
         }
-        tx.commit().expect("seed transaction commits");
+    }
 
-        let mut by_claim = db
-            .prepare(STAGED_SUCCESSOR_BY_CLAIM_SQL)
-            .expect("claim lookup prepares");
-        let claim_lsn: i64 = by_claim
-            .query_row(rusqlite::params!["authority-main", "claim-2048"], |row| {
-                row.get(0)
-            })
-            .expect("claim lookup finds one row");
-        assert_eq!(claim_lsn, 2_048);
-        assert_eq!(
-            by_claim.get_status(StatementStatus::FullscanStep),
-            0,
-            "claim reconciliation must use idx_staged_successor_claim"
-        );
+    #[tokio::test]
+    async fn staged_successor_reconciliation_queries_do_no_full_scan_with_large_unrelated_prefix() {
+        let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+        {
+            let mut db = storage.read_db.lock().await;
+            let tx = db.transaction().expect("seed transaction starts");
+            for index in 1..=4_096 {
+                let staged = staged_successor(index);
+                crate::session::validate_staged_successor(&staged)
+                    .expect("seeded staged successor validates");
+                let payload = StoredEventPayload {
+                    kind: StoredEventKind::SpawnSuccessorEvidenceStaged as i32,
+                    payload: staged.encode_to_vec(),
+                };
+                let (source_lsn, _) =
+                    insert_event(&tx, "authority-main", &payload).expect("staged event seeds");
+                insert_staged_successor_reconciliation(
+                    &tx,
+                    &StagedSuccessorIndexEntry {
+                        identity: staged_successor_index_identity(&staged)
+                            .expect("staged identity derives"),
+                        source_lsn,
+                        staged_bytes: staged.encode_to_vec(),
+                    },
+                )
+                .expect("reconciliation index seeds");
+            }
+            tx.commit().expect("seed transaction commits");
+        }
 
-        let mut by_external = db
-            .prepare(STAGED_SUCCESSOR_BY_EXTERNAL_SQL)
-            .expect("external-runtime lookup prepares");
-        let external_lsn: i64 = by_external
-            .query_row(
-                rusqlite::params!["authority-main", 2_048_i64.to_be_bytes()],
-                |row| row.get(0),
+        // Exercise the production storage method, not its SQL constant. The
+        // progress fuse bounds every statement it executes on the read
+        // connection, so an injected events-table fallback before the indexed
+        // lookup and a NOT INDEXED mutation both exceed the same oracle.
+        let progress_callbacks = Arc::new(AtomicUsize::new(0));
+        {
+            let db = storage.read_db.lock().await;
+            let observed = Arc::clone(&progress_callbacks);
+            db.progress_handler(
+                100,
+                Some(move || observed.fetch_add(1, Ordering::SeqCst) >= 16),
+            );
+        }
+
+        let exact = staged_successor(2_048);
+        let result = storage
+            .reconcile_spawn_successor_staged_retry(
+                &AuthorityDomainId {
+                    value: "authority-main".to_owned(),
+                },
+                CommandId {
+                    value: "claim-2048".to_owned(),
+                },
+                exact.report.clone().expect("exact report"),
+                exact
+                    .source_attachment
+                    .clone()
+                    .expect("exact source attachment"),
             )
-            .expect("external-runtime lookup finds one row");
-        assert_eq!(external_lsn, 2_048);
+            .await;
+        {
+            let db = storage.read_db.lock().await;
+            db.progress_handler(0, None::<fn() -> bool>);
+        }
+        let event_id = result.expect("bounded production reconciliation succeeds");
         assert_eq!(
-            by_external.get_status(StatementStatus::FullscanStep),
-            0,
-            "runtime reservation must use idx_staged_successor_external_runtime"
+            event_id.and_then(|event| event.lsn),
+            Some(Lsn { value: 2_048 })
         );
+        assert!(
+            progress_callbacks.load(Ordering::SeqCst) < 16,
+            "production reconciliation exceeded its prefix-independent SQLite work bound"
+        );
+
+        let mut changed_report = exact.report.expect("exact report");
+        changed_report.name = "changed-retry".to_owned();
+        assert!(storage
+            .reconcile_spawn_successor_staged_retry(
+                &AuthorityDomainId {
+                    value: "authority-main".to_owned(),
+                },
+                CommandId {
+                    value: "claim-2048".to_owned(),
+                },
+                changed_report,
+                exact.source_attachment.expect("exact source attachment"),
+            )
+            .await
+            .expect("changed production reconciliation remains read-only")
+            .is_none());
     }
 }
