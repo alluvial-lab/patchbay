@@ -12,6 +12,7 @@ import {
   LsnSchema,
   OperationKind,
   OperationSchema,
+  AcceptedOperationSchema,
   StoredEventKind,
   TargetScopeKind,
   TimeWindowSchema,
@@ -125,7 +126,11 @@ export async function resolveCommandTarget(
   });
   for await (const event of events) {
     if (event.payload?.kind !== StoredEventKind.OPERATION) continue;
-    const operation = fromBinary(OperationSchema, event.payload.payload);
+    // Kind-1 events carry the AcceptedOperation envelope (operation +
+    // authorizing grant); decoding the bare Operation misaligns fields.
+    const accepted = fromBinary(AcceptedOperationSchema, event.payload.payload);
+    const operation = accepted.operation;
+    if (operation == null) throw new Error("stored operation event has no nested operation");
     if (operation.commandId?.value !== commandId) continue;
     if (!operation.targetScope) throw new Error(`command ${commandId} has no target scope`);
     if (operation.targetScope.kind !== TargetScopeKind.RUNTIME_SESSION) {
