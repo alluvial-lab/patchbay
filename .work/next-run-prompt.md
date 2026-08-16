@@ -1,4 +1,8 @@
-# Resume prompt — spawn-stride autopilot (paste into a fresh session after clearing context)
+# ✅ STRIDE COMPLETE (2026-08-16, final HEAD `65e0f5e`, CI green) — this resume prompt is archival
+
+The spawn stride is DONE: research-handoff-spawn (16 children), research-handoff-pi-adapter-capability (6 children), capability-manifest-durability-and-reconciliation-depth (2 children) — all 24 stories + 3 features at stage:done through thorough/deep review convergence; Phase-8 final completion review confirmed (both its re-run blockers closed: pi-adapter conformance-runner CI deps; Pi feature pass-3 CLEAN retained). Do NOT re-drive. Next stride is a separate release-deploy decision (operator-owned).
+
+# (archival) Resume prompt — spawn-stride autopilot
 
 > Copy everything below the line into the new session as your first message.
 
