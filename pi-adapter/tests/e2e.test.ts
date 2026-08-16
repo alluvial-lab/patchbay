@@ -61,6 +61,7 @@ import {
   QueryDiagnosticsRequestSchema,
   QuarantinedRuntimeEvidenceSchema,
   SpawnContinuationSchema,
+  SpawnExecutionPhase,
   SpawnPromotionCommittedSchema,
   SpawnRequestSchema,
   SpawnTargetSpecSchema,
@@ -94,6 +95,12 @@ import {
 } from "../src/core_client.js";
 import { openAdapterDiagnostics } from "../src/adapter_diagnostics.js";
 import { AdapterProcess, type PreprovisionedSession } from "../src/main.js";
+import {
+  RpcManagedPiRuntimePort,
+  type ManagedPiRuntimePort,
+  type PiLaunchSpec,
+  type PiRpcRuntime,
+} from "../src/pi_process.js";
 import { AgentSessionRuntimeFixture, type PiSession } from "../src/pi_session.js";
 import { PI_SPAWN_TARGET_SCHEMA_REF } from "../src/spawn_supervisor.js";
 import {
@@ -705,6 +712,21 @@ export default function offlineMaterialization(pi) {
       setupSecret,
     );
     const control = makeControlClient(baseUrl, auth);
+    const productionRuntimePort = new RpcManagedPiRuntimePort();
+    const realLaunches: Array<{ readonly spec: PiLaunchSpec; readonly runtime: PiRpcRuntime }> = [];
+    const managedRuntimePort: ManagedPiRuntimePort = {
+      async launch(spec) {
+        const runtime = await productionRuntimePort.launch(spec);
+        realLaunches.push({ spec, runtime });
+        return runtime;
+      },
+      handshake(runtime, challenge) {
+        return productionRuntimePort.handshake(runtime, challenge);
+      },
+      terminate(runtime, policy) {
+        return productionRuntimePort.terminate(runtime, policy);
+      },
+    };
     adapter = new AdapterProcess({
       coreAddress: baseUrl,
       adapterId,
@@ -731,6 +753,7 @@ export default function offlineMaterialization(pi) {
       }],
       spawnJournalDirectory: journalDirectory,
       cursorStoreDirectory: cursorDirectory,
+      managedRuntimePort,
     });
     await adapter.start();
     adapterController = new AbortController();
@@ -772,6 +795,40 @@ export default function offlineMaterialization(pi) {
     );
     assert.equal(freshSession.state?.connectivity, SessionConnectivityState.LIVE);
     assert.equal(freshSession.state?.activity, SessionActivityState.IDLE);
+    assert.deepEqual(
+      commandStates(await readAfter(control, 0n), freshCommandId),
+      [OperationState.DELIVERED, OperationState.RUNNING],
+      "the real delivery loop records delivery/running before atomic promotion owns completion",
+    );
+    assert.equal(realLaunches.length, 1, "the spawn delivery launches exactly one real child");
+    const modeIndex = realLaunches[0]!.spec.argv.indexOf("--mode");
+    assert.deepEqual(
+      realLaunches[0]!.spec.argv.slice(modeIndex, modeIndex + 2),
+      ["--mode", "rpc"],
+      "the delivery-loop supervisor launches Pi in RPC mode",
+    );
+    assert.doesNotThrow(
+      () => process.kill(realLaunches[0]!.runtime.pid, 0),
+      "the supervised Pi child is live after promotion",
+    );
+    const freshJournalFiles = readdirSync(journalDirectory)
+      .filter((name) => name.endsWith(".json"));
+    assert.equal(freshJournalFiles.length, 1, "spawn writes one exact-claim journal receipt");
+    const freshJournal = JSON.parse(
+      readFileSync(join(journalDirectory, freshJournalFiles[0]!), "utf8"),
+    ) as {
+      claim?: { claimOperationId?: string };
+      phases?: readonly { phase?: number }[];
+      promotionObserved?: boolean;
+      publicationCommitted?: boolean;
+    };
+    assert.equal(freshJournal.claim?.claimOperationId, freshCommandId);
+    assert.equal(freshJournal.promotionObserved, true);
+    assert.equal(freshJournal.publicationCommitted, true);
+    assert.ok(
+      freshJournal.phases?.some((phase) => phase.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED),
+      "launch_attempted remains in the durable receipt after promotion",
+    );
 
     const materializeCommandId = "real-pi-materialize";
     await control.submit(create(SubmitRequestSchema, {
@@ -821,6 +878,7 @@ export default function offlineMaterialization(pi) {
     assert.equal(resumed.runtimeSessionId?.value, freshSession.runtimeSessionId?.value);
     assert.equal(resumed.state?.connectivity, SessionConnectivityState.LIVE);
     assert.equal(resumed.state?.activity, SessionActivityState.IDLE);
+    assert.equal(realLaunches.length, 2, "continuation launches one replacement child");
 
     const afterContinuation = await readAfter(control, 0n);
     const continuationPromotion = afterContinuation
@@ -962,6 +1020,20 @@ export default function offlineMaterialization(pi) {
       }
     }
     assert.ok(readdirSync(cursorDirectory).length > 0, "cursor state is durable after core acknowledgement");
+
+    adapterController.abort();
+    await adapterRun;
+    adapterRun = undefined;
+    adapterController = undefined;
+    await adapter.dispose();
+    adapter = undefined;
+    const exits = await Promise.all(realLaunches.map(({ runtime }) => runtime.exit));
+    assert.equal(exits.length, 2);
+    assert.equal(
+      exits.every((exit) => exit.expected && exit.terminatedBySupervisor),
+      true,
+      "both real Pi process groups are reaped by the supervisor",
+    );
   } finally {
     interrupterController?.abort();
     await interruptedStream?.catch(() => undefined);

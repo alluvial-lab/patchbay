@@ -147,6 +147,32 @@ const mutations = [
     testFile: "dist/tests/delivery.test.js",
   },
   {
+    name: "let managed spawn fall through to the stale unsupported translator",
+    file: "src/main.ts",
+    find: `    if (operation.kind === OperationKind.SPAWN) {`,
+    replace: `    if (operation.kind === OperationKind.SPAWN && operation.commandId?.value === "__mutant_never__") {`,
+    test: "production delivery loop routes the exact accepted spawn envelope",
+    testFile: "dist/tests/delivery.test.js",
+  },
+  {
+    name: "skip the managed spawn supervisor from the production delivery loop",
+    file: "src/main.ts",
+    find: `        completion: this.#spawnSupervisor.handleAcceptedSpawn(exactAcceptedSpawn)`,
+    replace: `        completion: Promise.resolve(exactAcceptedSpawn).then(() => undefined)`,
+    test: "production delivery loop routes the exact accepted spawn envelope",
+    testFile: "dist/tests/delivery.test.js",
+  },
+  {
+    name: "reconstruct managed spawn routing from the bare compatibility Operation",
+    file: "src/main.ts",
+    find: `        const operation = acceptedSpawn
+          ? acceptedSpawn.acceptedOperation!.operation!
+          : requiredOperation(delivery);`,
+    replace: `        const operation = requiredOperation(delivery);`,
+    test: "production delivery loop routes the exact accepted spawn envelope",
+    testFile: "dist/tests/delivery.test.js",
+  },
+  {
     name: "silently ignore a replayed promotion without an in-memory waiter",
     file: "src/spawn_supervisor.ts",
     find: `      await this.#reconciler.publishRecoveredAfterPromotion(\n        stagedProjection(state.stagedPublication),\n        state.externalIdentity.runtime,\n      );\n      await this.#journal.markPublicationCommitted(claimOperationId);`,

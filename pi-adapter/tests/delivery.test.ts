@@ -1,12 +1,24 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { create, toBinary } from "@bufbuild/protobuf";
 import {
+  AcceptedOperationSchema,
+  AdapterIdSchema,
   ApprovalDecision,
   ApprovalResponsePayloadSchema,
+  AuthorityDomainIdSchema,
+  CommandIdSchema,
+  DeliverySchema,
+  EventIdSchema,
+  ExternalRuntimeRefSchema,
   FailureCode,
+  FreshSpawnSchema,
+  GenerationSchema,
+  GrantIdSchema,
+  LogicalTargetIdSchema,
+  LsnSchema,
   OperationKind,
   OperationSchema,
   type EventId,
@@ -15,11 +27,28 @@ import {
   PayloadEnvelopeSchema,
   PiReconfigureRequestSchema,
   PiReloadableResourceKind,
+  PiSpawnTargetSpecSchema,
+  RuntimeGenerationRefSchema,
+  RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
+  SpawnClaimAcceptedSchema,
+  SpawnExecutionPhase,
+  SpawnGenerationClaimSchema,
+  SpawnPromotionCommittedSchema,
+  SpawnRequestSchema,
+  SpawnTargetSpecSchema,
+  TargetScopeKind,
+  TargetScopeSchema,
+  type Delivery,
+  type SpawnClaimAccepted,
 } from "@patchbay/contracts";
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
-import { PatchbayCoreClient, type SessionIdentity } from "../src/core_client.js";
+import {
+  PatchbayCoreClient,
+  PI_RPC_TARGET_SHAPE,
+  type SessionIdentity,
+} from "../src/core_client.js";
 import type { SessionReportOrder } from "../src/session_report_sequencer.js";
 import type { AdapterDiagnosticInput } from "../src/adapter_diagnostics.js";
 import { DeliveryTranslator, UnsupportedCommandError } from "../src/delivery.js";
@@ -28,7 +57,14 @@ import {
   classifyDeliveryFailure,
   type PreprovisionedSession,
 } from "../src/main.js";
-import type { PiRpcRuntime } from "../src/pi_process.js";
+import type { PiControlHandshake } from "../src/control_handshake.js";
+import {
+  type ManagedPiRuntimePort,
+  type PiHandshakeChallenge,
+  type PiLaunchSpec,
+  type PiRpcRuntime,
+  type ProcessExit,
+} from "../src/pi_process.js";
 import { AgentSessionRuntimeFixture, type PiSession } from "../src/pi_session.js";
 import {
   createOfflineFixtureServices,
@@ -37,6 +73,7 @@ import {
 import { PiRpcTransportError } from "../src/rpc_client.js";
 import { PiReloadAmbiguousError, PiReloadRejectedError } from "../src/reload_controller.js";
 import { SessionRegistry } from "../src/session_registry.js";
+import { PI_SPAWN_TARGET_SCHEMA_REF } from "../src/spawn_supervisor.js";
 
 const encoder = new TextEncoder();
 
@@ -61,7 +98,9 @@ test("DeliveryTranslator maps instruct/cancel and rejects adapter-owned generati
   assert.deepEqual(calls, ["prompt:hello", "cancel"]);
   await assert.rejects(
     translator.deliver(operation(OperationKind.SPAWN), session),
-    UnsupportedCommandError,
+    (error: unknown) =>
+      error instanceof UnsupportedCommandError &&
+      error.message === "Pi spawn requires a managed Delivery.accepted_spawn envelope",
   );
 });
 
@@ -115,9 +154,210 @@ test("DeliveryTranslator preflight defers malformed payload errors to execution"
   }
   assert.throws(
     () => translator.validate(operation(OperationKind.SPAWN)),
-    UnsupportedCommandError,
-    "semantic unsupported decisions still reject before running",
+    /Pi spawn requires a managed Delivery\.accepted_spawn envelope/u,
+    "a bare session-target spawn still rejects before running",
   );
+});
+
+test("production delivery loop routes the exact accepted spawn envelope to the supervisor", { timeout: 15_000 }, async () => {
+  const commandId = "delivery-loop-managed-spawn";
+  const projectContextRef = "delivery-loop-project";
+  const deploymentScope = "delivery-loop-machine";
+  const runtimeSessionId = "delivery-loop-successor";
+  const directory = await mkdtemp(join(process.cwd(), "tmp-delivery-loop-spawn-"));
+  const canonicalDirectory = await realpath(directory);
+  const journalDirectory = join(directory, "journal");
+  const acceptedSpawn = managedAcceptedSpawn({
+    commandId,
+    projectContextRef,
+    logicalTargetId: commandId,
+  });
+  const compatibilityOperation = create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: commandId }),
+    kind: OperationKind.QUERY,
+    targetScope: create(TargetScopeSchema, {
+      kind: TargetScopeKind.ADAPTER,
+      adapterId: create(AdapterIdSchema, { value: "pi" }),
+    }),
+  });
+  const promotedRuntime = create(RuntimeGenerationRefSchema, {
+    logicalTargetId: create(LogicalTargetIdSchema, { value: commandId }),
+    externalRuntime: create(ExternalRuntimeRefSchema, {
+      adapterId: create(AdapterIdSchema, { value: "pi" }),
+      deploymentScope,
+      runtimeSessionId: create(RuntimeSessionIdSchema, { value: runtimeSessionId }),
+      generation: create(GenerationSchema, { value: 1n }),
+    }),
+  });
+  let reportResult!: () => void;
+  const resultReported = new Promise<void>((resolve) => {
+    reportResult = resolve;
+  });
+  const transitions: string[] = [];
+  const runtimePort = new DeliveryLoopRuntimePort(
+    journalDirectory,
+    canonicalDirectory,
+    runtimeSessionId,
+  );
+  const deliveryStream = async function* (signal?: AbortSignal): AsyncGenerator<Delivery> {
+    yield create(DeliverySchema, {
+      // Deliberately non-authoritative compatibility carriage: if the adapter
+      // reconstructs from this bare Operation instead of accepted_spawn, it
+      // routes as a query and the supervisor is never reached.
+      operation: compatibilityOperation,
+      deliveryEventId: testEventId(10n),
+      acceptedSpawn,
+    });
+    await resultReported;
+    yield create(DeliverySchema, {
+      deliveryEventId: testEventId(20n),
+      promotionCommitted: create(SpawnPromotionCommittedSchema, {
+        acceptedClaim: acceptedSpawn,
+        promotedRuntime,
+      }),
+    });
+    await waitForAbort(signal);
+  };
+
+  const originals = {
+    attach: PatchbayCoreClient.prototype.attach,
+    receiveDeliveries: PatchbayCoreClient.prototype.receiveDeliveries,
+    acknowledgeDelivery: PatchbayCoreClient.prototype.acknowledgeDelivery,
+    reportRunning: PatchbayCoreClient.prototype.reportRunning,
+    reportSpawnEvidence: PatchbayCoreClient.prototype.reportSpawnEvidence,
+    reportSession: PatchbayCoreClient.prototype.reportSession,
+    ingestPiProjection: PatchbayCoreClient.prototype.ingestPiProjection,
+    reportSpawnResult: PatchbayCoreClient.prototype.reportSpawnResult,
+    ingestFailure: PatchbayCoreClient.prototype.ingestFailure,
+  };
+  PatchbayCoreClient.prototype.attach = async () => testEventId(1n);
+  PatchbayCoreClient.prototype.receiveDeliveries = (_cursor, signal) => deliveryStream(signal);
+  PatchbayCoreClient.prototype.acknowledgeDelivery = async (candidate) => {
+    assert.equal(candidate.kind, OperationKind.SPAWN);
+    transitions.push("delivered");
+    return testEventId(11n);
+  };
+  PatchbayCoreClient.prototype.reportRunning = async (candidate) => {
+    assert.equal(candidate.kind, OperationKind.SPAWN);
+    transitions.push("running");
+    return testEventId(12n);
+  };
+  PatchbayCoreClient.prototype.reportSpawnEvidence = async (input) => {
+    assert.equal(input.exactClaim.claimOperationId?.value, commandId);
+    transitions.push(`evidence:${input.phase}`);
+    return testEventId(13n);
+  };
+  PatchbayCoreClient.prototype.reportSession = async (
+    identity,
+    activity,
+    connectivity,
+  ) => {
+    assert.equal(identity.runtimeSessionId, runtimeSessionId);
+    transitions.push(`session:${connectivity}:${activity}`);
+    return testEventId(14n);
+  };
+  PatchbayCoreClient.prototype.ingestPiProjection = async (runtime) => {
+    assert.equal(runtime.externalRuntime?.runtimeSessionId?.value, runtimeSessionId);
+    transitions.push("projection-published");
+    return testEventId(15n);
+  };
+  PatchbayCoreClient.prototype.reportSpawnResult = async (candidate) => {
+    assert.equal(candidate.commandId?.value, commandId);
+    transitions.push("result-reported");
+    reportResult();
+    return testEventId(16n);
+  };
+  PatchbayCoreClient.prototype.ingestFailure = async (_candidate, failureCode) => {
+    transitions.push(`failure:${failureCode}`);
+    return testEventId(17n);
+  };
+
+  const adapter = new AdapterProcess({
+    coreAddress: "http://127.0.0.1:1",
+    adapterId: "pi",
+    authorityDomainId: "authority-test",
+    attachmentEvidence: "adapter-test-secret",
+    adapterGeneration: 1,
+    sessions: [],
+    managedTargets: [{
+      projectContextRef,
+      deploymentTarget: {
+        credentialPolicy: "credential-free",
+        adapterId: "pi",
+        deploymentScope,
+        logicalTargetId: commandId,
+      },
+      cwd: canonicalDirectory,
+      sessionRoot: canonicalDirectory,
+      executable: await realpath(process.execPath),
+      cliPath: await realpath(process.execPath),
+      controlExtensionPath: await realpath(process.execPath),
+    }],
+    spawnJournalDirectory: journalDirectory,
+    cursorStoreDirectory: join(directory, "cursor"),
+    managedRuntimePort: runtimePort,
+  });
+  const controller = new AbortController();
+  let run: Promise<void> | undefined;
+  try {
+    await adapter.start();
+    run = adapter.run(controller.signal);
+    void run.catch(() => undefined);
+    await waitUntil(
+      () => transitions.includes(
+        `session:${SessionConnectivityState.LIVE}:${SessionActivityState.IDLE}`,
+      ),
+      5_000,
+    );
+
+    assert.equal(runtimePort.launchCalls, 1, "the production loop engages the supervisor once");
+    assert.equal(transitions[0], "delivered");
+    assert.equal(transitions[1], "running");
+    assert.ok(transitions.includes(`evidence:${SpawnExecutionPhase.LAUNCH_ATTEMPTED}`));
+    assert.ok(transitions.includes(`evidence:${SpawnExecutionPhase.EXTERNAL_IDENTITY_KNOWN}`));
+    assert.ok(transitions.includes(`evidence:${SpawnExecutionPhase.HANDSHAKE_RECONCILING}`));
+    assert.ok(transitions.includes(`evidence:${SpawnExecutionPhase.SUCCESS_EVIDENCE_REPORTED}`));
+    assert.ok(transitions.includes("projection-published"));
+    assert.equal(transitions.some((transition) => transition.startsWith("failure:")), false);
+
+    const journalFiles = (await readdir(journalDirectory)).filter((name) => name.endsWith(".json"));
+    assert.equal(journalFiles.length, 1);
+    const journal = JSON.parse(
+      await readFile(join(journalDirectory, journalFiles[0]!), "utf8"),
+    ) as {
+      claim?: { claimOperationId?: string; claimedGeneration?: string };
+      phases?: readonly { phase?: number }[];
+      promotionObserved?: boolean;
+      publicationCommitted?: boolean;
+    };
+    assert.equal(journal.claim?.claimOperationId, commandId);
+    assert.equal(journal.claim?.claimedGeneration, "1");
+    assert.equal(journal.promotionObserved, true);
+    assert.equal(journal.publicationCommitted, true);
+    assert.ok(
+      journal.phases?.some((phase) => phase.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED),
+    );
+
+    controller.abort();
+    await run;
+    run = undefined;
+    await adapter.dispose();
+    assert.equal(runtimePort.terminateCalls, 1, "the injected child is reaped after loop shutdown");
+  } finally {
+    controller.abort();
+    await run?.catch(() => undefined);
+    await adapter.dispose().catch(() => undefined);
+    PatchbayCoreClient.prototype.attach = originals.attach;
+    PatchbayCoreClient.prototype.receiveDeliveries = originals.receiveDeliveries;
+    PatchbayCoreClient.prototype.acknowledgeDelivery = originals.acknowledgeDelivery;
+    PatchbayCoreClient.prototype.reportRunning = originals.reportRunning;
+    PatchbayCoreClient.prototype.reportSpawnEvidence = originals.reportSpawnEvidence;
+    PatchbayCoreClient.prototype.reportSession = originals.reportSession;
+    PatchbayCoreClient.prototype.ingestPiProjection = originals.ingestPiProjection;
+    PatchbayCoreClient.prototype.reportSpawnResult = originals.reportSpawnResult;
+    PatchbayCoreClient.prototype.ingestFailure = originals.ingestFailure;
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("DeliveryTranslator resolves committed approval decisions and rejects reserved/question responses", async () => {
@@ -874,6 +1114,182 @@ test("SessionRegistry owns complete runtime entries and observation wiring", asy
   assert.equal(persistedEntryUnsubscribed, true);
 });
 
+class DeliveryLoopRpc {
+  readonly #events = new Set<(event: Record<string, unknown>) => void>();
+  readonly #failures = new Set<(error: PiRpcTransportError) => void>();
+  readonly pendingRequestCount = 0;
+
+  constructor(
+    readonly sessionId: string,
+    readonly sessionFile: string,
+  ) {}
+
+  async request<T>(command: Record<string, unknown> & { readonly type: string }): Promise<T> {
+    switch (command.type) {
+      case "get_state":
+        return {
+          sessionId: this.sessionId,
+          sessionFile: this.sessionFile,
+          isStreaming: false,
+          isCompacting: false,
+          pendingMessageCount: 0,
+          model: null,
+          thinkingLevel: "off",
+        } as T;
+      case "get_entries":
+        return { entries: [], leafId: null } as T;
+      default:
+        return {} as T;
+    }
+  }
+
+  onEvent(listener: (event: Record<string, unknown>) => void): () => void {
+    this.#events.add(listener);
+    return () => this.#events.delete(listener);
+  }
+
+  onFailure(listener: (error: PiRpcTransportError) => void): () => void {
+    this.#failures.add(listener);
+    return () => this.#failures.delete(listener);
+  }
+
+  close(): void {
+    this.#events.clear();
+    this.#failures.clear();
+  }
+}
+
+class DeliveryLoopRuntimePort implements ManagedPiRuntimePort {
+  launchCalls = 0;
+  terminateCalls = 0;
+
+  constructor(
+    readonly journalDirectory: string,
+    readonly cwd: string,
+    readonly runtimeSessionId: string,
+  ) {}
+
+  async launch(_spec: PiLaunchSpec): Promise<PiRpcRuntime> {
+    const journalFiles = (await readdir(this.journalDirectory))
+      .filter((name) => name.endsWith(".json"));
+    assert.equal(journalFiles.length, 1, "the effect journal exists before process launch");
+    const journal = JSON.parse(
+      await readFile(join(this.journalDirectory, journalFiles[0]!), "utf8"),
+    ) as { phases?: readonly { phase?: number }[] };
+    assert.equal(
+      journal.phases?.at(-1)?.phase,
+      SpawnExecutionPhase.LAUNCH_ATTEMPTED,
+      "launch_attempted is durable before the external effect",
+    );
+    this.launchCalls += 1;
+    const rpc = new DeliveryLoopRpc(
+      this.runtimeSessionId,
+      join(this.cwd, "memory-only-session.jsonl"),
+    );
+    return {
+      pid: 20_001,
+      processToken: "delivery-loop-process",
+      rpc: rpc as unknown as PiRpcRuntime["rpc"],
+      exit: new Promise<ProcessExit>(() => undefined),
+      child: {} as PiRpcRuntime["child"],
+      markExpectedTermination() {},
+      onTransportFailure(listener) {
+        return rpc.onFailure(listener);
+      },
+    };
+  }
+
+  async handshake(
+    runtime: PiRpcRuntime,
+    _challenge: PiHandshakeChallenge,
+  ): Promise<PiControlHandshake> {
+    const rpc = runtime.rpc as unknown as DeliveryLoopRpc;
+    return {
+      challenge: "c".repeat(43),
+      launchNonce: "n".repeat(43),
+      extensionEpoch: "e".repeat(43),
+      cwd: this.cwd,
+      sessionId: rpc.sessionId,
+      sessionFile: rpc.sessionFile,
+      markerEntryId: "delivery-loop-marker",
+    };
+  }
+
+  async terminate(runtime: PiRpcRuntime): Promise<ProcessExit> {
+    this.terminateCalls += 1;
+    runtime.rpc.close();
+    return {
+      pid: runtime.pid,
+      processToken: runtime.processToken,
+      code: 0,
+      signal: null,
+      expected: true,
+      terminatedBySupervisor: true,
+    };
+  }
+}
+
+function managedAcceptedSpawn(options: {
+  readonly commandId: string;
+  readonly projectContextRef: string;
+  readonly logicalTargetId: string;
+}): SpawnClaimAccepted {
+  const piTarget = create(PiSpawnTargetSpecSchema, {
+    projectContextRef: options.projectContextRef,
+  });
+  const request = create(SpawnRequestSchema, {
+    intent: { case: "fresh", value: create(FreshSpawnSchema) },
+    targetSpec: create(SpawnTargetSpecSchema, {
+      shape: PI_RPC_TARGET_SHAPE,
+      adapterPayload: create(PayloadEnvelopeSchema, {
+        contentType: PayloadContentType.PROTOBUF,
+        schemaRef: PI_SPAWN_TARGET_SCHEMA_REF,
+        payload: toBinary(PiSpawnTargetSpecSchema, piTarget),
+      }),
+    }),
+  });
+  const operation = create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: options.commandId }),
+    authorityDomainId: create(AuthorityDomainIdSchema, { value: "authority-test" }),
+    kind: OperationKind.SPAWN,
+    targetScope: create(TargetScopeSchema, {
+      kind: TargetScopeKind.ADAPTER,
+      adapterId: create(AdapterIdSchema, { value: "pi" }),
+    }),
+    payload: create(PayloadEnvelopeSchema, {
+      contentType: PayloadContentType.PROTOBUF,
+      schemaRef: "patchbay.SpawnRequest",
+      payload: toBinary(SpawnRequestSchema, request),
+    }),
+  });
+  return create(SpawnClaimAcceptedSchema, {
+    acceptedOperation: create(AcceptedOperationSchema, {
+      operation,
+      authorizingGrantId: create(GrantIdSchema, { value: "spawn-grant" }),
+    }),
+    claim: create(SpawnGenerationClaimSchema, {
+      authorityDomainId: create(AuthorityDomainIdSchema, { value: "authority-test" }),
+      claimOperationId: create(CommandIdSchema, { value: options.commandId }),
+      logicalTargetId: create(LogicalTargetIdSchema, { value: options.logicalTargetId }),
+      claimedGeneration: create(GenerationSchema, { value: 1n }),
+    }),
+  });
+}
+
+function testEventId(lsn: bigint): EventId {
+  return create(EventIdSchema, {
+    authorityDomainId: create(AuthorityDomainIdSchema, { value: "authority-test" }),
+    lsn: create(LsnSchema, { value: lsn }),
+  });
+}
+
+async function waitForAbort(signal?: AbortSignal): Promise<void> {
+  if (!signal || signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
+}
+
 function operation(kind: OperationKind, payload = ""): Operation {
   return create(OperationSchema, {
     kind,
@@ -897,8 +1313,8 @@ function approvalOperation(decision: ApprovalDecision): Operation {
   });
 }
 
-async function waitUntil(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 2_000;
+async function waitUntil(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error("condition was not reached");
     await new Promise<void>((resolve) => setImmediate(resolve));

@@ -549,8 +549,13 @@ export class AdapterProcess {
           }
           continue;
         }
-        const operation = requiredOperation(delivery);
-        const started = await this.#beginDelivery(delivery, operation);
+        const acceptedSpawn = delivery.acceptedSpawn === undefined
+          ? undefined
+          : requiredAcceptedSpawn(delivery);
+        const operation = acceptedSpawn
+          ? acceptedSpawn.acceptedOperation!.operation!
+          : requiredOperation(delivery);
+        const started = await this.#beginDelivery(delivery, operation, acceptedSpawn);
 
         // Instruction completion remains in flight so the live subscription
         // can receive cancellation. Spawn remains in flight so this same
@@ -574,7 +579,11 @@ export class AdapterProcess {
     }
   }
 
-  async #beginDelivery(delivery: Delivery, operation: Operation): Promise<StartedDelivery> {
+  async #beginDelivery(
+    delivery: Delivery,
+    operation: Operation,
+    acceptedSpawn?: SpawnClaimAccepted,
+  ): Promise<StartedDelivery> {
     const commandId = operation.commandId?.value;
     const operationKind = operation.kind;
     const target = operation.targetScope;
@@ -600,7 +609,7 @@ export class AdapterProcess {
     });
 
     if (operation.kind === OperationKind.SPAWN) {
-      const acceptedSpawn = requiredAcceptedSpawn(delivery, operation);
+      const exactAcceptedSpawn = acceptedSpawn ?? requiredAcceptedSpawn(delivery);
       await this.#core.reportRunning(operation);
       this.#record({
         event: "delivery.running",
@@ -609,7 +618,7 @@ export class AdapterProcess {
         operationKind,
       });
       return {
-        completion: this.#spawnSupervisor.handleAcceptedSpawn(acceptedSpawn)
+        completion: this.#spawnSupervisor.handleAcceptedSpawn(exactAcceptedSpawn)
           .then(() => {
             this.#record({
               event: "delivery.completed",
@@ -1164,12 +1173,15 @@ function requiredOperation(delivery: Delivery): Operation {
   return delivery.operation;
 }
 
-function requiredAcceptedSpawn(delivery: Delivery, operation: Operation): SpawnClaimAccepted {
+function requiredAcceptedSpawn(delivery: Delivery): SpawnClaimAccepted {
   const accepted = delivery.acceptedSpawn;
+  const operation = accepted?.acceptedOperation?.operation;
+  const commandId = operation?.commandId?.value;
   if (
-    !accepted?.acceptedOperation?.operation ||
-    accepted.acceptedOperation.operation.commandId?.value !== operation.commandId?.value ||
-    accepted.claim?.claimOperationId?.value !== operation.commandId?.value
+    !operation ||
+    operation.kind !== OperationKind.SPAWN ||
+    !commandId ||
+    accepted.claim?.claimOperationId?.value !== commandId
   ) {
     throw new Error("managed spawn delivery is missing its exact accepted envelope");
   }

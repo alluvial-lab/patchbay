@@ -62,7 +62,9 @@ export class DeliveryTranslator {
           throw new UnsupportedCommandError(`approval decision ${decision} is not deliverable in v0.1.0`);
         }
         case OperationKind.SPAWN:
-          throw new UnsupportedCommandError("Pi spawn is unsupported in v0.1.0");
+          throw new UnsupportedCommandError(
+            "Pi spawn requires a managed Delivery.accepted_spawn envelope",
+          );
         case OperationKind.ELICITATION_RESPONSE:
           throw new UnsupportedCommandError("question Elicitation delivery is an explicit minimal-slice follow-on");
         case OperationKind.ATTACH:
@@ -95,7 +97,9 @@ export class DeliveryTranslator {
       case OperationKind.SESSION_MANAGEMENT:
         return this.#manageSession(operation, session);
       case OperationKind.SPAWN:
-        throw new UnsupportedCommandError("Pi spawn is unsupported in v0.1.0");
+        throw new UnsupportedCommandError(
+          "Pi spawn requires a managed Delivery.accepted_spawn envelope",
+        );
       case OperationKind.APPROVAL_RESPONSE: {
         const payload = approvalPayload(operation);
         if (payload.decision === ApprovalDecision.APPROVED) {
