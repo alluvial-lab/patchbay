@@ -4,8 +4,12 @@ import { lstat, open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, normalize, relative, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
+  ContinuationContextStatus,
+  ExternalEffectDisposition,
+  FailureCode,
   PiReloadableResourceKind,
   PiSessionIntegrityFailure,
+  SpawnExecutionPhase,
 } from "@patchbay/contracts";
 import {
   PATCHBAY_CONTROL_CHALLENGE_BYTES,
@@ -88,6 +92,54 @@ export interface PiResumedSessionVerificationOptions extends PiSessionSealVerifi
   readonly maxPostSealEntries?: number;
 }
 
+export type PiContinuationMode = "require_resume" | "allow_new_context";
+
+export interface PiContinuationAdmissionOptions extends PiSessionFileValidationOptions {
+  /** Evaluated after the caller's bounded quiescence step and before prior termination. */
+  readonly mode: PiContinuationMode;
+}
+
+export interface PiRequireResumeLaunchPlan {
+  readonly mode: "require_resume";
+  readonly resumeSelector: string;
+  readonly seal: MaterializedSessionSeal;
+  readonly onlyAllowedContextStatus: ContinuationContextStatus.RESUMED;
+}
+
+export interface PiAllowNewContextLaunchPlan {
+  readonly mode: "allow_new_context";
+  readonly resumeSelector: null;
+  readonly onlyAllowedContextStatus: ContinuationContextStatus.NEW_CONTEXT;
+}
+
+export type PiContinuationLaunchPlan =
+  | PiRequireResumeLaunchPlan
+  | PiAllowNewContextLaunchPlan;
+
+export interface PiPreLaunchNoSuccessorEffectEvidence {
+  readonly phase: SpawnExecutionPhase.QUIESCING_PRIOR;
+  readonly externalEffectDisposition: ExternalEffectDisposition.PROVED_NONE;
+  readonly failureCode: FailureCode.EXECUTION_FAILED;
+  readonly noExternalEffectProof: "exact_supervisor_pre_launch_failure";
+  readonly successorLaunchEffect: "not_attempted";
+}
+
+export type PiContinuationAdmissionResult<T> =
+  | {
+      readonly kind: "refused";
+      readonly mode: "require_resume";
+      readonly materialization: "memory_only" | "invalid";
+      readonly integrityFailure?: PiSessionIntegrityFailure;
+      readonly evidence: PiPreLaunchNoSuccessorEffectEvidence;
+    }
+  | {
+      readonly kind: "launch_admitted";
+      readonly plan: PiContinuationLaunchPlan;
+      readonly launchResult: T;
+    };
+
+export type PiContinuationLaunch<T> = (plan: PiContinuationLaunchPlan) => Promise<T> | T;
+
 type StrictEntry = Readonly<Record<string, unknown>> & {
   readonly type: string;
   readonly id: string;
@@ -114,6 +166,17 @@ interface ValidatedSession {
   readonly seal: MaterializedSessionSeal;
 }
 
+interface ValidatedReloadRequest {
+  readonly commandId: string;
+  readonly nonce: string;
+  readonly priorExtensionEpoch: string;
+}
+
+interface ValidatedReloadCompletion extends ValidatedReloadRequest {
+  readonly requestEntryId: string;
+  readonly extensionEpoch: string;
+}
+
 class IntegrityFault extends Error {
   readonly failure: PiSessionIntegrityFailure;
 
@@ -137,6 +200,47 @@ export async function classifyPiSessionMaterialization(
   } catch (error) {
     return invalidResult(error);
   }
+}
+
+export async function admitPiContinuationBeforeLaunch<T>(
+  options: PiContinuationAdmissionOptions,
+  launch: PiContinuationLaunch<T>,
+): Promise<PiContinuationAdmissionResult<T>> {
+  if (options.mode === "allow_new_context") {
+    const plan: PiAllowNewContextLaunchPlan = {
+      mode: "allow_new_context",
+      resumeSelector: null,
+      onlyAllowedContextStatus: ContinuationContextStatus.NEW_CONTEXT,
+    };
+    return { kind: "launch_admitted", plan, launchResult: await launch(plan) };
+  }
+
+  const materialization = await classifyPiSessionMaterialization(options);
+  if (materialization.kind !== "materialized") {
+    return {
+      kind: "refused",
+      mode: "require_resume",
+      materialization: materialization.kind,
+      ...(materialization.kind === "invalid"
+        ? { integrityFailure: materialization.failure }
+        : {}),
+      evidence: {
+        phase: SpawnExecutionPhase.QUIESCING_PRIOR,
+        externalEffectDisposition: ExternalEffectDisposition.PROVED_NONE,
+        failureCode: FailureCode.EXECUTION_FAILED,
+        noExternalEffectProof: "exact_supervisor_pre_launch_failure",
+        successorLaunchEffect: "not_attempted",
+      },
+    };
+  }
+
+  const plan: PiRequireResumeLaunchPlan = {
+    mode: "require_resume",
+    resumeSelector: materialization.seal.canonicalPath,
+    seal: materialization.seal,
+    onlyAllowedContextStatus: ContinuationContextStatus.RESUMED,
+  };
+  return { kind: "launch_admitted", plan, launchResult: await launch(plan) };
 }
 
 export async function verifyMaterializedSessionSeal(
@@ -311,7 +415,9 @@ function validateEntry(value: Readonly<Record<string, unknown>>): StrictEntry {
       if (!isBoundedId(value.firstKeptEntryId) || !isNonnegativeSafeInteger(value.tokensBefore)) {
         throw new IntegrityFault(PiSessionIntegrityFailure.ENTRY_SHAPE_INVALID);
       }
-      requireOptionalRecord(value.usage);
+      if (value.usage !== undefined && !isUsage(value.usage)) {
+        throw new IntegrityFault(PiSessionIntegrityFailure.ENTRY_SHAPE_INVALID);
+      }
       requireOptionalBoolean(value.fromHook);
       break;
     case "branch_summary":
@@ -330,12 +436,15 @@ function validateEntry(value: Readonly<Record<string, unknown>>): StrictEntry {
         throw new IntegrityFault(PiSessionIntegrityFailure.ENTRY_SHAPE_INVALID);
       }
       requireBoundedText(value.summary, MAX_TEXT_BYTES);
-      requireOptionalRecord(value.usage);
+      if (value.usage !== undefined && !isUsage(value.usage)) {
+        throw new IntegrityFault(PiSessionIntegrityFailure.ENTRY_SHAPE_INVALID);
+      }
       requireOptionalBoolean(value.fromHook);
       break;
     case "custom":
       requireAllowedKeys(value, ["type", "id", "parentId", "timestamp", "customType", "data"]);
       requireBoundedText(value.customType, MAX_TYPE_BYTES);
+      validateControlCustomData(value.customType, value.data);
       break;
     case "custom_message":
       requireAllowedKeys(value, [
@@ -374,6 +483,8 @@ function validateEntry(value: Readonly<Record<string, unknown>>): StrictEntry {
 function validateTreeAndReferences(entries: readonly StrictEntry[]): string {
   const seen = new Set<string>();
   const toolCalls = new Set<string>();
+  const reloadRequests = new Map<string, ValidatedReloadRequest>();
+  const completedReloadRequests = new Set<string>();
   let rootId: string | undefined;
   for (const entry of entries) {
     if (seen.has(entry.id)) {
@@ -388,8 +499,15 @@ function validateTreeAndReferences(entries: readonly StrictEntry[]): string {
       }
       rootId = entry.id;
     }
-    validateSecondaryReferences(entry, seen, toolCalls);
+    validateSecondaryReferences(
+      entry,
+      seen,
+      toolCalls,
+      reloadRequests,
+      completedReloadRequests,
+    );
     collectToolCalls(entry, toolCalls);
+    collectReloadRequest(entry, reloadRequests);
     seen.add(entry.id);
   }
   if (rootId === undefined) {
@@ -402,6 +520,8 @@ function validateSecondaryReferences(
   entry: StrictEntry,
   earlierEntryIds: ReadonlySet<string>,
   toolCalls: ReadonlySet<string>,
+  reloadRequests: ReadonlyMap<string, ValidatedReloadRequest>,
+  completedReloadRequests: Set<string>,
 ): void {
   const referencedEntryId =
     entry.type === "label"
@@ -421,6 +541,40 @@ function validateSecondaryReferences(
       throw new IntegrityFault(PiSessionIntegrityFailure.REFERENCE_INVALID);
     }
   }
+  const completion = controlReloadCompletion(entry);
+  if (completion) {
+    const request = reloadRequests.get(completion.requestEntryId);
+    if (
+      !request ||
+      completedReloadRequests.has(completion.requestEntryId) ||
+      completion.commandId !== request.commandId ||
+      completion.nonce !== request.nonce ||
+      completion.priorExtensionEpoch !== request.priorExtensionEpoch
+    ) {
+      throw new IntegrityFault(PiSessionIntegrityFailure.REFERENCE_INVALID);
+    }
+    completedReloadRequests.add(completion.requestEntryId);
+  }
+}
+
+function collectReloadRequest(
+  entry: StrictEntry,
+  reloadRequests: Map<string, ValidatedReloadRequest>,
+): void {
+  if (
+    entry.type === "custom" &&
+    entry.customType === PATCHBAY_CONTROL_RELOAD_REQUEST_CUSTOM_TYPE
+  ) {
+    const request = parseReloadRequestData(entry.data);
+    if (request) reloadRequests.set(entry.id, request);
+  }
+}
+
+function controlReloadCompletion(entry: StrictEntry): ValidatedReloadCompletion | undefined {
+  return entry.type === "custom" &&
+    entry.customType === PATCHBAY_CONTROL_RELOAD_COMPLETION_CUSTOM_TYPE
+    ? parseReloadCompletionData(entry.data)
+    : undefined;
 }
 
 function collectToolCalls(entry: StrictEntry, toolCalls: Set<string>): void {
@@ -444,22 +598,56 @@ function validateMessage(value: unknown): void {
   }
   switch (value.role) {
     case "user":
+      requireAllowedKeys(value, ["role", "content", "timestamp"]);
       validateTextOrMediaContent(value.content, true);
       return;
     case "assistant":
+      requireAllowedKeys(value, [
+        "role",
+        "content",
+        "api",
+        "provider",
+        "model",
+        "responseModel",
+        "responseId",
+        "diagnostics",
+        "usage",
+        "stopReason",
+        "deferred",
+        "errorMessage",
+        "rawStopReason",
+        "timestamp",
+      ]);
       if (
         !Array.isArray(value.content) ||
         !value.content.every(isAssistantContentBlock) ||
         !isNonemptyString(value.api) ||
         !isNonemptyString(value.provider) ||
         !isNonemptyString(value.model) ||
+        !isOptionalString(value.responseModel) ||
+        !isOptionalString(value.responseId) ||
+        !isOptionalAssistantDiagnostics(value.diagnostics) ||
         !isUsage(value.usage) ||
-        !isTerminalStopReason(value.stopReason)
+        !isTerminalStopReason(value.stopReason) ||
+        !isOptionalDeferredHandle(value.deferred) ||
+        !isOptionalString(value.errorMessage) ||
+        !isOptionalString(value.rawStopReason)
       ) {
         throw new IntegrityFault(PiSessionIntegrityFailure.ENTRY_SHAPE_INVALID);
       }
       return;
     case "toolResult":
+      requireAllowedKeys(value, [
+        "role",
+        "toolCallId",
+        "toolName",
+        "content",
+        "details",
+        "usage",
+        "addedToolNames",
+        "isError",
+        "timestamp",
+      ]);
       if (
         !isBoundedId(value.toolCallId) ||
         !isNonemptyString(value.toolName) ||
@@ -475,31 +663,51 @@ function validateMessage(value: unknown): void {
       }
       return;
     case "bashExecution":
+      requireAllowedKeys(value, [
+        "role",
+        "command",
+        "output",
+        "exitCode",
+        "cancelled",
+        "truncated",
+        "fullOutputPath",
+        "timestamp",
+        "excludeFromContext",
+      ]);
       if (
         typeof value.command !== "string" ||
         typeof value.output !== "string" ||
         !(value.exitCode === undefined || Number.isSafeInteger(value.exitCode)) ||
         typeof value.cancelled !== "boolean" ||
-        typeof value.truncated !== "boolean"
+        typeof value.truncated !== "boolean" ||
+        !isOptionalString(value.fullOutputPath) ||
+        !isOptionalBoolean(value.excludeFromContext)
       ) {
         throw new IntegrityFault(PiSessionIntegrityFailure.ENTRY_SHAPE_INVALID);
       }
       return;
     case "custom":
-      if (
-        typeof value.customType !== "string" ||
-        typeof value.display !== "boolean"
-      ) {
+      requireAllowedKeys(value, [
+        "role",
+        "customType",
+        "content",
+        "display",
+        "details",
+        "timestamp",
+      ]);
+      if (typeof value.customType !== "string" || typeof value.display !== "boolean") {
         throw new IntegrityFault(PiSessionIntegrityFailure.ENTRY_SHAPE_INVALID);
       }
       validateTextOrMediaContent(value.content, true);
       return;
     case "branchSummary":
+      requireAllowedKeys(value, ["role", "summary", "fromId", "timestamp"]);
       if (typeof value.summary !== "string" || !isBoundedId(value.fromId)) {
         throw new IntegrityFault(PiSessionIntegrityFailure.ENTRY_SHAPE_INVALID);
       }
       return;
     case "compactionSummary":
+      requireAllowedKeys(value, ["role", "summary", "tokensBefore", "timestamp"]);
       if (typeof value.summary !== "string" || !isNonnegativeSafeInteger(value.tokensBefore)) {
         throw new IntegrityFault(PiSessionIntegrityFailure.ENTRY_SHAPE_INVALID);
       }
@@ -518,9 +726,16 @@ function validateTextOrMediaContent(value: unknown, allowString: boolean): void 
 
 function isTextOrImageBlock(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (value.type === "text") return typeof value.text === "string";
+  if (value.type === "text") {
+    return (
+      hasOnlyKeys(value, ["type", "text", "textSignature"]) &&
+      typeof value.text === "string" &&
+      isOptionalString(value.textSignature)
+    );
+  }
   return (
     value.type === "image" &&
+    hasExactKeys(value, ["type", "data", "mimeType"]) &&
     typeof value.data === "string" &&
     typeof value.mimeType === "string"
   );
@@ -528,18 +743,43 @@ function isTextOrImageBlock(value: unknown): boolean {
 
 function isAssistantContentBlock(value: unknown): boolean {
   if (!isRecord(value)) return false;
-  if (value.type === "text") return typeof value.text === "string";
-  if (value.type === "thinking") return typeof value.thinking === "string";
+  if (value.type === "text") return isTextOrImageBlock(value);
+  if (value.type === "thinking") {
+    return (
+      hasOnlyKeys(value, ["type", "thinking", "thinkingSignature", "redacted"]) &&
+      typeof value.thinking === "string" &&
+      isOptionalString(value.thinkingSignature) &&
+      isOptionalBoolean(value.redacted)
+    );
+  }
   return (
     value.type === "toolCall" &&
+    hasOnlyKeys(value, ["type", "id", "name", "arguments", "thoughtSignature"]) &&
     isBoundedId(value.id) &&
     isNonemptyString(value.name) &&
-    isRecord(value.arguments)
+    isRecord(value.arguments) &&
+    isOptionalString(value.thoughtSignature)
   );
 }
 
 function isUsage(value: unknown): boolean {
-  if (!isRecord(value) || !isRecord(value.cost)) return false;
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, [
+      "input",
+      "output",
+      "cacheRead",
+      "cacheWrite",
+      "cacheWrite1h",
+      "reasoning",
+      "totalTokens",
+      "cost",
+    ]) ||
+    !isRecord(value.cost) ||
+    !hasExactKeys(value.cost, ["input", "output", "cacheRead", "cacheWrite", "total"])
+  ) {
+    return false;
+  }
   const cost = value.cost;
   return (
     ["input", "output", "cacheRead", "cacheWrite", "totalTokens"].every((key) =>
@@ -551,6 +791,56 @@ function isUsage(value: unknown): boolean {
     (value.cacheWrite1h === undefined || isNonnegativeFiniteNumber(value.cacheWrite1h)) &&
     (value.reasoning === undefined || isNonnegativeFiniteNumber(value.reasoning))
   );
+}
+
+function isOptionalAssistantDiagnostics(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.every(
+        (diagnostic) =>
+          isRecord(diagnostic) &&
+          hasOnlyKeys(diagnostic, ["type", "timestamp", "error", "details"]) &&
+          typeof diagnostic.type === "string" &&
+          isTimestampNumber(diagnostic.timestamp) &&
+          isOptionalDiagnosticError(diagnostic.error) &&
+          (diagnostic.details === undefined || isRecord(diagnostic.details)),
+      ))
+  );
+}
+
+function isOptionalDiagnosticError(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, ["name", "message", "stack", "code"]) &&
+    isOptionalString(value.name) &&
+    typeof value.message === "string" &&
+    isOptionalString(value.stack) &&
+    (value.code === undefined || typeof value.code === "string" || isFiniteNumber(value.code))
+  );
+}
+
+function isOptionalDeferredHandle(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, ["provider", "modelId", "api", "id", "expiresAt", "pollAfterMs", "data"]) &&
+    isNonemptyString(value.provider) &&
+    isNonemptyString(value.modelId) &&
+    isNonemptyString(value.api) &&
+    isNonemptyString(value.id) &&
+    (value.expiresAt === undefined || isFiniteNumber(value.expiresAt)) &&
+    (value.pollAfterMs === undefined || isFiniteNumber(value.pollAfterMs)) &&
+    (value.data === undefined || isJsonValue(value.data))
+  );
+}
+
+function isJsonValue(value: unknown): boolean {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return isRecord(value) && Object.values(value).every(isJsonValue);
 }
 
 function isTerminalStopReason(value: unknown): boolean {
@@ -774,6 +1064,86 @@ function requireSealedPrefix(
   }
 }
 
+function validateControlCustomData(customType: string, data: unknown): void {
+  const valid =
+    customType === PATCHBAY_CONTROL_HANDSHAKE_CUSTOM_TYPE
+      ? isHandshakeData(data)
+      : customType === PATCHBAY_CONTROL_RELOAD_REQUEST_CUSTOM_TYPE
+        ? parseReloadRequestData(data) !== undefined
+        : customType === PATCHBAY_CONTROL_RELOAD_COMPLETION_CUSTOM_TYPE
+          ? parseReloadCompletionData(data) !== undefined
+          : true;
+  if (!valid) {
+    throw new IntegrityFault(PiSessionIntegrityFailure.ENTRY_SHAPE_INVALID);
+  }
+}
+
+function isHandshakeData(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      "challenge",
+      "launchNonce",
+      "extensionEpoch",
+      "cwd",
+      "sessionId",
+      "sessionFile",
+    ]) &&
+    isExactBase64Url(value.challenge, CHALLENGE_LENGTH) &&
+    isExactBase64Url(value.launchNonce, CHALLENGE_LENGTH) &&
+    isExactBase64Url(value.extensionEpoch, EPOCH_LENGTH) &&
+    isCanonicalAbsolutePath(value.cwd) &&
+    isBoundedId(value.sessionId) &&
+    isCanonicalAbsolutePath(value.sessionFile)
+  );
+}
+
+function parseReloadRequestData(value: unknown): ValidatedReloadRequest | undefined {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["commandId", "nonce", "priorExtensionEpoch", "resources"]) ||
+    !isBoundedId(value.commandId) ||
+    !isExactBase64Url(value.nonce, CHALLENGE_LENGTH) ||
+    !isExactBase64Url(value.priorExtensionEpoch, EPOCH_LENGTH) ||
+    !isAdmittedReloadResources(value.resources)
+  ) {
+    return undefined;
+  }
+  return {
+    commandId: value.commandId,
+    nonce: value.nonce,
+    priorExtensionEpoch: value.priorExtensionEpoch,
+  };
+}
+
+function parseReloadCompletionData(value: unknown): ValidatedReloadCompletion | undefined {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "commandId",
+      "nonce",
+      "requestEntryId",
+      "priorExtensionEpoch",
+      "extensionEpoch",
+    ]) ||
+    !isBoundedId(value.commandId) ||
+    !isExactBase64Url(value.nonce, CHALLENGE_LENGTH) ||
+    !isBoundedId(value.requestEntryId) ||
+    !isExactBase64Url(value.priorExtensionEpoch, EPOCH_LENGTH) ||
+    !isExactBase64Url(value.extensionEpoch, EPOCH_LENGTH) ||
+    value.extensionEpoch === value.priorExtensionEpoch
+  ) {
+    return undefined;
+  }
+  return {
+    commandId: value.commandId,
+    nonce: value.nonce,
+    requestEntryId: value.requestEntryId,
+    priorExtensionEpoch: value.priorExtensionEpoch,
+    extensionEpoch: value.extensionEpoch,
+  };
+}
+
 function requireCurrentHandshakeMarker(
   handshake: PiControlHandshake,
   actual: ValidatedSession,
@@ -816,46 +1186,11 @@ function isAllowedPostSealEntry(entry: StrictEntry): boolean {
   if (entry.type !== "custom" || !isRecord(entry.data)) return false;
   switch (entry.customType) {
     case PATCHBAY_CONTROL_HANDSHAKE_CUSTOM_TYPE:
-      return (
-        hasExactKeys(entry.data, [
-          "challenge",
-          "launchNonce",
-          "extensionEpoch",
-          "cwd",
-          "sessionId",
-          "sessionFile",
-        ]) &&
-        isExactBase64Url(entry.data.challenge, CHALLENGE_LENGTH) &&
-        isExactBase64Url(entry.data.launchNonce, CHALLENGE_LENGTH) &&
-        isExactBase64Url(entry.data.extensionEpoch, EPOCH_LENGTH) &&
-        isCanonicalAbsolutePath(entry.data.cwd) &&
-        isBoundedId(entry.data.sessionId) &&
-        isCanonicalAbsolutePath(entry.data.sessionFile)
-      );
+      return isHandshakeData(entry.data);
     case PATCHBAY_CONTROL_RELOAD_REQUEST_CUSTOM_TYPE:
-      return (
-        hasExactKeys(entry.data, ["commandId", "nonce", "priorExtensionEpoch", "resources"]) &&
-        isBoundedId(entry.data.commandId) &&
-        isExactBase64Url(entry.data.nonce, CHALLENGE_LENGTH) &&
-        isExactBase64Url(entry.data.priorExtensionEpoch, EPOCH_LENGTH) &&
-        isAdmittedReloadResources(entry.data.resources)
-      );
+      return parseReloadRequestData(entry.data) !== undefined;
     case PATCHBAY_CONTROL_RELOAD_COMPLETION_CUSTOM_TYPE:
-      return (
-        hasExactKeys(entry.data, [
-          "commandId",
-          "nonce",
-          "requestEntryId",
-          "priorExtensionEpoch",
-          "extensionEpoch",
-        ]) &&
-        isBoundedId(entry.data.commandId) &&
-        isExactBase64Url(entry.data.nonce, CHALLENGE_LENGTH) &&
-        isBoundedId(entry.data.requestEntryId) &&
-        isExactBase64Url(entry.data.priorExtensionEpoch, EPOCH_LENGTH) &&
-        isExactBase64Url(entry.data.extensionEpoch, EPOCH_LENGTH) &&
-        entry.data.extensionEpoch !== entry.data.priorExtensionEpoch
-      );
+      return parseReloadCompletionData(entry.data) !== undefined;
     default:
       return false;
   }
@@ -915,12 +1250,6 @@ function requireBoundedText(value: unknown, maxBytes: number): asserts value is 
   }
 }
 
-function requireOptionalRecord(value: unknown): void {
-  if (value !== undefined && !isRecord(value)) {
-    throw new IntegrityFault(PiSessionIntegrityFailure.ENTRY_SHAPE_INVALID);
-  }
-}
-
 function requireOptionalBoolean(value: unknown): void {
   if (value !== undefined && typeof value !== "boolean") {
     throw new IntegrityFault(PiSessionIntegrityFailure.ENTRY_SHAPE_INVALID);
@@ -974,7 +1303,19 @@ function isNonnegativeSafeInteger(value: unknown): value is number {
 }
 
 function isNonnegativeFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+  return isFiniteNumber(value) && value >= 0;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
 }
 
 function isNonemptyString(value: unknown): value is string {
