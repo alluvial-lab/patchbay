@@ -908,6 +908,10 @@ pub struct AdapterCapability {
     pub resource_capabilities: ::prost::alloc::vec::Vec<ResourceCapability>,
     #[prost(message, optional, tag="13")]
     pub assurance: ::core::option::Option<AdapterAssuranceManifest>,
+    /// Optional adapter-specific generated profile. The core validates only the
+    /// bounded opaque envelope and never interprets the profile payload.
+    #[prost(message, optional, tag="14")]
+    pub adapter_profile: ::core::option::Option<PayloadEnvelope>,
 }
 /// Versioned, complete declaration of adapter durability and reconciliation
 /// assurances. V1 is frozen; new semantic dimensions require a new branch.
@@ -3814,6 +3818,18 @@ pub struct AdapterStatusQuery {
     #[prost(uint32, optional, tag="4")]
     pub recent_diagnostic_limit: ::core::option::Option<u32>,
 }
+/// Safe metadata for an optional opaque adapter profile. The version is part
+/// of the schema_ref (for example, patchbay.PiRuntimeProfile.v1); raw profile
+/// bytes are structurally absent from diagnostics.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AdapterProfileSummary {
+    #[prost(bool, tag="1")]
+    pub present: bool,
+    #[prost(string, tag="2")]
+    pub schema_ref: ::prost::alloc::string::String,
+    #[prost(enumeration="PayloadContentType", tag="3")]
+    pub content_type: i32,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterCapabilitySummary {
     #[prost(enumeration="OperationKind", repeated, tag="1")]
@@ -3842,6 +3858,8 @@ pub struct AdapterCapabilitySummary {
     pub resource_capabilities: ::prost::alloc::vec::Vec<ResourceCapability>,
     #[prost(message, optional, tag="14")]
     pub assurance: ::core::option::Option<AdapterAssuranceManifest>,
+    #[prost(message, optional, tag="15")]
+    pub adapter_profile: ::core::option::Option<AdapterProfileSummary>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterStatus {
@@ -4370,9 +4388,94 @@ impl SnapshotViewKind {
         }
     }
 }
-/// Adapter-local profile for the control extension. The core may carry this
-/// profile opaquely; it must never interpret or expose the path-bearing marker
-/// payloads below.
+/// Generated Pi-local runtime vocabulary carried inside the generic opaque
+/// AdapterCapability.adapter_profile envelope. Core validation is deliberately
+/// limited to the outer envelope; the Pi adapter owns semantic decoding.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiRuntimeProfile {
+    #[prost(enumeration="PiTransportMechanism", tag="1")]
+    pub transport: i32,
+    #[prost(message, optional, tag="2")]
+    pub events: ::core::option::Option<PiEventSemantics>,
+    #[prost(message, optional, tag="3")]
+    pub session_durability: ::core::option::Option<PiSessionDurability>,
+    #[prost(message, optional, tag="4")]
+    pub cursor: ::core::option::Option<PiCursorSemantics>,
+    #[prost(message, optional, tag="5")]
+    pub control_proof: ::core::option::Option<PiControlProof>,
+    #[prost(message, optional, tag="6")]
+    pub reload: ::core::option::Option<PiReloadBoundary>,
+    #[prost(enumeration="PiReloadableResourceKind", repeated, tag="7")]
+    pub enumerated_resources: ::prost::alloc::vec::Vec<i32>,
+    #[prost(message, optional, tag="8")]
+    pub project_context: ::core::option::Option<PiProjectContextSemantics>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiEventSemantics {
+    #[prost(enumeration="PiLiveEventCaveat", repeated, tag="1")]
+    pub live_event_caveats: ::prost::alloc::vec::Vec<i32>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiSessionDurability {
+    #[prost(enumeration="PiSessionMaterializationPolicy", tag="1")]
+    pub materialization_policy: i32,
+    #[prost(enumeration="PiPreMaterializationState", tag="2")]
+    pub pre_materialization_state: i32,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiCursorSemantics {
+    #[prost(enumeration="PiCursorMechanism", tag="1")]
+    pub mechanism: i32,
+    #[prost(enumeration="PiCursorDurabilityCondition", tag="2")]
+    pub durability_condition: i32,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiControlProof {
+    #[prost(enumeration="PiControlProofKind", tag="1")]
+    pub kind: i32,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiReloadBoundary {
+    #[prost(enumeration="PiReloadMechanism", tag="1")]
+    pub mechanism: i32,
+    #[prost(enumeration="PiReloadAdmission", tag="2")]
+    pub admission: i32,
+    #[prost(enumeration="PiProcessReplacementOnlyKind", repeated, tag="3")]
+    pub process_replacement_only: ::prost::alloc::vec::Vec<i32>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiProjectContextSemantics {
+    #[prost(enumeration="PiProjectContextResolution", tag="1")]
+    pub resolution: i32,
+    #[prost(enumeration="PiCwdProofKind", tag="2")]
+    pub cwd_proof: i32,
+}
+/// Typed adapter payload carried by the generic SpawnTargetSpec. The reference
+/// resolves only inside the Pi adapter and must never contain a raw cwd/path.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiSpawnTargetSpec {
+    #[prost(string, tag="1")]
+    pub project_context_ref: ::prost::alloc::string::String,
+    #[prost(enumeration="PiContinuationMode", tag="2")]
+    pub continuation_mode: i32,
+}
+/// Typed Pi-local reconfiguration contract. Reloadable resources remain the
+/// narrow generated set below; broader changes require process replacement.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiReconfigureRequest {
+    #[prost(enumeration="PiReloadableResourceKind", repeated, tag="1")]
+    pub reload_resources: ::prost::alloc::vec::Vec<i32>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiReconfigureResult {
+    #[prost(enumeration="PiReconfigureOutcome", tag="1")]
+    pub outcome: i32,
+    #[prost(enumeration="PiProcessReplacementOnlyKind", repeated, tag="2")]
+    pub process_replacement_reasons: ::prost::alloc::vec::Vec<i32>,
+}
+/// Adapter-local profile for the control extension. The core may carry the
+/// runtime profile opaquely; it must never interpret or expose the path-bearing
+/// marker payloads below.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct PiControlExtensionProfile {
     #[prost(string, tag="1")]
@@ -4434,6 +4537,397 @@ pub struct PiReloadCompletionMarker {
     pub prior_extension_epoch: ::prost::alloc::string::String,
     #[prost(string, tag="5")]
     pub extension_epoch: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiTransportMechanism {
+    Unspecified = 0,
+    RpcJsonlSubprocess = 1,
+}
+impl PiTransportMechanism {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_TRANSPORT_MECHANISM_UNSPECIFIED",
+            Self::RpcJsonlSubprocess => "PI_TRANSPORT_MECHANISM_RPC_JSONL_SUBPROCESS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_TRANSPORT_MECHANISM_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_TRANSPORT_MECHANISM_RPC_JSONL_SUBPROCESS" => Some(Self::RpcJsonlSubprocess),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiLiveEventCaveat {
+    Unspecified = 0,
+    PartialOrder = 1,
+    PersistedEntriesRequiredForReconciliation = 2,
+}
+impl PiLiveEventCaveat {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_LIVE_EVENT_CAVEAT_UNSPECIFIED",
+            Self::PartialOrder => "PI_LIVE_EVENT_CAVEAT_PARTIAL_ORDER",
+            Self::PersistedEntriesRequiredForReconciliation => "PI_LIVE_EVENT_CAVEAT_PERSISTED_ENTRIES_REQUIRED_FOR_RECONCILIATION",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_LIVE_EVENT_CAVEAT_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_LIVE_EVENT_CAVEAT_PARTIAL_ORDER" => Some(Self::PartialOrder),
+            "PI_LIVE_EVENT_CAVEAT_PERSISTED_ENTRIES_REQUIRED_FOR_RECONCILIATION" => Some(Self::PersistedEntriesRequiredForReconciliation),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiSessionMaterializationPolicy {
+    Unspecified = 0,
+    AfterFirstAssistantMessage = 1,
+}
+impl PiSessionMaterializationPolicy {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_SESSION_MATERIALIZATION_POLICY_UNSPECIFIED",
+            Self::AfterFirstAssistantMessage => "PI_SESSION_MATERIALIZATION_POLICY_AFTER_FIRST_ASSISTANT_MESSAGE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_SESSION_MATERIALIZATION_POLICY_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_SESSION_MATERIALIZATION_POLICY_AFTER_FIRST_ASSISTANT_MESSAGE" => Some(Self::AfterFirstAssistantMessage),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiPreMaterializationState {
+    Unspecified = 0,
+    MemoryOnlyNotResumable = 1,
+}
+impl PiPreMaterializationState {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_PRE_MATERIALIZATION_STATE_UNSPECIFIED",
+            Self::MemoryOnlyNotResumable => "PI_PRE_MATERIALIZATION_STATE_MEMORY_ONLY_NOT_RESUMABLE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_PRE_MATERIALIZATION_STATE_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_PRE_MATERIALIZATION_STATE_MEMORY_ONLY_NOT_RESUMABLE" => Some(Self::MemoryOnlyNotResumable),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiCursorMechanism {
+    Unspecified = 0,
+    PersistedEntryIdWithExactSetReplacement = 1,
+}
+impl PiCursorMechanism {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_CURSOR_MECHANISM_UNSPECIFIED",
+            Self::PersistedEntryIdWithExactSetReplacement => "PI_CURSOR_MECHANISM_PERSISTED_ENTRY_ID_WITH_EXACT_SET_REPLACEMENT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_CURSOR_MECHANISM_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_CURSOR_MECHANISM_PERSISTED_ENTRY_ID_WITH_EXACT_SET_REPLACEMENT" => Some(Self::PersistedEntryIdWithExactSetReplacement),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiCursorDurabilityCondition {
+    Unspecified = 0,
+    MaterializedSessionOnly = 1,
+}
+impl PiCursorDurabilityCondition {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_CURSOR_DURABILITY_CONDITION_UNSPECIFIED",
+            Self::MaterializedSessionOnly => "PI_CURSOR_DURABILITY_CONDITION_MATERIALIZED_SESSION_ONLY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_CURSOR_DURABILITY_CONDITION_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_CURSOR_DURABILITY_CONDITION_MATERIALIZED_SESSION_ONLY" => Some(Self::MaterializedSessionOnly),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiControlProofKind {
+    Unspecified = 0,
+    ChallengedExtensionCustomEntry = 1,
+}
+impl PiControlProofKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_CONTROL_PROOF_KIND_UNSPECIFIED",
+            Self::ChallengedExtensionCustomEntry => "PI_CONTROL_PROOF_KIND_CHALLENGED_EXTENSION_CUSTOM_ENTRY",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_CONTROL_PROOF_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_CONTROL_PROOF_KIND_CHALLENGED_EXTENSION_CUSTOM_ENTRY" => Some(Self::ChallengedExtensionCustomEntry),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiReloadMechanism {
+    Unspecified = 0,
+    ControlExtensionCtxReload = 1,
+}
+impl PiReloadMechanism {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_RELOAD_MECHANISM_UNSPECIFIED",
+            Self::ControlExtensionCtxReload => "PI_RELOAD_MECHANISM_CONTROL_EXTENSION_CTX_RELOAD",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_RELOAD_MECHANISM_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_RELOAD_MECHANISM_CONTROL_EXTENSION_CTX_RELOAD" => Some(Self::ControlExtensionCtxReload),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiReloadAdmission {
+    Unspecified = 0,
+    IdleMaterializedSession = 1,
+}
+impl PiReloadAdmission {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_RELOAD_ADMISSION_UNSPECIFIED",
+            Self::IdleMaterializedSession => "PI_RELOAD_ADMISSION_IDLE_MATERIALIZED_SESSION",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_RELOAD_ADMISSION_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_RELOAD_ADMISSION_IDLE_MATERIALIZED_SESSION" => Some(Self::IdleMaterializedSession),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiProcessReplacementOnlyKind {
+    Unspecified = 0,
+    ArbitraryExtensionDependencyGraph = 1,
+    PiRuntimePackageDist = 2,
+    NativeDependency = 3,
+    Executable = 4,
+    UnknownScope = 5,
+}
+impl PiProcessReplacementOnlyKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_PROCESS_REPLACEMENT_ONLY_KIND_UNSPECIFIED",
+            Self::ArbitraryExtensionDependencyGraph => "PI_PROCESS_REPLACEMENT_ONLY_KIND_ARBITRARY_EXTENSION_DEPENDENCY_GRAPH",
+            Self::PiRuntimePackageDist => "PI_PROCESS_REPLACEMENT_ONLY_KIND_PI_RUNTIME_PACKAGE_DIST",
+            Self::NativeDependency => "PI_PROCESS_REPLACEMENT_ONLY_KIND_NATIVE_DEPENDENCY",
+            Self::Executable => "PI_PROCESS_REPLACEMENT_ONLY_KIND_EXECUTABLE",
+            Self::UnknownScope => "PI_PROCESS_REPLACEMENT_ONLY_KIND_UNKNOWN_SCOPE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_PROCESS_REPLACEMENT_ONLY_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_PROCESS_REPLACEMENT_ONLY_KIND_ARBITRARY_EXTENSION_DEPENDENCY_GRAPH" => Some(Self::ArbitraryExtensionDependencyGraph),
+            "PI_PROCESS_REPLACEMENT_ONLY_KIND_PI_RUNTIME_PACKAGE_DIST" => Some(Self::PiRuntimePackageDist),
+            "PI_PROCESS_REPLACEMENT_ONLY_KIND_NATIVE_DEPENDENCY" => Some(Self::NativeDependency),
+            "PI_PROCESS_REPLACEMENT_ONLY_KIND_EXECUTABLE" => Some(Self::Executable),
+            "PI_PROCESS_REPLACEMENT_ONLY_KIND_UNKNOWN_SCOPE" => Some(Self::UnknownScope),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiProjectContextResolution {
+    Unspecified = 0,
+    AdapterResolvedCwdProjectTrustAndResourceRoots = 1,
+}
+impl PiProjectContextResolution {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_PROJECT_CONTEXT_RESOLUTION_UNSPECIFIED",
+            Self::AdapterResolvedCwdProjectTrustAndResourceRoots => "PI_PROJECT_CONTEXT_RESOLUTION_ADAPTER_RESOLVED_CWD_PROJECT_TRUST_AND_RESOURCE_ROOTS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_PROJECT_CONTEXT_RESOLUTION_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_PROJECT_CONTEXT_RESOLUTION_ADAPTER_RESOLVED_CWD_PROJECT_TRUST_AND_RESOURCE_ROOTS" => Some(Self::AdapterResolvedCwdProjectTrustAndResourceRoots),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiCwdProofKind {
+    Unspecified = 0,
+    ChallengedControlExtension = 1,
+}
+impl PiCwdProofKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_CWD_PROOF_KIND_UNSPECIFIED",
+            Self::ChallengedControlExtension => "PI_CWD_PROOF_KIND_CHALLENGED_CONTROL_EXTENSION",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_CWD_PROOF_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_CWD_PROOF_KIND_CHALLENGED_CONTROL_EXTENSION" => Some(Self::ChallengedControlExtension),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiContinuationMode {
+    Unspecified = 0,
+    RequireResume = 1,
+    AllowNewContext = 2,
+}
+impl PiContinuationMode {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_CONTINUATION_MODE_UNSPECIFIED",
+            Self::RequireResume => "PI_CONTINUATION_MODE_REQUIRE_RESUME",
+            Self::AllowNewContext => "PI_CONTINUATION_MODE_ALLOW_NEW_CONTEXT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_CONTINUATION_MODE_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_CONTINUATION_MODE_REQUIRE_RESUME" => Some(Self::RequireResume),
+            "PI_CONTINUATION_MODE_ALLOW_NEW_CONTEXT" => Some(Self::AllowNewContext),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiReconfigureOutcome {
+    Unspecified = 0,
+    Reloaded = 1,
+    ProcessReplacementRequired = 2,
+    Busy = 3,
+    MaterializationRequired = 4,
+}
+impl PiReconfigureOutcome {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_RECONFIGURE_OUTCOME_UNSPECIFIED",
+            Self::Reloaded => "PI_RECONFIGURE_OUTCOME_RELOADED",
+            Self::ProcessReplacementRequired => "PI_RECONFIGURE_OUTCOME_PROCESS_REPLACEMENT_REQUIRED",
+            Self::Busy => "PI_RECONFIGURE_OUTCOME_BUSY",
+            Self::MaterializationRequired => "PI_RECONFIGURE_OUTCOME_MATERIALIZATION_REQUIRED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_RECONFIGURE_OUTCOME_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_RECONFIGURE_OUTCOME_RELOADED" => Some(Self::Reloaded),
+            "PI_RECONFIGURE_OUTCOME_PROCESS_REPLACEMENT_REQUIRED" => Some(Self::ProcessReplacementRequired),
+            "PI_RECONFIGURE_OUTCOME_BUSY" => Some(Self::Busy),
+            "PI_RECONFIGURE_OUTCOME_MATERIALIZATION_REQUIRED" => Some(Self::MaterializationRequired),
+            _ => None,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

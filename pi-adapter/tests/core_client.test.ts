@@ -19,13 +19,30 @@ import {
   IdempotencyStrength,
   LsnSchema,
   ObservationResultSchema,
+  OperationKind,
+  PayloadContentType,
+  PiControlProofKind,
+  PiCursorDurabilityCondition,
+  PiCursorMechanism,
+  PiCwdProofKind,
+  PiLiveEventCaveat,
+  PiPreMaterializationState,
+  PiProcessReplacementOnlyKind,
+  PiProjectContextResolution,
+  PiReloadAdmission,
+  PiReloadMechanism,
+  PiReloadableResourceKind,
+  PiSessionMaterializationPolicy,
+  PiTransportMechanism,
   ReconciliationAction,
   SessionActivityState,
   SessionConnectivityState,
   type SessionReport,
 } from "@patchbay/contracts";
 import {
+  decodePiRuntimeProfile,
   PatchbayCoreClient,
+  PI_RUNTIME_PROFILE_SCHEMA_REF,
   piCapabilityManifest,
   type SessionIdentity,
 } from "../src/core_client.js";
@@ -38,7 +55,9 @@ test("Pi manifest declares one complete conservative assurance V1", () => {
   assert.equal(manifest.idempotencyStrength, IdempotencyStrength.UNSPECIFIED);
   assert.deepEqual(manifest.targetCategories, [AdapterTargetCategory.RUNTIME_SESSION]);
   assert.equal(manifest.sessionSnapshotSupport, AdapterSnapshotSupport.PARTIAL);
-  assert.equal(manifest.sessionReplacementSupport, true);
+  assert.equal(manifest.sessionReplacementSupport, false);
+  assert.equal(manifest.supportedOperationKinds.includes(OperationKind.SPAWN), false);
+  assert.deepEqual(manifest.supportedTargetSpecShapes, []);
   assert.equal(manifest.assurance?.contract.case, "v1");
   if (manifest.assurance?.contract.case !== "v1") assert.fail("Pi assurance V1 is required");
   assert.deepEqual(manifest.assurance.contract.value, {
@@ -55,6 +74,69 @@ test("Pi manifest declares one complete conservative assurance V1", () => {
     FailureCode.EXECUTION_FAILED,
     FailureCode.EXECUTION_OUTCOME_UNKNOWN,
   ]);
+
+  assert.equal(manifest.adapterProfile?.schemaRef, PI_RUNTIME_PROFILE_SCHEMA_REF);
+  assert.equal(manifest.adapterProfile?.contentType, PayloadContentType.PROTOBUF);
+  const profile = decodePiRuntimeProfile(manifest);
+  assert.equal(profile.transport, PiTransportMechanism.RPC_JSONL_SUBPROCESS);
+  assert.deepEqual(profile.events?.liveEventCaveats, [
+    PiLiveEventCaveat.PARTIAL_ORDER,
+    PiLiveEventCaveat.PERSISTED_ENTRIES_REQUIRED_FOR_RECONCILIATION,
+  ]);
+  assert.equal(
+    profile.sessionDurability?.materializationPolicy,
+    PiSessionMaterializationPolicy.AFTER_FIRST_ASSISTANT_MESSAGE,
+  );
+  assert.equal(
+    profile.sessionDurability?.preMaterializationState,
+    PiPreMaterializationState.MEMORY_ONLY_NOT_RESUMABLE,
+  );
+  assert.equal(
+    profile.cursor?.mechanism,
+    PiCursorMechanism.PERSISTED_ENTRY_ID_WITH_EXACT_SET_REPLACEMENT,
+  );
+  assert.equal(
+    profile.cursor?.durabilityCondition,
+    PiCursorDurabilityCondition.MATERIALIZED_SESSION_ONLY,
+  );
+  assert.equal(profile.controlProof?.kind, PiControlProofKind.CHALLENGED_EXTENSION_CUSTOM_ENTRY);
+  assert.equal(profile.reload?.mechanism, PiReloadMechanism.CONTROL_EXTENSION_CTX_RELOAD);
+  assert.equal(profile.reload?.admission, PiReloadAdmission.IDLE_MATERIALIZED_SESSION);
+  assert.deepEqual(profile.reload?.processReplacementOnly, [
+    PiProcessReplacementOnlyKind.ARBITRARY_EXTENSION_DEPENDENCY_GRAPH,
+    PiProcessReplacementOnlyKind.PI_RUNTIME_PACKAGE_DIST,
+    PiProcessReplacementOnlyKind.NATIVE_DEPENDENCY,
+    PiProcessReplacementOnlyKind.EXECUTABLE,
+    PiProcessReplacementOnlyKind.UNKNOWN_SCOPE,
+  ]);
+  assert.deepEqual(profile.enumeratedResources, [
+    PiReloadableResourceKind.EXTENSION_ENTRYPOINT,
+    PiReloadableResourceKind.SKILL,
+    PiReloadableResourceKind.PROMPT,
+    PiReloadableResourceKind.THEME,
+    PiReloadableResourceKind.CONTEXT_FILE,
+  ]);
+  assert.equal(
+    profile.projectContext?.resolution,
+    PiProjectContextResolution.ADAPTER_RESOLVED_CWD_PROJECT_TRUST_AND_RESOURCE_ROOTS,
+  );
+  assert.equal(profile.projectContext?.cwdProof, PiCwdProofKind.CHALLENGED_CONTROL_EXTENSION);
+});
+
+test("Pi profile is required and semantic enum sentinels fail the adapter-owned decoder", () => {
+  const missing = structuredClone(piCapabilityManifest());
+  missing.adapterProfile = undefined;
+  assert.throws(() => decodePiRuntimeProfile(missing), /missing its runtime profile/);
+
+  const malformed = structuredClone(piCapabilityManifest());
+  assert.ok(malformed.adapterProfile);
+  malformed.adapterProfile.payload = new Uint8Array([0]);
+  assert.throws(() => decodePiRuntimeProfile(malformed), /malformed/);
+
+  const unspecified = structuredClone(piCapabilityManifest());
+  assert.ok(unspecified.adapterProfile);
+  unspecified.adapterProfile.payload = new Uint8Array();
+  assert.throws(() => decodePiRuntimeProfile(unspecified), /invalid runtime profile envelope/);
 });
 
 test("PatchbayCoreClient reattach retry reuses the exact immutable session report cursor", async () => {

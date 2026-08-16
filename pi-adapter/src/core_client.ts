@@ -1,4 +1,4 @@
-import { create } from "@bufbuild/protobuf";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import {
   Code,
   ConnectError,
@@ -36,6 +36,26 @@ import {
   OperationState,
   PayloadContentType,
   PayloadEnvelopeSchema,
+  PiControlProofKind,
+  PiControlProofSchema,
+  PiCursorDurabilityCondition,
+  PiCursorMechanism,
+  PiCursorSemanticsSchema,
+  PiCwdProofKind,
+  PiEventSemanticsSchema,
+  PiLiveEventCaveat,
+  PiPreMaterializationState,
+  PiProcessReplacementOnlyKind,
+  PiProjectContextResolution,
+  PiProjectContextSemanticsSchema,
+  PiReloadAdmission,
+  PiReloadBoundarySchema,
+  PiReloadMechanism,
+  PiReloadableResourceKind,
+  PiRuntimeProfileSchema,
+  PiSessionDurabilitySchema,
+  PiSessionMaterializationPolicy,
+  PiTransportMechanism,
   ReceiveRequestSchema,
   ReconciliationAction,
   RuntimeSessionIdSchema,
@@ -46,11 +66,13 @@ import {
   TargetScopeKind,
   TargetScopeSchema,
   TypedCorrelationSchema,
+  type AdapterCapability,
   type AdapterDiagnosticReport,
   type AdapterDiagnosticReportResult,
   type Delivery,
   type EventId,
   type Operation,
+  type PiRuntimeProfile,
 } from "@patchbay/contracts";
 import {
   diagnosticError,
@@ -63,6 +85,7 @@ import type { SessionReportOrder } from "./session_report_sequencer.js";
 
 const encoder = new TextEncoder();
 const attachmentTokenHeader = "x-patchbay-adapter-attachment-token";
+export const PI_RUNTIME_PROFILE_SCHEMA_REF = "patchbay.PiRuntimeProfile.v1";
 
 type AdapterClient = Client<typeof AdapterControlService>;
 
@@ -135,7 +158,7 @@ export class PatchbayCoreClient {
           }),
           authorityDomainId: this.#authorityDomainId(),
           adapterGeneration: create(GenerationSchema, { value: BigInt(adapterGeneration) }),
-          capability: piCapabilityManifest(),
+          capability: requiredPiCapabilityManifest(),
         }),
           attachmentEvidence: encoder.encode(this.#options.attachmentEvidence),
         }),
@@ -429,7 +452,16 @@ function operationStateName(state: OperationState): string {
   return OperationState[state] ?? String(state);
 }
 
-export function piCapabilityManifest() {
+export interface PiCapabilityEvidence {
+  readonly supervisor: boolean;
+  readonly controlHandshake: boolean;
+  readonly strictSessionTreeValidation: boolean;
+  readonly authoritativeCursorReplacement: boolean;
+  readonly idleMaterializedReload: boolean;
+  readonly conformanceVersion?: string;
+}
+
+export function piCapabilityManifest(): AdapterCapability {
   return create(AdapterCapabilitySchema, {
     supportedOperationKinds: [
       OperationKind.ATTACH,
@@ -444,7 +476,10 @@ export function piCapabilityManifest() {
     streamingSupport: true,
     sessionSnapshotSupport: AdapterSnapshotSupport.PARTIAL,
     cancellationSupport: true,
-    sessionReplacementSupport: true,
+    // The lifecycle-conformance checkpoint owns activation of managed spawn,
+    // continuation, replacement, cursor, and reload claims. A generated
+    // profile alone is not activation evidence.
+    sessionReplacementSupport: false,
     assurance: create(AdapterAssuranceManifestSchema, {
       contract: {
         case: "v1",
@@ -473,5 +508,163 @@ export function piCapabilityManifest() {
     }),
     targetCategories: [AdapterTargetCategory.RUNTIME_SESSION],
     resourceCapabilities: [],
+    adapterProfile: create(PayloadEnvelopeSchema, {
+      payload: toBinary(PiRuntimeProfileSchema, piRuntimeProfile()),
+      contentType: PayloadContentType.PROTOBUF,
+      schemaRef: PI_RUNTIME_PROFILE_SCHEMA_REF,
+    }),
   });
+}
+
+function requiredPiCapabilityManifest(): AdapterCapability {
+  const manifest = piCapabilityManifest();
+  decodePiRuntimeProfile(manifest);
+  return manifest;
+}
+
+export function decodePiRuntimeProfile(manifest: AdapterCapability): PiRuntimeProfile {
+  const envelope = manifest.adapterProfile;
+  if (!envelope) throw new Error("Pi capability manifest is missing its runtime profile");
+  if (
+    envelope.schemaRef !== PI_RUNTIME_PROFILE_SCHEMA_REF
+    || envelope.contentType !== PayloadContentType.PROTOBUF
+    || envelope.payload.length === 0
+  ) {
+    throw new Error("Pi capability manifest has an invalid runtime profile envelope");
+  }
+
+  let profile: PiRuntimeProfile;
+  try {
+    profile = fromBinary(PiRuntimeProfileSchema, envelope.payload);
+  } catch {
+    throw new Error("Pi capability manifest runtime profile is malformed");
+  }
+  validatePiRuntimeProfile(profile);
+  return profile;
+}
+
+function piRuntimeProfile(): PiRuntimeProfile {
+  return create(PiRuntimeProfileSchema, {
+    transport: PiTransportMechanism.RPC_JSONL_SUBPROCESS,
+    events: create(PiEventSemanticsSchema, {
+      liveEventCaveats: [
+        PiLiveEventCaveat.PARTIAL_ORDER,
+        PiLiveEventCaveat.PERSISTED_ENTRIES_REQUIRED_FOR_RECONCILIATION,
+      ],
+    }),
+    sessionDurability: create(PiSessionDurabilitySchema, {
+      materializationPolicy: PiSessionMaterializationPolicy.AFTER_FIRST_ASSISTANT_MESSAGE,
+      preMaterializationState: PiPreMaterializationState.MEMORY_ONLY_NOT_RESUMABLE,
+    }),
+    cursor: create(PiCursorSemanticsSchema, {
+      mechanism: PiCursorMechanism.PERSISTED_ENTRY_ID_WITH_EXACT_SET_REPLACEMENT,
+      durabilityCondition: PiCursorDurabilityCondition.MATERIALIZED_SESSION_ONLY,
+    }),
+    controlProof: create(PiControlProofSchema, {
+      kind: PiControlProofKind.CHALLENGED_EXTENSION_CUSTOM_ENTRY,
+    }),
+    reload: create(PiReloadBoundarySchema, {
+      mechanism: PiReloadMechanism.CONTROL_EXTENSION_CTX_RELOAD,
+      admission: PiReloadAdmission.IDLE_MATERIALIZED_SESSION,
+      processReplacementOnly: [
+        PiProcessReplacementOnlyKind.ARBITRARY_EXTENSION_DEPENDENCY_GRAPH,
+        PiProcessReplacementOnlyKind.PI_RUNTIME_PACKAGE_DIST,
+        PiProcessReplacementOnlyKind.NATIVE_DEPENDENCY,
+        PiProcessReplacementOnlyKind.EXECUTABLE,
+        PiProcessReplacementOnlyKind.UNKNOWN_SCOPE,
+      ],
+    }),
+    enumeratedResources: [
+      PiReloadableResourceKind.EXTENSION_ENTRYPOINT,
+      PiReloadableResourceKind.SKILL,
+      PiReloadableResourceKind.PROMPT,
+      PiReloadableResourceKind.THEME,
+      PiReloadableResourceKind.CONTEXT_FILE,
+    ],
+    projectContext: create(PiProjectContextSemanticsSchema, {
+      resolution:
+        PiProjectContextResolution.ADAPTER_RESOLVED_CWD_PROJECT_TRUST_AND_RESOURCE_ROOTS,
+      cwdProof: PiCwdProofKind.CHALLENGED_CONTROL_EXTENSION,
+    }),
+  });
+}
+
+function validatePiRuntimeProfile(profile: PiRuntimeProfile): void {
+  if (profile.transport !== PiTransportMechanism.RPC_JSONL_SUBPROCESS) {
+    throw new Error("Pi runtime profile has an unsupported transport mechanism");
+  }
+  if (!profile.events) throw new Error("Pi runtime profile is missing event semantics");
+  requireExactEnumSet(
+    profile.events.liveEventCaveats,
+    [
+      PiLiveEventCaveat.PARTIAL_ORDER,
+      PiLiveEventCaveat.PERSISTED_ENTRIES_REQUIRED_FOR_RECONCILIATION,
+    ],
+    "live event caveats",
+  );
+  if (
+    profile.sessionDurability?.materializationPolicy
+      !== PiSessionMaterializationPolicy.AFTER_FIRST_ASSISTANT_MESSAGE
+    || profile.sessionDurability.preMaterializationState
+      !== PiPreMaterializationState.MEMORY_ONLY_NOT_RESUMABLE
+  ) {
+    throw new Error("Pi runtime profile has invalid session durability semantics");
+  }
+  if (
+    profile.cursor?.mechanism
+      !== PiCursorMechanism.PERSISTED_ENTRY_ID_WITH_EXACT_SET_REPLACEMENT
+    || profile.cursor.durabilityCondition
+      !== PiCursorDurabilityCondition.MATERIALIZED_SESSION_ONLY
+  ) {
+    throw new Error("Pi runtime profile has invalid cursor semantics");
+  }
+  if (profile.controlProof?.kind !== PiControlProofKind.CHALLENGED_EXTENSION_CUSTOM_ENTRY) {
+    throw new Error("Pi runtime profile has invalid control proof semantics");
+  }
+  if (
+    profile.reload?.mechanism !== PiReloadMechanism.CONTROL_EXTENSION_CTX_RELOAD
+    || profile.reload.admission !== PiReloadAdmission.IDLE_MATERIALIZED_SESSION
+  ) {
+    throw new Error("Pi runtime profile has invalid reload semantics");
+  }
+  requireExactEnumSet(
+    profile.reload.processReplacementOnly,
+    [
+      PiProcessReplacementOnlyKind.ARBITRARY_EXTENSION_DEPENDENCY_GRAPH,
+      PiProcessReplacementOnlyKind.PI_RUNTIME_PACKAGE_DIST,
+      PiProcessReplacementOnlyKind.NATIVE_DEPENDENCY,
+      PiProcessReplacementOnlyKind.EXECUTABLE,
+      PiProcessReplacementOnlyKind.UNKNOWN_SCOPE,
+    ],
+    "process-replacement exclusions",
+  );
+  requireExactEnumSet(
+    profile.enumeratedResources,
+    [
+      PiReloadableResourceKind.EXTENSION_ENTRYPOINT,
+      PiReloadableResourceKind.SKILL,
+      PiReloadableResourceKind.PROMPT,
+      PiReloadableResourceKind.THEME,
+      PiReloadableResourceKind.CONTEXT_FILE,
+    ],
+    "enumerated resources",
+  );
+  if (
+    profile.projectContext?.resolution
+      !== PiProjectContextResolution.ADAPTER_RESOLVED_CWD_PROJECT_TRUST_AND_RESOURCE_ROOTS
+    || profile.projectContext.cwdProof !== PiCwdProofKind.CHALLENGED_CONTROL_EXTENSION
+  ) {
+    throw new Error("Pi runtime profile has invalid project context semantics");
+  }
+}
+
+function requireExactEnumSet(actual: readonly number[], expected: readonly number[], name: string): void {
+  const values = new Set(actual);
+  if (
+    values.size !== actual.length
+    || values.size !== expected.length
+    || expected.some((value) => value === 0 || !values.has(value))
+  ) {
+    throw new Error(`Pi runtime profile has invalid ${name}`);
+  }
 }

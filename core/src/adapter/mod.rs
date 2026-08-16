@@ -11,8 +11,8 @@ pub mod capability;
 
 pub use capability::{
     CapabilityValidationContext, CapabilityValidationError, ValidatedAdapterAssurance,
-    ValidatedAdapterCapability, ValidatedProjectionContract, ValidatedResourceCapability,
-    ValidatedSchemaDescriptor,
+    ValidatedAdapterCapability, ValidatedAdapterProfile, ValidatedProjectionContract,
+    ValidatedResourceCapability, ValidatedSchemaDescriptor,
 };
 
 use patchbay_contracts::patchbay::{

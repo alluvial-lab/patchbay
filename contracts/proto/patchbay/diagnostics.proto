@@ -198,6 +198,15 @@ message AdapterStatusQuery {
   optional uint32 recent_diagnostic_limit = 4;
 }
 
+// Safe metadata for an optional opaque adapter profile. The version is part
+// of the schema_ref (for example, patchbay.PiRuntimeProfile.v1); raw profile
+// bytes are structurally absent from diagnostics.
+message AdapterProfileSummary {
+  bool present = 1;
+  string schema_ref = 2;
+  PayloadContentType content_type = 3;
+}
+
 message AdapterCapabilitySummary {
   reserved 7;
   reserved "idempotency_strength";
@@ -215,6 +224,7 @@ message AdapterCapabilitySummary {
   repeated AdapterTargetCategory target_categories = 12;
   repeated ResourceCapability resource_capabilities = 13;
   AdapterAssuranceManifest assurance = 14;
+  AdapterProfileSummary adapter_profile = 15;
 }
 
 message AdapterStatus {

@@ -10,6 +10,7 @@ use patchbay_contracts::patchbay::{
 
 const MAX_RESOURCE_CAPABILITIES: usize = 128;
 const MAX_SCHEMA_REF_BYTES: usize = 256;
+const MAX_ADAPTER_PROFILE_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilityValidationContext {
@@ -20,6 +21,7 @@ pub enum CapabilityValidationContext {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedAdapterCapability {
     assurance: ValidatedAdapterAssurance,
+    adapter_profile: Option<ValidatedAdapterProfile>,
     target_categories: HashSet<AdapterTargetCategory>,
     resources: HashMap<ResourceKind, ValidatedResourceCapability>,
 }
@@ -32,6 +34,12 @@ pub struct ValidatedAdapterAssurance {
     generation_fence_support: bool,
     reconciliation_strength: AdapterReconciliationStrength,
     unproven_outcome_action: ReconciliationAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedAdapterProfile {
+    schema_ref: String,
+    content_type: PayloadContentType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +68,11 @@ impl ValidatedAdapterCapability {
         context: CapabilityValidationContext,
     ) -> Result<Self, CapabilityValidationError> {
         let assurance = ValidatedAdapterAssurance::try_from_wire(capability, context)?;
+        let adapter_profile = capability
+            .adapter_profile
+            .as_ref()
+            .map(ValidatedAdapterProfile::try_from_wire)
+            .transpose()?;
         validate_operation_kinds(&capability.supported_operation_kinds)?;
         validate_known_failure_modes(&capability.known_failure_modes)?;
         let session_snapshot = AdapterSnapshotSupport::try_from(
@@ -129,6 +142,7 @@ impl ValidatedAdapterCapability {
 
         Ok(Self {
             assurance,
+            adapter_profile,
             target_categories,
             resources,
         })
@@ -137,6 +151,11 @@ impl ValidatedAdapterCapability {
     #[must_use]
     pub fn assurance(&self) -> ValidatedAdapterAssurance {
         self.assurance
+    }
+
+    #[must_use]
+    pub fn adapter_profile(&self) -> Option<&ValidatedAdapterProfile> {
+        self.adapter_profile.as_ref()
     }
 
     #[must_use]
@@ -332,6 +351,46 @@ impl ValidatedAdapterAssurance {
     }
 }
 
+impl ValidatedAdapterProfile {
+    fn try_from_wire(envelope: &PayloadEnvelope) -> Result<Self, CapabilityValidationError> {
+        if envelope.payload.is_empty() {
+            return Err(CapabilityValidationError::EmptyAdapterProfile);
+        }
+        if envelope.payload.len() > MAX_ADAPTER_PROFILE_BYTES {
+            return Err(CapabilityValidationError::AdapterProfileTooLarge);
+        }
+        if envelope.schema_ref.is_empty()
+            || envelope.schema_ref.len() > MAX_SCHEMA_REF_BYTES
+            || envelope
+                .schema_ref
+                .bytes()
+                .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace())
+        {
+            return Err(CapabilityValidationError::InvalidAdapterProfileSchema);
+        }
+        let content_type = PayloadContentType::try_from(envelope.content_type).map_err(|_| {
+            CapabilityValidationError::UnknownAdapterProfileContentType(envelope.content_type)
+        })?;
+        if content_type == PayloadContentType::Unspecified {
+            return Err(CapabilityValidationError::UnspecifiedAdapterProfileContentType);
+        }
+        Ok(Self {
+            schema_ref: envelope.schema_ref.clone(),
+            content_type,
+        })
+    }
+
+    #[must_use]
+    pub fn schema_ref(&self) -> &str {
+        &self.schema_ref
+    }
+
+    #[must_use]
+    pub fn content_type(&self) -> PayloadContentType {
+        self.content_type
+    }
+}
+
 impl ValidatedResourceCapability {
     fn try_from_wire(capability: &ResourceCapability) -> Result<Self, CapabilityValidationError> {
         let resource_kind = capability
@@ -520,6 +579,18 @@ pub enum CapabilityValidationError {
     UnknownUnprovenOutcomeAction(i32),
     #[error("assurance declaration unproven-outcome action is unspecified")]
     UnspecifiedUnprovenOutcomeAction,
+    #[error("adapter profile payload must not be empty")]
+    EmptyAdapterProfile,
+    #[error("adapter profile payload exceeds 65536 bytes")]
+    AdapterProfileTooLarge,
+    #[error(
+        "adapter profile schema_ref must be 1..=256 bytes without ASCII control or whitespace"
+    )]
+    InvalidAdapterProfileSchema,
+    #[error("adapter profile contains unknown content type {0}")]
+    UnknownAdapterProfileContentType(i32),
+    #[error("adapter profile content type is unspecified")]
+    UnspecifiedAdapterProfileContentType,
     #[error("manifest contains unknown supported OperationKind {0}")]
     UnknownSupportedOperationKind(i32),
     #[error("manifest supported OperationKind is unspecified")]

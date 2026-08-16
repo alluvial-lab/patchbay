@@ -490,6 +490,11 @@ fn adapter_projection_uses_canonical_assurance_and_redacts_raw_fields() {
                 descriptor: b"sentinel-secret".to_vec(),
                 descriptor_content_type: PayloadContentType::Binary as i32,
             }),
+            adapter_profile: Some(PayloadEnvelope {
+                payload: b"sentinel-opaque-profile-bytes".to_vec(),
+                content_type: PayloadContentType::Protobuf as i32,
+                schema_ref: "example.AdapterProfile.v3".to_owned(),
+            }),
             target_categories: vec![
                 AdapterTargetCategory::RuntimeSession as i32,
                 AdapterTargetCategory::OperationalResource as i32,
@@ -546,6 +551,14 @@ fn adapter_projection_uses_canonical_assurance_and_redacts_raw_fields() {
     );
     let summary = page.adapters[0].capability.as_ref().unwrap();
     assert_eq!(summary.attachment_method_kind, "local");
+    assert_eq!(
+        summary.adapter_profile,
+        Some(patchbay_contracts::patchbay::AdapterProfileSummary {
+            present: true,
+            schema_ref: "example.AdapterProfile.v3".to_owned(),
+            content_type: PayloadContentType::Protobuf as i32,
+        })
+    );
     let assurance = summary.assurance.as_ref().expect("canonical assurance");
     let Some(adapter_assurance_manifest::Contract::V1(assurance_v1)) = assurance.contract.as_ref()
     else {
@@ -598,13 +611,18 @@ fn adapter_projection_uses_canonical_assurance_and_redacts_raw_fields() {
             .schema_ref,
         "pool.projection.v1"
     );
-    assert!(
-        !summary
-            .encode_to_vec()
-            .windows(b"sentinel-secret".len())
-            .any(|window| window == b"sentinel-secret"),
-        "diagnostics must not carry attachment descriptors or opaque profile bytes"
-    );
+    let encoded_summary = summary.encode_to_vec();
+    for sentinel in [
+        b"sentinel-secret".as_slice(),
+        b"sentinel-opaque-profile-bytes".as_slice(),
+    ] {
+        assert!(
+            !encoded_summary
+                .windows(sentinel.len())
+                .any(|window| window == sentinel),
+            "diagnostics must not carry attachment descriptors or opaque profile bytes"
+        );
+    }
     let expected_assurance = summary.assurance;
     projection.reset_adapter_liveness();
     let restarted = projection

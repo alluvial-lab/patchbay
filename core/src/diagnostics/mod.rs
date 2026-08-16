@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use patchbay_contracts::patchbay::{
     diagnostics_query, spawn_claim_event, AcceptedOperation, AdapterCapabilitySummary,
-    AdapterDiagnosticState, AdapterId, AdapterRegistration, AdapterStatus, AdapterStatusPage,
-    AdapterStatusQuery, AuditEventKind, AuditQuery, AuditRecord, AuthorityDomainId,
-    CommandHistoryEntry, CommandId, CommandInspection, CommandInspectionQuery,
+    AdapterDiagnosticState, AdapterId, AdapterProfileSummary, AdapterRegistration, AdapterStatus,
+    AdapterStatusPage, AdapterStatusQuery, AuditEventKind, AuditQuery, AuditRecord,
+    AuthorityDomainId, CommandHistoryEntry, CommandId, CommandInspection, CommandInspectionQuery,
     CommandInspectionResult, CommandSummary, DiagnosticsQuery, EventId, FailureCode, Observation,
     Operation, OperationKind, OperationState, Revocation, SpawnClaimDisposition, SpawnClaimEvent,
     SpawnPriorWorkDisposition, SpawnPromotionCommitted, SpawnRequest, StoredEventKind, TargetScope,
@@ -786,6 +786,19 @@ impl DiagnosticsProjection {
                             target_categories: capability.target_categories.clone(),
                             resource_capabilities: capability.resource_capabilities.clone(),
                             assurance: Some(record.validated_capability.assurance().to_wire_v1()),
+                            adapter_profile: Some(
+                                record.validated_capability.adapter_profile().map_or(
+                                    AdapterProfileSummary {
+                                        present: false,
+                                        ..AdapterProfileSummary::default()
+                                    },
+                                    |profile| AdapterProfileSummary {
+                                        present: true,
+                                        schema_ref: profile.schema_ref().to_owned(),
+                                        content_type: profile.content_type() as i32,
+                                    },
+                                ),
+                            ),
                         }
                     });
                     let recent_diagnostics = if recent_limit == 0 {

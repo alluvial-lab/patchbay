@@ -82,7 +82,11 @@ The lifecycle registry for an Elicitation. Initial state is `opened`; transition
 
 ## Adapter capability
 
-A declaration an adapter makes about the targets, Operations, and guarantees it supports: generated target categories; supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values); streaming, cancellation, and session-replacement support; a runtime-session snapshot tier; exact per-`ResourceKind` snapshot tiers and resource projection contracts; one complete versioned assurance manifest; attachment method; diagnostic reporting; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
+A declaration an adapter makes about the targets, Operations, and guarantees it supports: generated target categories; supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values); streaming, cancellation, and session-replacement support; a runtime-session snapshot tier; exact per-`ResourceKind` snapshot tiers and resource projection contracts; one complete versioned assurance manifest; at most one optional bounded opaque adapter profile; attachment method; diagnostic reporting; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
+
+## Adapter profile
+
+An optional generated adapter-specific contract carried opaquely in the generic capability manifest. The core validates only a non-empty payload of at most 64 KiB, bounded schema reference, and known content type; it stores but never semantically decodes the bytes. Diagnostics expose only presence and the schema/content-type descriptor, with version encoded in the schema reference. The adapter's generated decoder owns semantic validation and rejects `UNSPECIFIED` values. A profile does not activate a generic capability, grant authority, suppress delivery, or prove an external mechanism.
 
 ## Adapter assurance manifest
 
@@ -99,6 +103,10 @@ The per-resource declaration that binds one exact `ResourceKind` to the mandator
 ## Schema descriptor
 
 A bounded non-empty schema reference plus a generated payload content type. Exact matching establishes that an envelope uses the format declared in the manifest; it does not prove opaque bytes semantically satisfy that schema. Typed decoders remain responsible for fail-closed semantic validation.
+
+## Pi runtime profile
+
+The generated `patchbay.PiRuntimeProfile.v1` adapter profile. It keeps Pi-only JSONL RPC, live-event caveats, deferred session materialization, persisted-entry cursor design, challenged control-extension proof, reload/resource boundary, process-replacement exclusions, and cwd/project-trust/resource-root resolution out of the core manifest vocabulary. Its presence is descriptive contract carriage, not evidence that managed spawn, continuation, cursor, generation fencing, session replacement, or reload has passed conformance.
 
 ## Correlation context
 

@@ -10,12 +10,262 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/pi_adapter.proto.
  */
 export const file_patchbay_pi_adapter: GenFile = /*@__PURE__*/
-  fileDesc("ChlwYXRjaGJheS9waV9hZGFwdGVyLnByb3RvEghwYXRjaGJheSKsAgoZUGlDb250cm9sRXh0ZW5zaW9uUHJvZmlsZRIXCg9wcm9maWxlX3ZlcnNpb24YASABKAkSGQoRaGFuZHNoYWtlX2NvbW1hbmQYAiABKAkSFgoOcmVsb2FkX2NvbW1hbmQYAyABKAkSHQoVaGFuZHNoYWtlX2N1c3RvbV90eXBlGAQgASgJEiIKGnJlbG9hZF9yZXF1ZXN0X2N1c3RvbV90eXBlGAUgASgJEiUKHXJlbG9hZF9jb21wbGV0aW9uX2N1c3RvbV90eXBlGAYgASgJEhcKD2NoYWxsZW5nZV9ieXRlcxgHIAEoDRIdChVleHRlbnNpb25fZXBvY2hfYnl0ZXMYCCABKA0SIQoZc3VwcG9ydGVkX3Nlc3Npb25fdmVyc2lvbhgJIAEoDSKTAQoYUGlDb250cm9sSGFuZHNoYWtlTWFya2VyEhEKCWNoYWxsZW5nZRgBIAEoCRIUCgxsYXVuY2hfbm9uY2UYAiABKAkSFwoPZXh0ZW5zaW9uX2Vwb2NoGAMgASgJEgsKA2N3ZBgEIAEoCRISCgpzZXNzaW9uX2lkGAUgASgJEhQKDHNlc3Npb25fZmlsZRgGIAEoCSKQAQoVUGlSZWxvYWRSZXF1ZXN0TWFya2VyEhIKCmNvbW1hbmRfaWQYASABKAkSDQoFbm9uY2UYAiABKAkSHQoVcHJpb3JfZXh0ZW5zaW9uX2Vwb2NoGAMgASgJEjUKCXJlc291cmNlcxgEIAMoDjIiLnBhdGNoYmF5LlBpUmVsb2FkYWJsZVJlc291cmNlS2luZCKPAQoYUGlSZWxvYWRDb21wbGV0aW9uTWFya2VyEhIKCmNvbW1hbmRfaWQYASABKAkSDQoFbm9uY2UYAiABKAkSGAoQcmVxdWVzdF9lbnRyeV9pZBgDIAEoCRIdChVwcmlvcl9leHRlbnNpb25fZXBvY2gYBCABKAkSFwoPZXh0ZW5zaW9uX2Vwb2NoGAUgASgJKqECChhQaVJlbG9hZGFibGVSZXNvdXJjZUtpbmQSKwonUElfUkVMT0FEQUJMRV9SRVNPVVJDRV9LSU5EX1VOU1BFQ0lGSUVEEAASNAowUElfUkVMT0FEQUJMRV9SRVNPVVJDRV9LSU5EX0VYVEVOU0lPTl9FTlRSWVBPSU5UEAESJQohUElfUkVMT0FEQUJMRV9SRVNPVVJDRV9LSU5EX1NLSUxMEAISJgoiUElfUkVMT0FEQUJMRV9SRVNPVVJDRV9LSU5EX1BST01QVBADEiUKIVBJX1JFTE9BREFCTEVfUkVTT1VSQ0VfS0lORF9USEVNRRAEEiwKKFBJX1JFTE9BREFCTEVfUkVTT1VSQ0VfS0lORF9DT05URVhUX0ZJTEUQBSq0BgoZUGlDb250cm9sSGFuZHNoYWtlRmFpbHVyZRIsCihQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX1VOU1BFQ0lGSUVEEAASMAosUElfQ09OVFJPTF9IQU5EU0hBS0VfRkFJTFVSRV9DT01NQU5EX01JU1NJTkcQARI4CjRQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX0NPTU1BTkRfU09VUkNFX01JU01BVENIEAISMAosUElfQ09OVFJPTF9IQU5EU0hBS0VfRkFJTFVSRV9QUk9NUFRfUkVKRUNURUQQAxIvCitQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX01BUktFUl9NSVNTSU5HEAQSMQotUElfQ09OVFJPTF9IQU5EU0hBS0VfRkFJTFVSRV9NQVJLRVJfQU1CSUdVT1VTEAUSMwovUElfQ09OVFJPTF9IQU5EU0hBS0VfRkFJTFVSRV9DSEFMTEVOR0VfTUlTTUFUQ0gQBhI2CjJQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX0xBVU5DSF9OT05DRV9NSVNNQVRDSBAHEjkKNVBJX0NPTlRST0xfSEFORFNIQUtFX0ZBSUxVUkVfRVhURU5TSU9OX0VQT0NIX01JU01BVENIEAgSLQopUElfQ09OVFJPTF9IQU5EU0hBS0VfRkFJTFVSRV9DV0RfTUlTTUFUQ0gQCRI0CjBQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX1NFU1NJT05fSURfTUlTTUFUQ0gQChI2CjJQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX1NFU1NJT05fRklMRV9NSVNNQVRDSBALEjcKM1BJX0NPTlRST0xfSEFORFNIQUtFX0ZBSUxVUkVfUlBDX0NST1NTX0NIRUNLX0ZBSUxFRBAMEjgKNFBJX0NPTlRST0xfSEFORFNIQUtFX0ZBSUxVUkVfTUFSS0VSX05PVF9DVVJSRU5UX0xFQUYQDRIvCitQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX0JPVU5EX0VYQ0VFREVEEA4qpQkKGVBpU2Vzc2lvbkludGVncml0eUZhaWx1cmUSLAooUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9VTlNQRUNJRklFRBAAEi0KKVBJX1NFU1NJT05fSU5URUdSSVRZX0ZBSUxVUkVfUEFUSF9NSVNTSU5HEAESOgo2UElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9QQVRIX09VVFNJREVfQUxMT1dFRF9ST09UEAISKAokUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9TWU1MSU5LEAMSMQotUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9OT1RfUkVHVUxBUl9GSUxFEAQSKwonUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9FTVBUWV9GSUxFEAUSLworUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9GSUxFX1RPT19MQVJHRRAGEi4KKlBJX1NFU1NJT05fSU5URUdSSVRZX0ZBSUxVUkVfVU5TVEFCTEVfRklMRRAHEjAKLFBJX1NFU1NJT05fSU5URUdSSVRZX0ZBSUxVUkVfRlJBTUlOR19JTlZBTElEEAgSLQopUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9KU09OX0lOVkFMSUQQCRIvCitQSV9TRVNTSU9OX0lOVEVHUklUWV9GQUlMVVJFX0hFQURFUl9JTlZBTElEEAoSNwozUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9FTlRSWV9UWVBFX1VOU1VQUE9SVEVEEAsSNAowUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9FTlRSWV9TSEFQRV9JTlZBTElEEAwSMwovUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9EVVBMSUNBVEVfRU5UUllfSUQQDRIvCitQSV9TRVNTSU9OX0lOVEVHUklUWV9GQUlMVVJFX1BBUkVOVF9JTlZBTElEEA4SLQopUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9UUkVFX0lOVkFMSUQQDxIyCi5QSV9TRVNTSU9OX0lOVEVHUklUWV9GQUlMVVJFX1JFRkVSRU5DRV9JTlZBTElEEBASNQoxUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9SUENfRU5UUklFU19NSVNNQVRDSBAREjIKLlBJX1NFU1NJT05fSU5URUdSSVRZX0ZBSUxVUkVfUlBDX0xFQUZfTUlTTUFUQ0gQEhI3CjNQSV9TRVNTSU9OX0lOVEVHUklUWV9GQUlMVVJFX1NFQUxfSURFTlRJVFlfTUlTTUFUQ0gQExI3CjNQSV9TRVNTSU9OX0lOVEVHUklUWV9GQUlMVVJFX1NFQUxFRF9QUkVGSVhfTUlTTUFUQ0gQFBI4CjRQSV9TRVNTSU9OX0lOVEVHUklUWV9GQUlMVVJFX0NPTlRST0xfTUFSS0VSX01JU01BVENIEBUSIwofUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9JTxAWYgZwcm90bzM");
+  fileDesc("ChlwYXRjaGJheS9waV9hZGFwdGVyLnByb3RvEghwYXRjaGJheSK2AwoQUGlSdW50aW1lUHJvZmlsZRIxCgl0cmFuc3BvcnQYASABKA4yHi5wYXRjaGJheS5QaVRyYW5zcG9ydE1lY2hhbmlzbRIqCgZldmVudHMYAiABKAsyGi5wYXRjaGJheS5QaUV2ZW50U2VtYW50aWNzEjkKEnNlc3Npb25fZHVyYWJpbGl0eRgDIAEoCzIdLnBhdGNoYmF5LlBpU2Vzc2lvbkR1cmFiaWxpdHkSKwoGY3Vyc29yGAQgASgLMhsucGF0Y2hiYXkuUGlDdXJzb3JTZW1hbnRpY3MSLwoNY29udHJvbF9wcm9vZhgFIAEoCzIYLnBhdGNoYmF5LlBpQ29udHJvbFByb29mEioKBnJlbG9hZBgGIAEoCzIaLnBhdGNoYmF5LlBpUmVsb2FkQm91bmRhcnkSQAoUZW51bWVyYXRlZF9yZXNvdXJjZXMYByADKA4yIi5wYXRjaGJheS5QaVJlbG9hZGFibGVSZXNvdXJjZUtpbmQSPAoPcHJvamVjdF9jb250ZXh0GAggASgLMiMucGF0Y2hiYXkuUGlQcm9qZWN0Q29udGV4dFNlbWFudGljcyJLChBQaUV2ZW50U2VtYW50aWNzEjcKEmxpdmVfZXZlbnRfY2F2ZWF0cxgBIAMoDjIbLnBhdGNoYmF5LlBpTGl2ZUV2ZW50Q2F2ZWF0IqcBChNQaVNlc3Npb25EdXJhYmlsaXR5EkgKFm1hdGVyaWFsaXphdGlvbl9wb2xpY3kYASABKA4yKC5wYXRjaGJheS5QaVNlc3Npb25NYXRlcmlhbGl6YXRpb25Qb2xpY3kSRgoZcHJlX21hdGVyaWFsaXphdGlvbl9zdGF0ZRgCIAEoDjIjLnBhdGNoYmF5LlBpUHJlTWF0ZXJpYWxpemF0aW9uU3RhdGUiiAEKEVBpQ3Vyc29yU2VtYW50aWNzEi4KCW1lY2hhbmlzbRgBIAEoDjIbLnBhdGNoYmF5LlBpQ3Vyc29yTWVjaGFuaXNtEkMKFGR1cmFiaWxpdHlfY29uZGl0aW9uGAIgASgOMiUucGF0Y2hiYXkuUGlDdXJzb3JEdXJhYmlsaXR5Q29uZGl0aW9uIjwKDlBpQ29udHJvbFByb29mEioKBGtpbmQYASABKA4yHC5wYXRjaGJheS5QaUNvbnRyb2xQcm9vZktpbmQivAEKEFBpUmVsb2FkQm91bmRhcnkSLgoJbWVjaGFuaXNtGAEgASgOMhsucGF0Y2hiYXkuUGlSZWxvYWRNZWNoYW5pc20SLgoJYWRtaXNzaW9uGAIgASgOMhsucGF0Y2hiYXkuUGlSZWxvYWRBZG1pc3Npb24SSAoYcHJvY2Vzc19yZXBsYWNlbWVudF9vbmx5GAMgAygOMiYucGF0Y2hiYXkuUGlQcm9jZXNzUmVwbGFjZW1lbnRPbmx5S2luZCKCAQoZUGlQcm9qZWN0Q29udGV4dFNlbWFudGljcxI4CgpyZXNvbHV0aW9uGAEgASgOMiQucGF0Y2hiYXkuUGlQcm9qZWN0Q29udGV4dFJlc29sdXRpb24SKwoJY3dkX3Byb29mGAIgASgOMhgucGF0Y2hiYXkuUGlDd2RQcm9vZktpbmQiaQoRUGlTcGF3blRhcmdldFNwZWMSGwoTcHJvamVjdF9jb250ZXh0X3JlZhgBIAEoCRI3ChFjb250aW51YXRpb25fbW9kZRgCIAEoDjIcLnBhdGNoYmF5LlBpQ29udGludWF0aW9uTW9kZSJUChRQaVJlY29uZmlndXJlUmVxdWVzdBI8ChByZWxvYWRfcmVzb3VyY2VzGAEgAygOMiIucGF0Y2hiYXkuUGlSZWxvYWRhYmxlUmVzb3VyY2VLaW5kIpMBChNQaVJlY29uZmlndXJlUmVzdWx0Ei8KB291dGNvbWUYASABKA4yHi5wYXRjaGJheS5QaVJlY29uZmlndXJlT3V0Y29tZRJLChtwcm9jZXNzX3JlcGxhY2VtZW50X3JlYXNvbnMYAiADKA4yJi5wYXRjaGJheS5QaVByb2Nlc3NSZXBsYWNlbWVudE9ubHlLaW5kIqwCChlQaUNvbnRyb2xFeHRlbnNpb25Qcm9maWxlEhcKD3Byb2ZpbGVfdmVyc2lvbhgBIAEoCRIZChFoYW5kc2hha2VfY29tbWFuZBgCIAEoCRIWCg5yZWxvYWRfY29tbWFuZBgDIAEoCRIdChVoYW5kc2hha2VfY3VzdG9tX3R5cGUYBCABKAkSIgoacmVsb2FkX3JlcXVlc3RfY3VzdG9tX3R5cGUYBSABKAkSJQodcmVsb2FkX2NvbXBsZXRpb25fY3VzdG9tX3R5cGUYBiABKAkSFwoPY2hhbGxlbmdlX2J5dGVzGAcgASgNEh0KFWV4dGVuc2lvbl9lcG9jaF9ieXRlcxgIIAEoDRIhChlzdXBwb3J0ZWRfc2Vzc2lvbl92ZXJzaW9uGAkgASgNIpMBChhQaUNvbnRyb2xIYW5kc2hha2VNYXJrZXISEQoJY2hhbGxlbmdlGAEgASgJEhQKDGxhdW5jaF9ub25jZRgCIAEoCRIXCg9leHRlbnNpb25fZXBvY2gYAyABKAkSCwoDY3dkGAQgASgJEhIKCnNlc3Npb25faWQYBSABKAkSFAoMc2Vzc2lvbl9maWxlGAYgASgJIpABChVQaVJlbG9hZFJlcXVlc3RNYXJrZXISEgoKY29tbWFuZF9pZBgBIAEoCRINCgVub25jZRgCIAEoCRIdChVwcmlvcl9leHRlbnNpb25fZXBvY2gYAyABKAkSNQoJcmVzb3VyY2VzGAQgAygOMiIucGF0Y2hiYXkuUGlSZWxvYWRhYmxlUmVzb3VyY2VLaW5kIo8BChhQaVJlbG9hZENvbXBsZXRpb25NYXJrZXISEgoKY29tbWFuZF9pZBgBIAEoCRINCgVub25jZRgCIAEoCRIYChByZXF1ZXN0X2VudHJ5X2lkGAMgASgJEh0KFXByaW9yX2V4dGVuc2lvbl9lcG9jaBgEIAEoCRIXCg9leHRlbnNpb25fZXBvY2gYBSABKAkqbwoUUGlUcmFuc3BvcnRNZWNoYW5pc20SJgoiUElfVFJBTlNQT1JUX01FQ0hBTklTTV9VTlNQRUNJRklFRBAAEi8KK1BJX1RSQU5TUE9SVF9NRUNIQU5JU01fUlBDX0pTT05MX1NVQlBST0NFU1MQASqpAQoRUGlMaXZlRXZlbnRDYXZlYXQSJAogUElfTElWRV9FVkVOVF9DQVZFQVRfVU5TUEVDSUZJRUQQABImCiJQSV9MSVZFX0VWRU5UX0NBVkVBVF9QQVJUSUFMX09SREVSEAESRgpCUElfTElWRV9FVkVOVF9DQVZFQVRfUEVSU0lTVEVEX0VOVFJJRVNfUkVRVUlSRURfRk9SX1JFQ09OQ0lMSUFUSU9OEAIqmAEKHlBpU2Vzc2lvbk1hdGVyaWFsaXphdGlvblBvbGljeRIxCi1QSV9TRVNTSU9OX01BVEVSSUFMSVpBVElPTl9QT0xJQ1lfVU5TUEVDSUZJRUQQABJDCj9QSV9TRVNTSU9OX01BVEVSSUFMSVpBVElPTl9QT0xJQ1lfQUZURVJfRklSU1RfQVNTSVNUQU5UX01FU1NBR0UQASqFAQoZUGlQcmVNYXRlcmlhbGl6YXRpb25TdGF0ZRIsCihQSV9QUkVfTUFURVJJQUxJWkFUSU9OX1NUQVRFX1VOU1BFQ0lGSUVEEAASOgo2UElfUFJFX01BVEVSSUFMSVpBVElPTl9TVEFURV9NRU1PUllfT05MWV9OT1RfUkVTVU1BQkxFEAEqfwoRUGlDdXJzb3JNZWNoYW5pc20SIwofUElfQ1VSU09SX01FQ0hBTklTTV9VTlNQRUNJRklFRBAAEkUKQVBJX0NVUlNPUl9NRUNIQU5JU01fUEVSU0lTVEVEX0VOVFJZX0lEX1dJVEhfRVhBQ1RfU0VUX1JFUExBQ0VNRU5UEAEqiwEKG1BpQ3Vyc29yRHVyYWJpbGl0eUNvbmRpdGlvbhIuCipQSV9DVVJTT1JfRFVSQUJJTElUWV9DT05ESVRJT05fVU5TUEVDSUZJRUQQABI8CjhQSV9DVVJTT1JfRFVSQUJJTElUWV9DT05ESVRJT05fTUFURVJJQUxJWkVEX1NFU1NJT05fT05MWRABKngKElBpQ29udHJvbFByb29mS2luZBIlCiFQSV9DT05UUk9MX1BST09GX0tJTkRfVU5TUEVDSUZJRUQQABI7CjdQSV9DT05UUk9MX1BST09GX0tJTkRfQ0hBTExFTkdFRF9FWFRFTlNJT05fQ1VTVE9NX0VOVFJZEAEqbgoRUGlSZWxvYWRNZWNoYW5pc20SIwofUElfUkVMT0FEX01FQ0hBTklTTV9VTlNQRUNJRklFRBAAEjQKMFBJX1JFTE9BRF9NRUNIQU5JU01fQ09OVFJPTF9FWFRFTlNJT05fQ1RYX1JFTE9BRBABKmsKEVBpUmVsb2FkQWRtaXNzaW9uEiMKH1BJX1JFTE9BRF9BRE1JU1NJT05fVU5TUEVDSUZJRUQQABIxCi1QSV9SRUxPQURfQURNSVNTSU9OX0lETEVfTUFURVJJQUxJWkVEX1NFU1NJT04QASr2AgocUGlQcm9jZXNzUmVwbGFjZW1lbnRPbmx5S2luZBIwCixQSV9QUk9DRVNTX1JFUExBQ0VNRU5UX09OTFlfS0lORF9VTlNQRUNJRklFRBAAEkkKRVBJX1BST0NFU1NfUkVQTEFDRU1FTlRfT05MWV9LSU5EX0FSQklUUkFSWV9FWFRFTlNJT05fREVQRU5ERU5DWV9HUkFQSBABEjwKOFBJX1BST0NFU1NfUkVQTEFDRU1FTlRfT05MWV9LSU5EX1BJX1JVTlRJTUVfUEFDS0FHRV9ESVNUEAISNgoyUElfUFJPQ0VTU19SRVBMQUNFTUVOVF9PTkxZX0tJTkRfTkFUSVZFX0RFUEVOREVOQ1kQAxIvCitQSV9QUk9DRVNTX1JFUExBQ0VNRU5UX09OTFlfS0lORF9FWEVDVVRBQkxFEAQSMgouUElfUFJPQ0VTU19SRVBMQUNFTUVOVF9PTkxZX0tJTkRfVU5LTk9XTl9TQ09QRRAFKqQBChpQaVByb2plY3RDb250ZXh0UmVzb2x1dGlvbhItCilQSV9QUk9KRUNUX0NPTlRFWFRfUkVTT0xVVElPTl9VTlNQRUNJRklFRBAAElcKU1BJX1BST0pFQ1RfQ09OVEVYVF9SRVNPTFVUSU9OX0FEQVBURVJfUkVTT0xWRURfQ1dEX1BST0pFQ1RfVFJVU1RfQU5EX1JFU09VUkNFX1JPT1RTEAEqZwoOUGlDd2RQcm9vZktpbmQSIQodUElfQ1dEX1BST09GX0tJTkRfVU5TUEVDSUZJRUQQABIyCi5QSV9DV0RfUFJPT0ZfS0lORF9DSEFMTEVOR0VEX0NPTlRST0xfRVhURU5TSU9OEAEqjwEKElBpQ29udGludWF0aW9uTW9kZRIkCiBQSV9DT05USU5VQVRJT05fTU9ERV9VTlNQRUNJRklFRBAAEicKI1BJX0NPTlRJTlVBVElPTl9NT0RFX1JFUVVJUkVfUkVTVU1FEAESKgomUElfQ09OVElOVUFUSU9OX01PREVfQUxMT1dfTkVXX0NPTlRFWFQQAiryAQoUUGlSZWNvbmZpZ3VyZU91dGNvbWUSJgoiUElfUkVDT05GSUdVUkVfT1VUQ09NRV9VTlNQRUNJRklFRBAAEiMKH1BJX1JFQ09ORklHVVJFX09VVENPTUVfUkVMT0FERUQQARI3CjNQSV9SRUNPTkZJR1VSRV9PVVRDT01FX1BST0NFU1NfUkVQTEFDRU1FTlRfUkVRVUlSRUQQAhIfChtQSV9SRUNPTkZJR1VSRV9PVVRDT01FX0JVU1kQAxIzCi9QSV9SRUNPTkZJR1VSRV9PVVRDT01FX01BVEVSSUFMSVpBVElPTl9SRVFVSVJFRBAEKqECChhQaVJlbG9hZGFibGVSZXNvdXJjZUtpbmQSKwonUElfUkVMT0FEQUJMRV9SRVNPVVJDRV9LSU5EX1VOU1BFQ0lGSUVEEAASNAowUElfUkVMT0FEQUJMRV9SRVNPVVJDRV9LSU5EX0VYVEVOU0lPTl9FTlRSWVBPSU5UEAESJQohUElfUkVMT0FEQUJMRV9SRVNPVVJDRV9LSU5EX1NLSUxMEAISJgoiUElfUkVMT0FEQUJMRV9SRVNPVVJDRV9LSU5EX1BST01QVBADEiUKIVBJX1JFTE9BREFCTEVfUkVTT1VSQ0VfS0lORF9USEVNRRAEEiwKKFBJX1JFTE9BREFCTEVfUkVTT1VSQ0VfS0lORF9DT05URVhUX0ZJTEUQBSq0BgoZUGlDb250cm9sSGFuZHNoYWtlRmFpbHVyZRIsCihQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX1VOU1BFQ0lGSUVEEAASMAosUElfQ09OVFJPTF9IQU5EU0hBS0VfRkFJTFVSRV9DT01NQU5EX01JU1NJTkcQARI4CjRQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX0NPTU1BTkRfU09VUkNFX01JU01BVENIEAISMAosUElfQ09OVFJPTF9IQU5EU0hBS0VfRkFJTFVSRV9QUk9NUFRfUkVKRUNURUQQAxIvCitQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX01BUktFUl9NSVNTSU5HEAQSMQotUElfQ09OVFJPTF9IQU5EU0hBS0VfRkFJTFVSRV9NQVJLRVJfQU1CSUdVT1VTEAUSMwovUElfQ09OVFJPTF9IQU5EU0hBS0VfRkFJTFVSRV9DSEFMTEVOR0VfTUlTTUFUQ0gQBhI2CjJQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX0xBVU5DSF9OT05DRV9NSVNNQVRDSBAHEjkKNVBJX0NPTlRST0xfSEFORFNIQUtFX0ZBSUxVUkVfRVhURU5TSU9OX0VQT0NIX01JU01BVENIEAgSLQopUElfQ09OVFJPTF9IQU5EU0hBS0VfRkFJTFVSRV9DV0RfTUlTTUFUQ0gQCRI0CjBQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX1NFU1NJT05fSURfTUlTTUFUQ0gQChI2CjJQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX1NFU1NJT05fRklMRV9NSVNNQVRDSBALEjcKM1BJX0NPTlRST0xfSEFORFNIQUtFX0ZBSUxVUkVfUlBDX0NST1NTX0NIRUNLX0ZBSUxFRBAMEjgKNFBJX0NPTlRST0xfSEFORFNIQUtFX0ZBSUxVUkVfTUFSS0VSX05PVF9DVVJSRU5UX0xFQUYQDRIvCitQSV9DT05UUk9MX0hBTkRTSEFLRV9GQUlMVVJFX0JPVU5EX0VYQ0VFREVEEA4qpQkKGVBpU2Vzc2lvbkludGVncml0eUZhaWx1cmUSLAooUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9VTlNQRUNJRklFRBAAEi0KKVBJX1NFU1NJT05fSU5URUdSSVRZX0ZBSUxVUkVfUEFUSF9NSVNTSU5HEAESOgo2UElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9QQVRIX09VVFNJREVfQUxMT1dFRF9ST09UEAISKAokUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9TWU1MSU5LEAMSMQotUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9OT1RfUkVHVUxBUl9GSUxFEAQSKwonUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9FTVBUWV9GSUxFEAUSLworUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9GSUxFX1RPT19MQVJHRRAGEi4KKlBJX1NFU1NJT05fSU5URUdSSVRZX0ZBSUxVUkVfVU5TVEFCTEVfRklMRRAHEjAKLFBJX1NFU1NJT05fSU5URUdSSVRZX0ZBSUxVUkVfRlJBTUlOR19JTlZBTElEEAgSLQopUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9KU09OX0lOVkFMSUQQCRIvCitQSV9TRVNTSU9OX0lOVEVHUklUWV9GQUlMVVJFX0hFQURFUl9JTlZBTElEEAoSNwozUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9FTlRSWV9UWVBFX1VOU1VQUE9SVEVEEAsSNAowUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9FTlRSWV9TSEFQRV9JTlZBTElEEAwSMwovUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9EVVBMSUNBVEVfRU5UUllfSUQQDRIvCitQSV9TRVNTSU9OX0lOVEVHUklUWV9GQUlMVVJFX1BBUkVOVF9JTlZBTElEEA4SLQopUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9UUkVFX0lOVkFMSUQQDxIyCi5QSV9TRVNTSU9OX0lOVEVHUklUWV9GQUlMVVJFX1JFRkVSRU5DRV9JTlZBTElEEBASNQoxUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9SUENfRU5UUklFU19NSVNNQVRDSBAREjIKLlBJX1NFU1NJT05fSU5URUdSSVRZX0ZBSUxVUkVfUlBDX0xFQUZfTUlTTUFUQ0gQEhI3CjNQSV9TRVNTSU9OX0lOVEVHUklUWV9GQUlMVVJFX1NFQUxfSURFTlRJVFlfTUlTTUFUQ0gQExI3CjNQSV9TRVNTSU9OX0lOVEVHUklUWV9GQUlMVVJFX1NFQUxFRF9QUkVGSVhfTUlTTUFUQ0gQFBI4CjRQSV9TRVNTSU9OX0lOVEVHUklUWV9GQUlMVVJFX0NPTlRST0xfTUFSS0VSX01JU01BVENIEBUSIwofUElfU0VTU0lPTl9JTlRFR1JJVFlfRkFJTFVSRV9JTxAWYgZwcm90bzM");
 
 /**
- * Adapter-local profile for the control extension. The core may carry this
- * profile opaquely; it must never interpret or expose the path-bearing marker
- * payloads below.
+ * Generated Pi-local runtime vocabulary carried inside the generic opaque
+ * AdapterCapability.adapter_profile envelope. Core validation is deliberately
+ * limited to the outer envelope; the Pi adapter owns semantic decoding.
+ *
+ * @generated from message patchbay.PiRuntimeProfile
+ */
+export type PiRuntimeProfile = Message<"patchbay.PiRuntimeProfile"> & {
+  /**
+   * @generated from field: patchbay.PiTransportMechanism transport = 1;
+   */
+  transport: PiTransportMechanism;
+
+  /**
+   * @generated from field: patchbay.PiEventSemantics events = 2;
+   */
+  events?: PiEventSemantics | undefined;
+
+  /**
+   * @generated from field: patchbay.PiSessionDurability session_durability = 3;
+   */
+  sessionDurability?: PiSessionDurability | undefined;
+
+  /**
+   * @generated from field: patchbay.PiCursorSemantics cursor = 4;
+   */
+  cursor?: PiCursorSemantics | undefined;
+
+  /**
+   * @generated from field: patchbay.PiControlProof control_proof = 5;
+   */
+  controlProof?: PiControlProof | undefined;
+
+  /**
+   * @generated from field: patchbay.PiReloadBoundary reload = 6;
+   */
+  reload?: PiReloadBoundary | undefined;
+
+  /**
+   * @generated from field: repeated patchbay.PiReloadableResourceKind enumerated_resources = 7;
+   */
+  enumeratedResources: PiReloadableResourceKind[];
+
+  /**
+   * @generated from field: patchbay.PiProjectContextSemantics project_context = 8;
+   */
+  projectContext?: PiProjectContextSemantics | undefined;
+};
+
+/**
+ * Describes the message patchbay.PiRuntimeProfile.
+ * Use `create(PiRuntimeProfileSchema)` to create a new message.
+ */
+export const PiRuntimeProfileSchema: GenMessage<PiRuntimeProfile> = /*@__PURE__*/
+  messageDesc(file_patchbay_pi_adapter, 0);
+
+/**
+ * @generated from message patchbay.PiEventSemantics
+ */
+export type PiEventSemantics = Message<"patchbay.PiEventSemantics"> & {
+  /**
+   * @generated from field: repeated patchbay.PiLiveEventCaveat live_event_caveats = 1;
+   */
+  liveEventCaveats: PiLiveEventCaveat[];
+};
+
+/**
+ * Describes the message patchbay.PiEventSemantics.
+ * Use `create(PiEventSemanticsSchema)` to create a new message.
+ */
+export const PiEventSemanticsSchema: GenMessage<PiEventSemantics> = /*@__PURE__*/
+  messageDesc(file_patchbay_pi_adapter, 1);
+
+/**
+ * @generated from message patchbay.PiSessionDurability
+ */
+export type PiSessionDurability = Message<"patchbay.PiSessionDurability"> & {
+  /**
+   * @generated from field: patchbay.PiSessionMaterializationPolicy materialization_policy = 1;
+   */
+  materializationPolicy: PiSessionMaterializationPolicy;
+
+  /**
+   * @generated from field: patchbay.PiPreMaterializationState pre_materialization_state = 2;
+   */
+  preMaterializationState: PiPreMaterializationState;
+};
+
+/**
+ * Describes the message patchbay.PiSessionDurability.
+ * Use `create(PiSessionDurabilitySchema)` to create a new message.
+ */
+export const PiSessionDurabilitySchema: GenMessage<PiSessionDurability> = /*@__PURE__*/
+  messageDesc(file_patchbay_pi_adapter, 2);
+
+/**
+ * @generated from message patchbay.PiCursorSemantics
+ */
+export type PiCursorSemantics = Message<"patchbay.PiCursorSemantics"> & {
+  /**
+   * @generated from field: patchbay.PiCursorMechanism mechanism = 1;
+   */
+  mechanism: PiCursorMechanism;
+
+  /**
+   * @generated from field: patchbay.PiCursorDurabilityCondition durability_condition = 2;
+   */
+  durabilityCondition: PiCursorDurabilityCondition;
+};
+
+/**
+ * Describes the message patchbay.PiCursorSemantics.
+ * Use `create(PiCursorSemanticsSchema)` to create a new message.
+ */
+export const PiCursorSemanticsSchema: GenMessage<PiCursorSemantics> = /*@__PURE__*/
+  messageDesc(file_patchbay_pi_adapter, 3);
+
+/**
+ * @generated from message patchbay.PiControlProof
+ */
+export type PiControlProof = Message<"patchbay.PiControlProof"> & {
+  /**
+   * @generated from field: patchbay.PiControlProofKind kind = 1;
+   */
+  kind: PiControlProofKind;
+};
+
+/**
+ * Describes the message patchbay.PiControlProof.
+ * Use `create(PiControlProofSchema)` to create a new message.
+ */
+export const PiControlProofSchema: GenMessage<PiControlProof> = /*@__PURE__*/
+  messageDesc(file_patchbay_pi_adapter, 4);
+
+/**
+ * @generated from message patchbay.PiReloadBoundary
+ */
+export type PiReloadBoundary = Message<"patchbay.PiReloadBoundary"> & {
+  /**
+   * @generated from field: patchbay.PiReloadMechanism mechanism = 1;
+   */
+  mechanism: PiReloadMechanism;
+
+  /**
+   * @generated from field: patchbay.PiReloadAdmission admission = 2;
+   */
+  admission: PiReloadAdmission;
+
+  /**
+   * @generated from field: repeated patchbay.PiProcessReplacementOnlyKind process_replacement_only = 3;
+   */
+  processReplacementOnly: PiProcessReplacementOnlyKind[];
+};
+
+/**
+ * Describes the message patchbay.PiReloadBoundary.
+ * Use `create(PiReloadBoundarySchema)` to create a new message.
+ */
+export const PiReloadBoundarySchema: GenMessage<PiReloadBoundary> = /*@__PURE__*/
+  messageDesc(file_patchbay_pi_adapter, 5);
+
+/**
+ * @generated from message patchbay.PiProjectContextSemantics
+ */
+export type PiProjectContextSemantics = Message<"patchbay.PiProjectContextSemantics"> & {
+  /**
+   * @generated from field: patchbay.PiProjectContextResolution resolution = 1;
+   */
+  resolution: PiProjectContextResolution;
+
+  /**
+   * @generated from field: patchbay.PiCwdProofKind cwd_proof = 2;
+   */
+  cwdProof: PiCwdProofKind;
+};
+
+/**
+ * Describes the message patchbay.PiProjectContextSemantics.
+ * Use `create(PiProjectContextSemanticsSchema)` to create a new message.
+ */
+export const PiProjectContextSemanticsSchema: GenMessage<PiProjectContextSemantics> = /*@__PURE__*/
+  messageDesc(file_patchbay_pi_adapter, 6);
+
+/**
+ * Typed adapter payload carried by the generic SpawnTargetSpec. The reference
+ * resolves only inside the Pi adapter and must never contain a raw cwd/path.
+ *
+ * @generated from message patchbay.PiSpawnTargetSpec
+ */
+export type PiSpawnTargetSpec = Message<"patchbay.PiSpawnTargetSpec"> & {
+  /**
+   * @generated from field: string project_context_ref = 1;
+   */
+  projectContextRef: string;
+
+  /**
+   * @generated from field: patchbay.PiContinuationMode continuation_mode = 2;
+   */
+  continuationMode: PiContinuationMode;
+};
+
+/**
+ * Describes the message patchbay.PiSpawnTargetSpec.
+ * Use `create(PiSpawnTargetSpecSchema)` to create a new message.
+ */
+export const PiSpawnTargetSpecSchema: GenMessage<PiSpawnTargetSpec> = /*@__PURE__*/
+  messageDesc(file_patchbay_pi_adapter, 7);
+
+/**
+ * Typed Pi-local reconfiguration contract. Reloadable resources remain the
+ * narrow generated set below; broader changes require process replacement.
+ *
+ * @generated from message patchbay.PiReconfigureRequest
+ */
+export type PiReconfigureRequest = Message<"patchbay.PiReconfigureRequest"> & {
+  /**
+   * @generated from field: repeated patchbay.PiReloadableResourceKind reload_resources = 1;
+   */
+  reloadResources: PiReloadableResourceKind[];
+};
+
+/**
+ * Describes the message patchbay.PiReconfigureRequest.
+ * Use `create(PiReconfigureRequestSchema)` to create a new message.
+ */
+export const PiReconfigureRequestSchema: GenMessage<PiReconfigureRequest> = /*@__PURE__*/
+  messageDesc(file_patchbay_pi_adapter, 8);
+
+/**
+ * @generated from message patchbay.PiReconfigureResult
+ */
+export type PiReconfigureResult = Message<"patchbay.PiReconfigureResult"> & {
+  /**
+   * @generated from field: patchbay.PiReconfigureOutcome outcome = 1;
+   */
+  outcome: PiReconfigureOutcome;
+
+  /**
+   * @generated from field: repeated patchbay.PiProcessReplacementOnlyKind process_replacement_reasons = 2;
+   */
+  processReplacementReasons: PiProcessReplacementOnlyKind[];
+};
+
+/**
+ * Describes the message patchbay.PiReconfigureResult.
+ * Use `create(PiReconfigureResultSchema)` to create a new message.
+ */
+export const PiReconfigureResultSchema: GenMessage<PiReconfigureResult> = /*@__PURE__*/
+  messageDesc(file_patchbay_pi_adapter, 9);
+
+/**
+ * Adapter-local profile for the control extension. The core may carry the
+ * runtime profile opaquely; it must never interpret or expose the path-bearing
+ * marker payloads below.
  *
  * @generated from message patchbay.PiControlExtensionProfile
  */
@@ -71,7 +321,7 @@ export type PiControlExtensionProfile = Message<"patchbay.PiControlExtensionProf
  * Use `create(PiControlExtensionProfileSchema)` to create a new message.
  */
 export const PiControlExtensionProfileSchema: GenMessage<PiControlExtensionProfile> = /*@__PURE__*/
-  messageDesc(file_patchbay_pi_adapter, 0);
+  messageDesc(file_patchbay_pi_adapter, 10);
 
 /**
  * Data stored inside a patchbay.control.handshake.v1 Pi custom entry. Raw cwd
@@ -116,7 +366,7 @@ export type PiControlHandshakeMarker = Message<"patchbay.PiControlHandshakeMarke
  * Use `create(PiControlHandshakeMarkerSchema)` to create a new message.
  */
 export const PiControlHandshakeMarkerSchema: GenMessage<PiControlHandshakeMarker> = /*@__PURE__*/
-  messageDesc(file_patchbay_pi_adapter, 1);
+  messageDesc(file_patchbay_pi_adapter, 11);
 
 /**
  * @generated from message patchbay.PiReloadRequestMarker
@@ -148,7 +398,7 @@ export type PiReloadRequestMarker = Message<"patchbay.PiReloadRequestMarker"> & 
  * Use `create(PiReloadRequestMarkerSchema)` to create a new message.
  */
 export const PiReloadRequestMarkerSchema: GenMessage<PiReloadRequestMarker> = /*@__PURE__*/
-  messageDesc(file_patchbay_pi_adapter, 2);
+  messageDesc(file_patchbay_pi_adapter, 12);
 
 /**
  * @generated from message patchbay.PiReloadCompletionMarker
@@ -185,7 +435,346 @@ export type PiReloadCompletionMarker = Message<"patchbay.PiReloadCompletionMarke
  * Use `create(PiReloadCompletionMarkerSchema)` to create a new message.
  */
 export const PiReloadCompletionMarkerSchema: GenMessage<PiReloadCompletionMarker> = /*@__PURE__*/
-  messageDesc(file_patchbay_pi_adapter, 3);
+  messageDesc(file_patchbay_pi_adapter, 13);
+
+/**
+ * @generated from enum patchbay.PiTransportMechanism
+ */
+export enum PiTransportMechanism {
+  /**
+   * @generated from enum value: PI_TRANSPORT_MECHANISM_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_TRANSPORT_MECHANISM_RPC_JSONL_SUBPROCESS = 1;
+   */
+  RPC_JSONL_SUBPROCESS = 1,
+}
+
+/**
+ * Describes the enum patchbay.PiTransportMechanism.
+ */
+export const PiTransportMechanismSchema: GenEnum<PiTransportMechanism> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 0);
+
+/**
+ * @generated from enum patchbay.PiLiveEventCaveat
+ */
+export enum PiLiveEventCaveat {
+  /**
+   * @generated from enum value: PI_LIVE_EVENT_CAVEAT_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_LIVE_EVENT_CAVEAT_PARTIAL_ORDER = 1;
+   */
+  PARTIAL_ORDER = 1,
+
+  /**
+   * @generated from enum value: PI_LIVE_EVENT_CAVEAT_PERSISTED_ENTRIES_REQUIRED_FOR_RECONCILIATION = 2;
+   */
+  PERSISTED_ENTRIES_REQUIRED_FOR_RECONCILIATION = 2,
+}
+
+/**
+ * Describes the enum patchbay.PiLiveEventCaveat.
+ */
+export const PiLiveEventCaveatSchema: GenEnum<PiLiveEventCaveat> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 1);
+
+/**
+ * @generated from enum patchbay.PiSessionMaterializationPolicy
+ */
+export enum PiSessionMaterializationPolicy {
+  /**
+   * @generated from enum value: PI_SESSION_MATERIALIZATION_POLICY_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_SESSION_MATERIALIZATION_POLICY_AFTER_FIRST_ASSISTANT_MESSAGE = 1;
+   */
+  AFTER_FIRST_ASSISTANT_MESSAGE = 1,
+}
+
+/**
+ * Describes the enum patchbay.PiSessionMaterializationPolicy.
+ */
+export const PiSessionMaterializationPolicySchema: GenEnum<PiSessionMaterializationPolicy> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 2);
+
+/**
+ * @generated from enum patchbay.PiPreMaterializationState
+ */
+export enum PiPreMaterializationState {
+  /**
+   * @generated from enum value: PI_PRE_MATERIALIZATION_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_PRE_MATERIALIZATION_STATE_MEMORY_ONLY_NOT_RESUMABLE = 1;
+   */
+  MEMORY_ONLY_NOT_RESUMABLE = 1,
+}
+
+/**
+ * Describes the enum patchbay.PiPreMaterializationState.
+ */
+export const PiPreMaterializationStateSchema: GenEnum<PiPreMaterializationState> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 3);
+
+/**
+ * @generated from enum patchbay.PiCursorMechanism
+ */
+export enum PiCursorMechanism {
+  /**
+   * @generated from enum value: PI_CURSOR_MECHANISM_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_CURSOR_MECHANISM_PERSISTED_ENTRY_ID_WITH_EXACT_SET_REPLACEMENT = 1;
+   */
+  PERSISTED_ENTRY_ID_WITH_EXACT_SET_REPLACEMENT = 1,
+}
+
+/**
+ * Describes the enum patchbay.PiCursorMechanism.
+ */
+export const PiCursorMechanismSchema: GenEnum<PiCursorMechanism> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 4);
+
+/**
+ * @generated from enum patchbay.PiCursorDurabilityCondition
+ */
+export enum PiCursorDurabilityCondition {
+  /**
+   * @generated from enum value: PI_CURSOR_DURABILITY_CONDITION_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_CURSOR_DURABILITY_CONDITION_MATERIALIZED_SESSION_ONLY = 1;
+   */
+  MATERIALIZED_SESSION_ONLY = 1,
+}
+
+/**
+ * Describes the enum patchbay.PiCursorDurabilityCondition.
+ */
+export const PiCursorDurabilityConditionSchema: GenEnum<PiCursorDurabilityCondition> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 5);
+
+/**
+ * @generated from enum patchbay.PiControlProofKind
+ */
+export enum PiControlProofKind {
+  /**
+   * @generated from enum value: PI_CONTROL_PROOF_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_CONTROL_PROOF_KIND_CHALLENGED_EXTENSION_CUSTOM_ENTRY = 1;
+   */
+  CHALLENGED_EXTENSION_CUSTOM_ENTRY = 1,
+}
+
+/**
+ * Describes the enum patchbay.PiControlProofKind.
+ */
+export const PiControlProofKindSchema: GenEnum<PiControlProofKind> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 6);
+
+/**
+ * @generated from enum patchbay.PiReloadMechanism
+ */
+export enum PiReloadMechanism {
+  /**
+   * @generated from enum value: PI_RELOAD_MECHANISM_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_RELOAD_MECHANISM_CONTROL_EXTENSION_CTX_RELOAD = 1;
+   */
+  CONTROL_EXTENSION_CTX_RELOAD = 1,
+}
+
+/**
+ * Describes the enum patchbay.PiReloadMechanism.
+ */
+export const PiReloadMechanismSchema: GenEnum<PiReloadMechanism> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 7);
+
+/**
+ * @generated from enum patchbay.PiReloadAdmission
+ */
+export enum PiReloadAdmission {
+  /**
+   * @generated from enum value: PI_RELOAD_ADMISSION_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_RELOAD_ADMISSION_IDLE_MATERIALIZED_SESSION = 1;
+   */
+  IDLE_MATERIALIZED_SESSION = 1,
+}
+
+/**
+ * Describes the enum patchbay.PiReloadAdmission.
+ */
+export const PiReloadAdmissionSchema: GenEnum<PiReloadAdmission> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 8);
+
+/**
+ * @generated from enum patchbay.PiProcessReplacementOnlyKind
+ */
+export enum PiProcessReplacementOnlyKind {
+  /**
+   * @generated from enum value: PI_PROCESS_REPLACEMENT_ONLY_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_PROCESS_REPLACEMENT_ONLY_KIND_ARBITRARY_EXTENSION_DEPENDENCY_GRAPH = 1;
+   */
+  ARBITRARY_EXTENSION_DEPENDENCY_GRAPH = 1,
+
+  /**
+   * @generated from enum value: PI_PROCESS_REPLACEMENT_ONLY_KIND_PI_RUNTIME_PACKAGE_DIST = 2;
+   */
+  PI_RUNTIME_PACKAGE_DIST = 2,
+
+  /**
+   * @generated from enum value: PI_PROCESS_REPLACEMENT_ONLY_KIND_NATIVE_DEPENDENCY = 3;
+   */
+  NATIVE_DEPENDENCY = 3,
+
+  /**
+   * @generated from enum value: PI_PROCESS_REPLACEMENT_ONLY_KIND_EXECUTABLE = 4;
+   */
+  EXECUTABLE = 4,
+
+  /**
+   * @generated from enum value: PI_PROCESS_REPLACEMENT_ONLY_KIND_UNKNOWN_SCOPE = 5;
+   */
+  UNKNOWN_SCOPE = 5,
+}
+
+/**
+ * Describes the enum patchbay.PiProcessReplacementOnlyKind.
+ */
+export const PiProcessReplacementOnlyKindSchema: GenEnum<PiProcessReplacementOnlyKind> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 9);
+
+/**
+ * @generated from enum patchbay.PiProjectContextResolution
+ */
+export enum PiProjectContextResolution {
+  /**
+   * @generated from enum value: PI_PROJECT_CONTEXT_RESOLUTION_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_PROJECT_CONTEXT_RESOLUTION_ADAPTER_RESOLVED_CWD_PROJECT_TRUST_AND_RESOURCE_ROOTS = 1;
+   */
+  ADAPTER_RESOLVED_CWD_PROJECT_TRUST_AND_RESOURCE_ROOTS = 1,
+}
+
+/**
+ * Describes the enum patchbay.PiProjectContextResolution.
+ */
+export const PiProjectContextResolutionSchema: GenEnum<PiProjectContextResolution> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 10);
+
+/**
+ * @generated from enum patchbay.PiCwdProofKind
+ */
+export enum PiCwdProofKind {
+  /**
+   * @generated from enum value: PI_CWD_PROOF_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_CWD_PROOF_KIND_CHALLENGED_CONTROL_EXTENSION = 1;
+   */
+  CHALLENGED_CONTROL_EXTENSION = 1,
+}
+
+/**
+ * Describes the enum patchbay.PiCwdProofKind.
+ */
+export const PiCwdProofKindSchema: GenEnum<PiCwdProofKind> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 11);
+
+/**
+ * @generated from enum patchbay.PiContinuationMode
+ */
+export enum PiContinuationMode {
+  /**
+   * @generated from enum value: PI_CONTINUATION_MODE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_CONTINUATION_MODE_REQUIRE_RESUME = 1;
+   */
+  REQUIRE_RESUME = 1,
+
+  /**
+   * @generated from enum value: PI_CONTINUATION_MODE_ALLOW_NEW_CONTEXT = 2;
+   */
+  ALLOW_NEW_CONTEXT = 2,
+}
+
+/**
+ * Describes the enum patchbay.PiContinuationMode.
+ */
+export const PiContinuationModeSchema: GenEnum<PiContinuationMode> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 12);
+
+/**
+ * @generated from enum patchbay.PiReconfigureOutcome
+ */
+export enum PiReconfigureOutcome {
+  /**
+   * @generated from enum value: PI_RECONFIGURE_OUTCOME_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: PI_RECONFIGURE_OUTCOME_RELOADED = 1;
+   */
+  RELOADED = 1,
+
+  /**
+   * @generated from enum value: PI_RECONFIGURE_OUTCOME_PROCESS_REPLACEMENT_REQUIRED = 2;
+   */
+  PROCESS_REPLACEMENT_REQUIRED = 2,
+
+  /**
+   * @generated from enum value: PI_RECONFIGURE_OUTCOME_BUSY = 3;
+   */
+  BUSY = 3,
+
+  /**
+   * @generated from enum value: PI_RECONFIGURE_OUTCOME_MATERIALIZATION_REQUIRED = 4;
+   */
+  MATERIALIZATION_REQUIRED = 4,
+}
+
+/**
+ * Describes the enum patchbay.PiReconfigureOutcome.
+ */
+export const PiReconfigureOutcomeSchema: GenEnum<PiReconfigureOutcome> = /*@__PURE__*/
+  enumDesc(file_patchbay_pi_adapter, 13);
 
 /**
  * @generated from enum patchbay.PiReloadableResourceKind
@@ -226,7 +815,7 @@ export enum PiReloadableResourceKind {
  * Describes the enum patchbay.PiReloadableResourceKind.
  */
 export const PiReloadableResourceKindSchema: GenEnum<PiReloadableResourceKind> = /*@__PURE__*/
-  enumDesc(file_patchbay_pi_adapter, 0);
+  enumDesc(file_patchbay_pi_adapter, 14);
 
 /**
  * Redacted handshake failures. They intentionally cannot carry the challenged
@@ -315,7 +904,7 @@ export enum PiControlHandshakeFailure {
  * Describes the enum patchbay.PiControlHandshakeFailure.
  */
 export const PiControlHandshakeFailureSchema: GenEnum<PiControlHandshakeFailure> = /*@__PURE__*/
-  enumDesc(file_patchbay_pi_adapter, 1);
+  enumDesc(file_patchbay_pi_adapter, 15);
 
 /**
  * Redacted adapter-local failure vocabulary. Values identify a failed
@@ -444,5 +1033,5 @@ export enum PiSessionIntegrityFailure {
  * Describes the enum patchbay.PiSessionIntegrityFailure.
  */
 export const PiSessionIntegrityFailureSchema: GenEnum<PiSessionIntegrityFailure> = /*@__PURE__*/
-  enumDesc(file_patchbay_pi_adapter, 2);
+  enumDesc(file_patchbay_pi_adapter, 16);
 

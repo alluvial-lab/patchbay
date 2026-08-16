@@ -474,6 +474,90 @@ async fn replay_accepts_only_the_complete_canonical_attachment_envelope() {
 }
 
 #[test]
+fn opaque_adapter_profile_validates_only_generic_bounded_framing() {
+    let without_profile = ValidatedAdapterCapability::try_from_wire(
+        &session_capability(),
+        CapabilityValidationContext::Attach,
+    )
+    .expect("an adapter profile remains optional");
+    assert!(without_profile.adapter_profile().is_none());
+
+    let mut opaque = session_capability();
+    opaque.adapter_profile = Some(PayloadEnvelope {
+        // Deliberately not a valid PiRuntimeProfile. The generic core must not
+        // select or decode adapter-specific schemas.
+        payload: vec![0xff, 0x00, 0x80],
+        content_type: PayloadContentType::Protobuf as i32,
+        schema_ref: "patchbay.PiRuntimeProfile.v1".to_owned(),
+    });
+    for context in [
+        CapabilityValidationContext::Attach,
+        CapabilityValidationContext::Replay,
+    ] {
+        let validated = ValidatedAdapterCapability::try_from_wire(&opaque, context)
+            .expect("opaque profile semantics are adapter-owned");
+        let profile = validated.adapter_profile().expect("profile descriptor");
+        assert_eq!(profile.schema_ref(), "patchbay.PiRuntimeProfile.v1");
+        assert_eq!(profile.content_type(), PayloadContentType::Protobuf);
+    }
+
+    for (name, envelope) in [
+        (
+            "empty payload",
+            PayloadEnvelope {
+                payload: Vec::new(),
+                content_type: PayloadContentType::Protobuf as i32,
+                schema_ref: "example.Profile.v1".to_owned(),
+            },
+        ),
+        (
+            "oversized payload",
+            PayloadEnvelope {
+                payload: vec![0; 64 * 1024 + 1],
+                content_type: PayloadContentType::Protobuf as i32,
+                schema_ref: "example.Profile.v1".to_owned(),
+            },
+        ),
+        (
+            "malformed schema",
+            PayloadEnvelope {
+                payload: vec![1],
+                content_type: PayloadContentType::Protobuf as i32,
+                schema_ref: "example profile".to_owned(),
+            },
+        ),
+        (
+            "unspecified content type",
+            PayloadEnvelope {
+                payload: vec![1],
+                content_type: PayloadContentType::Unspecified as i32,
+                schema_ref: "example.Profile.v1".to_owned(),
+            },
+        ),
+        (
+            "unknown content type",
+            PayloadEnvelope {
+                payload: vec![1],
+                content_type: 99,
+                schema_ref: "example.Profile.v1".to_owned(),
+            },
+        ),
+    ] {
+        let mut capability = session_capability();
+        capability.adapter_profile = Some(envelope);
+        for context in [
+            CapabilityValidationContext::Attach,
+            CapabilityValidationContext::Replay,
+        ] {
+            assert!(
+                ValidatedAdapterCapability::try_from_wire(&capability, context).is_err(),
+                "{name} must fail closed during {context:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn complete_assurance_manifest_requires_explicit_false_and_known_non_sentinel_values() {
     let complete = session_capability();
     let validated =

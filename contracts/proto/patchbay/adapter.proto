@@ -22,6 +22,9 @@ message AdapterCapability {
   repeated AdapterTargetCategory target_categories = 11;
   repeated ResourceCapability resource_capabilities = 12;
   AdapterAssuranceManifest assurance = 13;
+  // Optional adapter-specific generated profile. The core validates only the
+  // bounded opaque envelope and never interprets the profile payload.
+  PayloadEnvelope adapter_profile = 14;
 }
 
 // Versioned, complete declaration of adapter durability and reconciliation
