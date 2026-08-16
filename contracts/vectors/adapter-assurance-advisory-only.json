@@ -3,7 +3,8 @@
   "property_id": "GrantAuthorityIsOperationKinds",
   "promotion_status": "promoted",
   "implementation_checks": [
-    { "runner": "rust-core", "case": "adapter_assurance_advisory_only" }
+    { "runner": "rust-core", "case": "adapter_assurance_advisory_only" },
+    { "runner": "rust-server", "case": "adapter_assurance_delivery_outcome" }
   ],
   "proto_fields_constrained": [
     "patchbay.AdapterCapability.supported_operation_kinds",
@@ -17,6 +18,10 @@
     "patchbay.AdapterAssuranceManifestV1.unproven_outcome_action",
     "patchbay.Grant.allowed_operation_kinds",
     "patchbay.Operation.kind",
+    "patchbay.Observation.kind",
+    "patchbay.Observation.failure_code",
+    "patchbay.Observation.correlations",
+    "patchbay.OperationState",
     "patchbay.SubmissionResult.outcome",
     "patchbay.SubmissionResult.failure_code"
   ],
@@ -50,6 +55,14 @@
       },
       "grant": {
         "allowed_operation_kinds": ["OPERATION_KIND_INSTRUCT"]
+      },
+      "delivery_scenario": {
+        "adapter_id": "pi",
+        "deployment_scope": "conformance",
+        "runtime_session_id": "session-assurance",
+        "session_generation": 1,
+        "command_id": "conservative-with-grant",
+        "adapter_result_failure_code": "FAILURE_CODE_UNSUPPORTED_COMMAND"
       }
     }
   },
@@ -61,6 +74,9 @@
     },
     "conservative_with_grant": {
       "accepted_for_delivery": true,
+      "delivered_to_adapter": true,
+      "adapter_result_failure_code": "FAILURE_CODE_UNSUPPORTED_COMMAND",
+      "durable_operation_state": "OPERATION_STATE_REJECTED",
       "adapter_delivery_outcome_remains_authoritative": true
     },
     "capability_grants_authority": false,

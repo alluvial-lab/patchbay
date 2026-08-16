@@ -72,6 +72,7 @@ impl ValidatedAdapterCapability {
         })?;
 
         let legacy_session_only = context == CapabilityValidationContext::Replay
+            && capability.assurance.is_none()
             && capability.target_categories.is_empty()
             && capability.resource_capabilities.is_empty();
 

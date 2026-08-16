@@ -587,6 +587,33 @@ fn attach_rejects_missing_unknown_version_and_dual_declarations() {
 }
 
 #[test]
+fn current_v1_cannot_enter_legacy_category_normalization_on_replay() {
+    let mut categoryless_v1 = session_capability();
+    categoryless_v1.target_categories.clear();
+
+    for context in [
+        CapabilityValidationContext::Attach,
+        CapabilityValidationContext::Replay,
+    ] {
+        assert!(
+            ValidatedAdapterCapability::try_from_wire(&categoryless_v1, context).is_err(),
+            "categoryless current V1 must reject in {context:?} rather than enter legacy normalization"
+        );
+    }
+
+    let legacy = AdapterCapability::default();
+    let replayed =
+        ValidatedAdapterCapability::try_from_wire(&legacy, CapabilityValidationContext::Replay)
+            .expect("genuinely pre-assurance categoryless registration remains replayable");
+    assert!(replayed.targets(AdapterTargetCategory::RuntimeSession));
+    assert!(
+        ValidatedAdapterCapability::try_from_wire(&legacy, CapabilityValidationContext::Attach)
+            .is_err(),
+        "legacy category normalization remains replay-only"
+    );
+}
+
+#[test]
 #[allow(deprecated)]
 fn replay_only_legacy_assurance_normalizes_conservatively() {
     for (wire, expected) in [

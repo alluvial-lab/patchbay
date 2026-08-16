@@ -1,7 +1,7 @@
 ---
 id: capability-manifest-durability-and-reconciliation-depth-contract-validation
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: capability-manifest-durability-and-reconciliation-depth
 depends_on: []
@@ -111,3 +111,15 @@ No sibling dependency. This checkpoint must complete before `capability-manifest
 - Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; 59 vectors, 19 promoted vectors, 28 implementation checks, and 38 registered mutation witnesses; generated drift and traceability are current.
 - Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 27/27 tests.
 - Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 60/60 tests including the real core/adapter generation-bump, reconnect, and restart E2E.
+
+### Fix round r1 — material review findings
+
+- Dispatch and rationale: direct-read fix round under `openai-codex/gpt-5.6-sol`, with caller-selected `thorough` review. The authoritative review supplied exact reproduction probes and the affected validator/vector seams, so exploratory fan-out would not have reduced a named unknown.
+- V1 routing strictness: legacy category normalization now additionally requires `assurance.is_none()`. A committed regression proves a categoryless current V1 rejects under both Attach and Replay, while a genuinely pre-assurance, categoryless record still normalizes to conservative runtime-session capability only during Replay.
+- Delivery-outcome coverage: `adapter-assurance-advisory-only` now registers a second Rust server implementation check. It attaches an adapter whose current V1 assurance and advertised Operation set are conservative/empty, accepts an independently Grant-authorized `instruct`, observes that exact Operation on the production delivery stream, applies the adapter delivery acknowledgement and `unsupported_command` Result through authenticated adapter ingress, and replays the durable command as `REJECTED` with `UNSUPPORTED_COMMAND`. The vector now constrains the Observation/outcome fields it executes; generated traceability records 29 implementation checks.
+- Mutation kills: the legacy-routing divergence probe failed against the reintroduced routing defect; flipping `adapter_delivery_outcome_remains_authoritative` to false failed the new server implementation check. The five prior mutants were also re-confirmed killed: omitted `cursor_support` inferred false; unknown/missing contract normalized through Replay; non-sentinel legacy tag 7 ignored beside V1; maximal assurance synthesized a Grant; and unknown `known_failure_modes` silently dropped. Every mutant was applied alone, failed its focused oracle, and was removed with `git restore`; the staged baseline and worktree were verified clean after restoration.
+- Fix-round verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS**; all workspace targets, tests, doctests, and warnings-denied clippy passed.
+- Fix-round verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; 59 vectors, 19 promoted vectors, 29 implementation checks, and 38 registered mutation witnesses; generated drift and model/vector traceability are current.
+- Fix-round verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 27/27 tests.
+- Fix-round verification group 4 — `cd pi-adapter && npm test`: **PASS**, 60/60 tests including the real core/adapter generation-bump, reconnect, and restart E2E.
+- Discrepancies and scope: no Proto edit was required. The delivery claim uses a second server runner rather than stretching the core acceptance runner because the server owns the authenticated attachment, delivery stream, and adapter-result ingress composition. No adjacent issue was parked.

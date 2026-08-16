@@ -1,9 +1,9 @@
 extern crate patchbay_test_support;
-use std::{collections::BTreeMap, env, fs, path::PathBuf, sync::Arc};
+use std::{collections::BTreeMap, env, fs, path::PathBuf, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
     adapter_assurance_manifest, observation_request, resource_report, resource_report_mutation,
-    AcceptedOperation, ActorEndpointRef, ActorId, AdapterAssuranceManifest,
+    typed_correlation, AcceptedOperation, ActorEndpointRef, ActorId, AdapterAssuranceManifest,
     AdapterAssuranceManifestV1, AdapterCapability, AdapterId, AdapterReconciliationStrength,
     AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
     AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, DeviceId, EndpointId, FailureCode,
@@ -17,9 +17,11 @@ use patchbay_contracts::patchbay::{
     SessionActivityState, SessionConnectivityState, SessionRegistered, SessionReport,
     SessionReportSourceCursor, SessionSnapshot, SessionState, SnapshotViewKind, StoredEventKind,
     StoredEventPayload, StoredSessionCheckpoint, SubmissionOutcome, SubmitRequest, TargetScope,
-    TargetScopeKind, TimeWindow, VerifyOperatorPasswordRequest,
+    TargetScopeKind, TimeWindow, TypedCorrelation, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
+    acceptance::rebuild_from_log as rebuild_commands_from_log,
+    adapter,
     authority::events as authority_events,
     resource::{
         ingest_resource_report, ResourceRegistry, ResourceReportMode, ValidatedResourceReport,
@@ -50,6 +52,7 @@ use prost::Message;
 use prost_types::Timestamp;
 use serde::Deserialize;
 use serde_json::Value;
+use tokio_stream::StreamExt;
 use tonic::{Code, Request, Response};
 
 #[cfg(feature = "conformance-fault-injection")]
@@ -3301,6 +3304,325 @@ async fn continuation_context_status_carriage(_vector: &ConformanceVector) -> Re
     Err("continuation context carriage conformance requires conformance-fault-injection".to_owned())
 }
 
+async fn adapter_assurance_delivery_outcome(vector: &ConformanceVector) -> Result<(), String> {
+    let scenario = "/conservative_with_grant/delivery_scenario";
+    if vector
+        .input
+        .pointer("/conservative_with_grant/supported_operation_kinds")
+        .and_then(Value::as_array)
+        .is_none_or(|kinds| !kinds.is_empty())
+        || string(
+            &vector.input,
+            "/conservative_with_grant/grant/allowed_operation_kinds/0",
+        )? != "OPERATION_KIND_INSTRUCT"
+        || boolean(
+            &vector.input,
+            "/conservative_with_grant/assurance/v1/continuation_proof_support",
+        )?
+        || boolean(
+            &vector.input,
+            "/conservative_with_grant/assurance/v1/cursor_support",
+        )?
+        || boolean(
+            &vector.input,
+            "/conservative_with_grant/assurance/v1/generation_fence_support",
+        )?
+        || string(
+            &vector.input,
+            "/conservative_with_grant/assurance/v1/deduplication_strength",
+        )? != "IDEMPOTENCY_STRENGTH_NONE"
+        || string(
+            &vector.input,
+            "/conservative_with_grant/assurance/v1/reconciliation_strength",
+        )? != "ADAPTER_RECONCILIATION_STRENGTH_NONE"
+        || string(
+            &vector.input,
+            "/conservative_with_grant/assurance/v1/unproven_outcome_action",
+        )? != "RECONCILIATION_ACTION_NONE"
+        || string(
+            &vector.input,
+            &format!("{scenario}/adapter_result_failure_code"),
+        )? != "FAILURE_CODE_UNSUPPORTED_COMMAND"
+    {
+        return Err("delivery scenario must use the conservative empty capability and an independent instruct Grant".to_owned());
+    }
+
+    let domain = AuthorityDomainId {
+        value: "auth-main".to_owned(),
+    };
+    let actor = "operator";
+    let endpoint = "web";
+    let adapter_id = AdapterId {
+        value: string(&vector.input, &format!("{scenario}/adapter_id"))?.to_owned(),
+    };
+    let target = TargetScope {
+        kind: TargetScopeKind::RuntimeSession as i32,
+        adapter_id: Some(adapter_id.clone()),
+        deployment_scope: string(&vector.input, &format!("{scenario}/deployment_scope"))?
+            .to_owned(),
+        runtime_session_id: Some(RuntimeSessionId {
+            value: string(&vector.input, &format!("{scenario}/runtime_session_id"))?.to_owned(),
+        }),
+        session_generation: Some(Generation {
+            value: unsigned(&vector.input, &format!("{scenario}/session_generation"))?,
+        }),
+        ..TargetScope::default()
+    };
+    let command_id = CommandId {
+        value: string(&vector.input, &format!("{scenario}/command_id"))?.to_owned(),
+    };
+
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    seed_operator(&storage, &domain, actor).await?;
+    seed_operation_target(&storage, &domain, &target).await?;
+
+    let adapter_service = AdapterControlServiceImpl::new(
+        storage.clone(),
+        domain.clone(),
+        evidence_verifier(&adapter_id)?,
+    )
+    .await?;
+    let mut adapter_registration = session_registration(&domain, &adapter_id, 1);
+    adapter_registration
+        .capability
+        .as_mut()
+        .ok_or("session registration omitted capability")?
+        .supported_operation_kinds
+        .clear();
+    let attached = adapter_service
+        .attach(Request::new(AttachRequest {
+            registration: Some(adapter_registration),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .map_err(|error| error.to_string())?;
+    let token = attachment_token(&attached)?;
+
+    storage
+        .append(
+            &domain,
+            authority_events::grant(
+                domain.clone(),
+                Grant {
+                    grant_id: Some(GrantId {
+                        value: "assurance-independent-grant".to_owned(),
+                    }),
+                    authority_domain_id: Some(domain.clone()),
+                    subject_actor_id: Some(ActorId {
+                        value: actor.to_owned(),
+                    }),
+                    subject_endpoint_id: Some(EndpointId {
+                        value: endpoint.to_owned(),
+                    }),
+                    target_scope: Some(target.clone()),
+                    allowed_operation_kinds: vec![OperationKind::Instruct as i32],
+                    provenance: Some(GrantProvenance {
+                        reason: "assurance delivery conformance".to_owned(),
+                        ..GrantProvenance::default()
+                    }),
+                    revocation_policy: GrantRevocationPolicy::Continue as i32,
+                    ..Grant::default()
+                },
+            ),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let control_service = ControlServiceImpl::new_with_clock(
+        storage.clone(),
+        domain.clone(),
+        Arc::new(TestClock::new(Timestamp {
+            seconds: 100,
+            nanos: 0,
+        })),
+    )
+    .await?;
+    let login = control_service
+        .verify_operator_password(Request::new(VerifyOperatorPasswordRequest {
+            operator_actor_id: Some(ActorId {
+                value: actor.to_owned(),
+            }),
+            password: OPERATOR_PASSWORD.to_owned(),
+            principal: Some(PrincipalEnrollment {
+                endpoint_id: Some(EndpointId {
+                    value: endpoint.to_owned(),
+                }),
+                device_id: Some(DeviceId {
+                    value: "conformance-host".to_owned(),
+                }),
+                endpoint_generation: Some(Generation { value: 1 }),
+            }),
+        }))
+        .await
+        .map_err(|error| error.to_string())?
+        .into_inner();
+    let operator_session_id = login
+        .operator_session_id
+        .as_ref()
+        .ok_or("delivery scenario login omitted operator session")?
+        .value
+        .clone();
+    let principal = login
+        .principal
+        .ok_or("delivery scenario login omitted principal")?;
+    let submitted = control_service
+        .submit(authenticated_control(
+            SubmitRequest {
+                operation: Some(Operation {
+                    command_id: Some(command_id.clone()),
+                    authority_domain_id: Some(domain.clone()),
+                    sender: Some(ActorEndpointRef {
+                        actor_id: Some(ActorId {
+                            value: actor.to_owned(),
+                        }),
+                        ..ActorEndpointRef::default()
+                    }),
+                    kind: OperationKind::Instruct as i32,
+                    target_scope: Some(target.clone()),
+                    idempotency_key: "conservative-with-grant-key".to_owned(),
+                    payload: Some(PayloadEnvelope::default()),
+                    validity_window: Some(TimeWindow {
+                        starts_at: Some(Timestamp {
+                            seconds: 99,
+                            nanos: 0,
+                        }),
+                        expires_at: Some(Timestamp {
+                            seconds: 101,
+                            nanos: 0,
+                        }),
+                    }),
+                    submitted_at: Some(Timestamp {
+                        seconds: 100,
+                        nanos: 0,
+                    }),
+                    ..Operation::default()
+                }),
+            },
+            actor,
+            &operator_session_id,
+            &principal.principal_id,
+            &principal.secret,
+        )?)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_inner();
+    if submitted.outcome != SubmissionOutcome::Accepted as i32
+        || submitted.operation_state != OperationState::Accepted as i32
+    {
+        return Err("conservative capability suppressed grant-authorized acceptance".to_owned());
+    }
+
+    let mut deliveries = adapter_service
+        .receive_deliveries(authenticated(
+            ReceiveRequest {
+                adapter_id: Some(adapter_id.clone()),
+                cursor: Some(Lsn { value: 0 }),
+            },
+            &adapter_id.value,
+            &token,
+        )?)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_inner();
+    let delivery = tokio::time::timeout(Duration::from_secs(2), deliveries.next())
+        .await
+        .map_err(|_| "grant-authorized Operation delivery timed out".to_owned())?
+        .ok_or("adapter delivery stream ended before the Operation")?
+        .map_err(|error| error.to_string())?;
+    let delivered_operation = delivery
+        .operation
+        .ok_or("adapter delivery omitted the Operation")?;
+    if delivered_operation.command_id.as_ref() != Some(&command_id)
+        || delivered_operation.kind != OperationKind::Instruct as i32
+        || delivered_operation.target_scope.as_ref() != Some(&target)
+    {
+        return Err("adapter received the wrong delivery despite the independent Grant".to_owned());
+    }
+
+    let correlation = TypedCorrelation {
+        r#ref: Some(typed_correlation::Ref::CommandId(command_id.clone())),
+    };
+    adapter_service
+        .ingest_observation(authenticated(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::Event(Observation {
+                    authority_domain_id: Some(domain.clone()),
+                    kind: ObservationKind::Event as i32,
+                    correlations: vec![correlation.clone()],
+                    target_scope: Some(target.clone()),
+                    payload: Some(PayloadEnvelope {
+                        schema_ref: adapter::DELIVERY_ACKNOWLEDGEMENT_SCHEMA.to_owned(),
+                        ..PayloadEnvelope::default()
+                    }),
+                    failure_code: FailureCode::Unspecified as i32,
+                    ..Observation::default()
+                })),
+            },
+            &adapter_id.value,
+            &token,
+        )?)
+        .await
+        .map_err(|error| error.to_string())?;
+    adapter_service
+        .ingest_observation(authenticated(
+            ObservationRequest {
+                authority_domain_id: Some(domain.clone()),
+                observation: Some(observation_request::Observation::Event(Observation {
+                    authority_domain_id: Some(domain.clone()),
+                    kind: ObservationKind::Result as i32,
+                    correlations: vec![correlation],
+                    target_scope: Some(target),
+                    failure_code: FailureCode::UnsupportedCommand as i32,
+                    ..Observation::default()
+                })),
+            },
+            &adapter_id.value,
+            &token,
+        )?)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let commands = rebuild_commands_from_log(&storage, &domain)
+        .await
+        .map_err(|error| error.to_string())?;
+    let record = commands
+        .get_command(&command_id)
+        .ok_or("adapter result left no durable command")?;
+    let observed_adapter_authority = record.state == OperationState::Rejected
+        && record.failure_code == Some(FailureCode::UnsupportedCommand);
+    if !boolean(
+        &vector.expected_outcome,
+        "/conservative_with_grant/accepted_for_delivery",
+    )? || !boolean(
+        &vector.expected_outcome,
+        "/conservative_with_grant/delivered_to_adapter",
+    )? || string(
+        &vector.expected_outcome,
+        "/conservative_with_grant/adapter_result_failure_code",
+    )? != "FAILURE_CODE_UNSUPPORTED_COMMAND"
+        || string(
+            &vector.expected_outcome,
+            "/conservative_with_grant/durable_operation_state",
+        )? != "OPERATION_STATE_REJECTED"
+        || boolean(
+            &vector.expected_outcome,
+            "/conservative_with_grant/adapter_delivery_outcome_remains_authoritative",
+        )? != observed_adapter_authority
+        || boolean(
+            &vector.expected_outcome,
+            "/capability_replaces_delivery_outcome",
+        )?
+        || !observed_adapter_authority
+    {
+        return Err(format!(
+            "adapter delivery/result did not solely determine the durable outcome: state={:?} failure={:?}",
+            record.state, record.failure_code
+        ));
+    }
+    Ok(())
+}
+
 async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), String> {
     if vector.property_id.is_empty()
         || !matches!(vector.promotion_status.as_str(), "draft" | "promoted")
@@ -3317,6 +3639,7 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         "continuation_context_status_carriage" => {
             continuation_context_status_carriage(vector).await
         }
+        "adapter_assurance_delivery_outcome" => adapter_assurance_delivery_outcome(vector).await,
         "resource_observation_source_binding"
         | "token_commune_current_generation_source_binding" => source_binding(vector).await,
         _ => Err(format!(
