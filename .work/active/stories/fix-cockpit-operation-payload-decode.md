@@ -1,7 +1,7 @@
 ---
 id: fix-cockpit-operation-payload-decode
 kind: story
-stage: implementing
+stage: review
 tags: [verification]
 parent: null
 depends_on: []
@@ -51,8 +51,20 @@ bare `Operation` — stale against the core's actual stored shape.
 
 ## Acceptance
 
-- [ ] Folding a replay prefix containing a kind-1 event + its transitions
+- [x] Folding a replay prefix containing a kind-1 event + its transitions
       registers the command and applies transitions without throwing.
 - [ ] Live-stack retest: cockpit reconciles (banner clears, session list
       renders).
-- [ ] Full four verification groups + web-cockpit suite green.
+- [x] Full four verification groups + web-cockpit suite green.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`; direct-read implementation because the diagnosed wire-shape bug was confined to one fold branch and its fixtures.
+- Review weight: `standard` (project default); caller requested the implementation stop at `stage: review` for the autopilot/review boundary.
+- Files changed: `web-cockpit/src/domain/model.ts`, `web-cockpit/tests/model.test.ts`, `web-cockpit/tests/reconcile.test.ts`.
+- Tests added/removed: added the exact UAT-shaped LSN 17/19/22 replay-prefix regression (accepted query Operation, delivered transition, completed transition); updated every web-cockpit kind-1 fixture to encode `AcceptedOperation` with an authorizing Grant id. No tests removed.
+- Simplification: consolidated model-test kind-1 fixture construction in `acceptedOperationEvent`, eliminating repeated stale bare-`Operation` encoding.
+- Discrepancies from design: the named CLI comparator currently also decodes kind-1 bytes as bare `Operation` in `cli/src/commands/operations.ts`; this bounded story changes only the web-cockpit decode sites requested by the caller.
+- Mutation evidence: reverting the production branch to bare `OperationSchema` decoding made the exact regression fail with `command transition references unknown command cli-ead4e7bf-replay`; `git restore` reinstated the fix and the focused test passed.
+- Verification: `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`; `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`; `cd operator-domain && npm run build && npm test`; `cd pi-adapter && npm test`; and `cd web-cockpit && npm test` all passed. Web cockpit: 149/149; operator domain: 32/32; Pi adapter: 128/128.
+- Adjacent issues parked: none.

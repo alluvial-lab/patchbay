@@ -1,5 +1,6 @@
 import { fromBinary } from "@bufbuild/protobuf";
 import {
+  AcceptedOperationSchema,
   ApprovalDecision,
   ApprovalResponsePayloadSchema,
   CommandTransitionSchema,
@@ -339,9 +340,12 @@ export function fold(model: PresentationModel, event: SubscribeEvent): Presentat
   next.reconciled = true;
 
   switch (payload.kind) {
-    case StoredEventKind.OPERATION:
-      foldOperation(next, fromBinary(OperationSchema, payload.payload), lsn);
+    case StoredEventKind.OPERATION: {
+      const accepted = fromBinary(AcceptedOperationSchema, payload.payload);
+      if (!accepted.operation) throw new Error("accepted operation event is missing operation");
+      foldOperation(next, accepted.operation, lsn);
       break;
+    }
     case StoredEventKind.OBSERVATION:
       foldObservation(next, fromBinary(ObservationSchema, payload.payload), lsn);
       break;

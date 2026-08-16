@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { create, toBinary, type DescMessage, type MessageShape } from "@bufbuild/protobuf";
 import {
+  AcceptedOperationSchema,
   AdapterDiagnosticState,
   AdapterIdSchema,
   AdapterStatusSchema,
@@ -13,6 +14,7 @@ import {
   ElicitationState,
   EventIdSchema,
   GenerationSchema,
+  GrantIdSchema,
   LoadSnapshotResponseSchema,
   LsnSchema,
   ObservationKind,
@@ -461,13 +463,16 @@ function operationEvent(lsn: bigint): SubscribeEvent {
   return stored(
     lsn,
     StoredEventKind.OPERATION,
-    OperationSchema,
-    create(OperationSchema, {
-      commandId: create(CommandIdSchema, { value: "command-1" }),
-      authorityDomainId: DOMAIN,
-      kind: OperationKind.INSTRUCT,
-      targetScope: target(),
-      idempotencyKey: "command-1-key",
+    AcceptedOperationSchema,
+    create(AcceptedOperationSchema, {
+      operation: create(OperationSchema, {
+        commandId: create(CommandIdSchema, { value: "command-1" }),
+        authorityDomainId: DOMAIN,
+        kind: OperationKind.INSTRUCT,
+        targetScope: target(),
+        idempotencyKey: "command-1-key",
+      }),
+      authorizingGrantId: create(GrantIdSchema, { value: "grant-command-1" }),
     }),
   );
 }

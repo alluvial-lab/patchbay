@@ -21,6 +21,7 @@ import {
   ExternalRuntimeRefSchema,
   FailureCode,
   GenerationSchema,
+  GrantIdSchema,
   LogicalTargetIdSchema,
   LsnSchema,
   ObservationKind,
@@ -558,13 +559,50 @@ test("Operation targets project exact runtime-session or operational-resource id
     targetScope: scope,
     idempotencyKey: "resource-command-key",
   });
-  const model = fold(emptyPresentationModel(), stored(
-    1n,
-    StoredEventKind.OPERATION,
-    OperationSchema,
-    operation,
-  ));
+  const model = fold(emptyPresentationModel(), acceptedOperationEvent(1n, operation));
   assert.deepEqual(model.commands.get("resource-command")!.target, operationTargetFromScope(scope));
+});
+
+test("real-shaped UAT replay prefix decodes AcceptedOperation and applies command transitions", () => {
+  const commandId = "cli-ead4e7bf-replay";
+  const operation = create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: commandId }),
+    authorityDomainId: DOMAIN,
+    kind: OperationKind.QUERY,
+    targetScope: sessionTarget(1n),
+    idempotencyKey: "cli-ead4e7bf-replay-key",
+  });
+  const replayPrefix = [
+    acceptedOperationEvent(17n, operation, "grant-uat-query"),
+    transitionEvent(19n, commandId, OperationState.ACCEPTED, OperationState.DELIVERED),
+    transitionEvent(22n, commandId, OperationState.DELIVERED, OperationState.COMPLETED),
+  ];
+
+  const model = replaceFromSnapshots(
+    {
+      session: create(SessionSnapshotSchema, {
+        authorityDomainId: DOMAIN,
+        snapshotLsn: create(LsnSchema, { value: 22n }),
+        coreGeneration: CORE_GENERATION,
+      }),
+      resource: create(ResourceSnapshotSchema, {
+        authorityDomainId: DOMAIN,
+        snapshotLsn: create(LsnSchema, { value: 22n }),
+        coreGeneration: CORE_GENERATION,
+      }),
+    },
+    replayPrefix,
+  );
+
+  const command = model.commands.get(commandId);
+  assert.ok(command, "the accepted command is registered before its transitions fold");
+  assert.equal(command.operation.commandId?.value, commandId);
+  assert.equal(command.state, OperationState.COMPLETED);
+  assert.deepEqual(command.history.map(({ state, lsn }) => ({ state, lsn })), [
+    { state: OperationState.ACCEPTED, lsn: 17n },
+    { state: OperationState.DELIVERED, lsn: 19n },
+    { state: OperationState.COMPLETED, lsn: 22n },
+  ]);
 });
 
 test("partial, mixed, and legacy resource scopes never become command targets", () => {
@@ -1248,18 +1286,13 @@ function spawnClaimDispositionEvent(
 }
 
 function operationEvent(lsn: bigint, commandId: string): SubscribeEvent {
-  return stored(
-    lsn,
-    StoredEventKind.OPERATION,
-    OperationSchema,
-    create(OperationSchema, {
-      commandId: create(CommandIdSchema, { value: commandId }),
-      authorityDomainId: DOMAIN,
-      kind: OperationKind.INSTRUCT,
-      targetScope: sessionTarget(1n),
-      idempotencyKey: `key-${commandId}`,
-    }),
-  );
+  return acceptedOperationEvent(lsn, create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: commandId }),
+    authorityDomainId: DOMAIN,
+    kind: OperationKind.INSTRUCT,
+    targetScope: sessionTarget(1n),
+    idempotencyKey: `key-${commandId}`,
+  }));
 }
 
 function correlatedOperationEvent(
@@ -1268,24 +1301,19 @@ function correlatedOperationEvent(
   kind: OperationKind,
   targetCommandId: string,
 ): SubscribeEvent {
-  return stored(
-    lsn,
-    StoredEventKind.OPERATION,
-    OperationSchema,
-    create(OperationSchema, {
-      commandId: create(CommandIdSchema, { value: commandId }),
-      authorityDomainId: DOMAIN,
-      kind,
-      targetScope: sessionTarget(1n),
-      idempotencyKey: `key-${commandId}`,
-      correlations: [create(TypedCorrelationSchema, {
-        ref: {
-          case: "commandId",
-          value: create(CommandIdSchema, { value: targetCommandId }),
-        },
-      })],
-    }),
-  );
+  return acceptedOperationEvent(lsn, create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: commandId }),
+    authorityDomainId: DOMAIN,
+    kind,
+    targetScope: sessionTarget(1n),
+    idempotencyKey: `key-${commandId}`,
+    correlations: [create(TypedCorrelationSchema, {
+      ref: {
+        case: "commandId",
+        value: create(CommandIdSchema, { value: targetCommandId }),
+      },
+    })],
+  }));
 }
 
 function resultObservationEvent(
@@ -1385,34 +1413,29 @@ function questionElicitationEvent(
 }
 
 function responseOperationEvent(lsn: bigint, commandId: string, selectedOptionId: string): SubscribeEvent {
-  return stored(
-    lsn,
-    StoredEventKind.OPERATION,
-    OperationSchema,
-    create(OperationSchema, {
-      commandId: create(CommandIdSchema, { value: commandId }),
-      authorityDomainId: DOMAIN,
-      kind: OperationKind.ELICITATION_RESPONSE,
-      targetScope: sessionTarget(1n),
-      idempotencyKey: `${commandId}-key`,
-      correlations: [
-        create(TypedCorrelationSchema, {
-          ref: {
-            case: "elicitationId",
-            value: create(ElicitationIdSchema, { value: "elicitation-1" }),
-          },
-        }),
-      ],
-      payload: create(PayloadEnvelopeSchema, {
-        contentType: PayloadContentType.PROTOBUF,
-        schemaRef: "patchbay.ElicitationResponsePayload",
-        payload: toBinary(
-          ElicitationResponsePayloadSchema,
-          create(ElicitationResponsePayloadSchema, { selectedOptionId }),
-        ),
+  return acceptedOperationEvent(lsn, create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: commandId }),
+    authorityDomainId: DOMAIN,
+    kind: OperationKind.ELICITATION_RESPONSE,
+    targetScope: sessionTarget(1n),
+    idempotencyKey: `${commandId}-key`,
+    correlations: [
+      create(TypedCorrelationSchema, {
+        ref: {
+          case: "elicitationId",
+          value: create(ElicitationIdSchema, { value: "elicitation-1" }),
+        },
       }),
+    ],
+    payload: create(PayloadEnvelopeSchema, {
+      contentType: PayloadContentType.PROTOBUF,
+      schemaRef: "patchbay.ElicitationResponsePayload",
+      payload: toBinary(
+        ElicitationResponsePayloadSchema,
+        create(ElicitationResponsePayloadSchema, { selectedOptionId }),
+      ),
     }),
-  );
+  }));
 }
 
 test("resource identities and collection keys use collision-proof tuple composition", () => {
@@ -1977,6 +2000,22 @@ function canonicalPi(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalPi).join(",")}]`;
   const object = value as Record<string, unknown>;
   return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalPi(object[key])}`).join(",")}}`;
+}
+
+function acceptedOperationEvent(
+  lsn: bigint,
+  operation: MessageShape<typeof OperationSchema>,
+  grantId = `grant-${operation.commandId?.value ?? "operation"}`,
+): SubscribeEvent {
+  return stored(
+    lsn,
+    StoredEventKind.OPERATION,
+    AcceptedOperationSchema,
+    create(AcceptedOperationSchema, {
+      operation,
+      authorizingGrantId: create(GrantIdSchema, { value: grantId }),
+    }),
+  );
 }
 
 function stored<D extends DescMessage>(
