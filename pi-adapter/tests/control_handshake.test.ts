@@ -13,6 +13,7 @@ import {
   piControlExtensionProfile,
   type PiControlRpc,
 } from "../src/control_handshake.js";
+import { PiRpcTransportError } from "../src/rpc_client.js";
 
 const cwd = process.cwd();
 const extensionPath = join(process.cwd(), "extensions", "patchbay-control.ts");
@@ -122,6 +123,30 @@ test("command discovery requires the adapter-owned extension source", async () =
   await rejectsWith(
     performPiControlHandshake(baseOptions(fakeRpc({ commandPath: fileURLToPath(import.meta.url) }))),
     PiControlHandshakeFailure.COMMAND_SOURCE_MISMATCH,
+  );
+});
+
+test("control handshake preserves transport provenance and marks its response timeout ambiguous", async () => {
+  const transport = new PiRpcTransportError(
+    "pipe",
+    "injected post-write handshake loss",
+    undefined,
+    "possibly_written",
+  );
+  const failed = fakeRpc();
+  failed.getCommands = async () => { throw transport; };
+  await assert.rejects(
+    performPiControlHandshake(baseOptions(failed)),
+    (error: unknown) => error === transport,
+  );
+
+  const expired = fakeRpc();
+  expired.getCommands = () => new Promise(() => undefined);
+  await assert.rejects(
+    performPiControlHandshake(baseOptions(expired, { rpcTimeoutMs: 1 })),
+    (error: unknown) => error instanceof PiRpcTransportError &&
+      error.kind === "timeout" &&
+      error.requestEffect === "possibly_written",
   );
 });
 

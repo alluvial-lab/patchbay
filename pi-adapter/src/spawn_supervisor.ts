@@ -31,6 +31,7 @@ import {
   type RuntimeGenerationRef,
 } from "@patchbay/contracts";
 import type { ConfiguredDeploymentTarget } from "./deployment_authority.js";
+import { PiRpcTransportError } from "./rpc_client.js";
 import {
   buildPiRpcArgv,
   type ManagedPiRuntimePort,
@@ -50,6 +51,7 @@ import {
 } from "./session_file.js";
 import { SessionRegistry, type RuntimeSessionEntry } from "./session_registry.js";
 import {
+  assertPromotionReplayReady,
   spawnTargetFingerprint,
   type PiSpawnJournalState,
   type PiStagedPublicationRecord,
@@ -232,16 +234,32 @@ export interface StagedPiSuccessor {
   readonly continuationContextStatus: ContinuationContextStatus;
 }
 
+interface PriorRecoveryDisposition {
+  readonly connectivity: "live" | "offline" | "stale" | "failed";
+  readonly activity: "working" | "unknown";
+  readonly effectDisposition:
+    | ExternalEffectDisposition.PROVED_NONE
+    | ExternalEffectDisposition.MAY_EXIST;
+  readonly fenceDisposition: "retain" | "poison";
+}
+
 export class SpawnSupervisorError extends Error {
   readonly failureCode: FailureCode;
   readonly ambiguous: boolean;
+  readonly priorRecovery?: PriorRecoveryDisposition;
   terminalReported = false;
 
-  constructor(message: string, failureCode: FailureCode, ambiguous = false) {
+  constructor(
+    message: string,
+    failureCode: FailureCode,
+    ambiguous = false,
+    priorRecovery?: PriorRecoveryDisposition,
+  ) {
     super(message);
     this.name = "SpawnSupervisorError";
     this.failureCode = failureCode;
     this.ambiguous = ambiguous;
+    if (priorRecovery) this.priorRecovery = Object.freeze({ ...priorRecovery });
   }
 }
 
@@ -682,17 +700,39 @@ export class ClaimAwareSpawnSupervisor {
             .reportSpawnFailure(validated.operation, FailureCode.EXECUTION_OUTCOME_UNKNOWN)
             .then(() => true, () => false);
         } else if (gate.fencedClaimOperationId === claimOperationId) {
-          if (!lastPhaseHasNoSuccessorProof) {
-            await this.#recordNoSuccessorEffect(validated, lastPhase).catch(() => undefined);
-          }
-          if (priorEntry) {
-            await this.#core.reportSessionState(
-              priorEntry,
-              priorTerminated ? "offline" : "live",
-              priorTerminated ? "unknown" : "idle",
+          const priorRecovery = supervisorError.priorRecovery;
+          if (priorRecovery) {
+            await this.#recordProgress(
+              validated,
+              lastPhase,
+              priorRecovery.effectDisposition,
+              supervisorError.failureCode,
+              undefined,
+              priorRecovery.fenceDisposition === "poison",
+              priorRecovery.effectDisposition === ExternalEffectDisposition.PROVED_NONE,
             ).catch(() => undefined);
+            if (priorEntry) {
+              await this.#core.reportSessionState(
+                priorEntry,
+                priorRecovery.connectivity,
+                priorRecovery.activity,
+              ).catch(() => undefined);
+            }
+            if (priorRecovery.fenceDisposition === "poison") lease.poison();
+            else lease.retainFence();
+          } else {
+            if (!lastPhaseHasNoSuccessorProof) {
+              await this.#recordNoSuccessorEffect(validated, lastPhase).catch(() => undefined);
+            }
+            if (priorEntry) {
+              await this.#core.reportSessionState(
+                priorEntry,
+                priorTerminated ? "offline" : "live",
+                priorTerminated ? "unknown" : "idle",
+              ).catch(() => undefined);
+            }
+            lease.release();
           }
-          lease.release();
           supervisorError.terminalReported = await this.#core
             .reportSpawnFailure(validated.operation, supervisorError.failureCode)
             .then(() => true, () => false);
@@ -771,7 +811,8 @@ export class ClaimAwareSpawnSupervisor {
     // Restart replay has no in-memory waiter. Durable journal identity and
     // staged-publication state are the only admissible recovery authority.
     const state = await this.#journal.reconcile(claimOperationId);
-    if (!state?.externalIdentity || !state.stagedPublication) return false;
+    if (!state) return false;
+    assertPromotionReplayReady(state);
     requireExactPromotion(
       promotion,
       state.exactClaim,
@@ -898,17 +939,74 @@ export class ClaimAwareSpawnSupervisor {
       exactPrior: validated.claim.expectedPrior!,
       effects: validated.acceptedSpawn.priorWorkEffects,
     });
-    const state = await prior.refreshState(lease);
-    const activity = prior.activitySnapshot();
-    if (state.streaming || state.compacting || state.pendingMessageCount > 0) {
-      await prior.requestUnderLease({ type: "abort" }, lease);
-      await prior.waitForSettled(Math.max(activity.activityEpoch, 1), DEFAULT_SETTLE_TIMEOUT_MS);
-      await prior.refreshState(lease);
+    let state: ReturnType<RpcPiSession["getState"]>;
+    try {
+      state = await prior.refreshState(lease);
+      const activity = prior.activitySnapshot();
+      if (state.streaming || state.compacting || state.pendingMessageCount > 0) {
+        try {
+          await prior.requestUnderLease({ type: "abort" }, lease);
+        } catch (error) {
+          if (error instanceof PiRpcTransportError) throw error;
+          throw new SpawnSupervisorError(
+            "prior runtime rejected the quiesce abort",
+            FailureCode.EXECUTION_FAILED,
+            false,
+            {
+              connectivity: "live",
+              activity: "working",
+              effectDisposition: ExternalEffectDisposition.PROVED_NONE,
+              fenceDisposition: "retain",
+            },
+          );
+        }
+        try {
+          await prior.waitForSettled(
+            Math.max(activity.activityEpoch, 1),
+            DEFAULT_SETTLE_TIMEOUT_MS,
+          );
+        } catch {
+          throw new SpawnSupervisorError(
+            "prior runtime quiesce outcome is unknown",
+            FailureCode.EXECUTION_OUTCOME_UNKNOWN,
+            true,
+            {
+              connectivity: "stale",
+              activity: "unknown",
+              effectDisposition: ExternalEffectDisposition.MAY_EXIST,
+              fenceDisposition: "poison",
+            },
+          );
+        }
+        state = await prior.refreshState(lease);
+      }
+    } catch (error) {
+      if (error instanceof PiRpcTransportError || error instanceof SpawnSupervisorError) throw error;
+      throw new SpawnSupervisorError(
+        "prior runtime quiesce evidence is invalid",
+        FailureCode.EXECUTION_FAILED,
+        false,
+        {
+          connectivity: "stale",
+          activity: "unknown",
+          effectDisposition: ExternalEffectDisposition.PROVED_NONE,
+          fenceDisposition: "retain",
+        },
+      );
     }
     await this.#core.flushObservations();
-    if (!prior.getState().idle) {
-      await this.#core.reportSessionState(entry, "stale", "unknown");
-      throw new SpawnSupervisorError("prior runtime did not reach a settled state", FailureCode.EXECUTION_OUTCOME_UNKNOWN, true);
+    if (!state.idle) {
+      throw new SpawnSupervisorError(
+        "prior runtime did not reach a settled state",
+        FailureCode.EXECUTION_OUTCOME_UNKNOWN,
+        true,
+        {
+          connectivity: "stale",
+          activity: "unknown",
+          effectDisposition: ExternalEffectDisposition.MAY_EXIST,
+          fenceDisposition: "poison",
+        },
+      );
     }
     await this.#core.reportSessionState(entry, "live", "idle");
   }
@@ -1206,12 +1304,56 @@ function sameRuntime(left: RuntimeGenerationRef | undefined, right: RuntimeGener
     left.externalRuntime?.generation?.value === right.externalRuntime?.generation?.value;
 }
 
-function normalizeSupervisorError(error: unknown, launched: boolean): SpawnSupervisorError {
+function normalizeSupervisorError(error: unknown, launchAttempted: boolean): SpawnSupervisorError {
   if (error instanceof SpawnSupervisorError) return error;
+  if (error instanceof PiRpcTransportError) {
+    const possiblyWritten = error.requestEffect === "possibly_written";
+    const failureCode = launchAttempted || possiblyWritten
+      ? FailureCode.EXECUTION_OUTCOME_UNKNOWN
+      : FailureCode.EXECUTION_FAILED;
+    return new SpawnSupervisorError(
+      launchAttempted
+        ? "spawn outcome is ambiguous after launch"
+        : possiblyWritten
+          ? "prior runtime RPC outcome is unknown"
+          : "prior runtime RPC request was not written",
+      failureCode,
+      launchAttempted || possiblyWritten,
+      launchAttempted
+        ? undefined
+        : {
+            connectivity: supervisorTransportConnectivity(error),
+            activity: "unknown",
+            effectDisposition: possiblyWritten
+              ? ExternalEffectDisposition.MAY_EXIST
+              : ExternalEffectDisposition.PROVED_NONE,
+            fenceDisposition: possiblyWritten ? "poison" : "retain",
+          },
+    );
+  }
   return new SpawnSupervisorError(
-    launched ? "spawn outcome is ambiguous after launch" : "spawn failed before successor launch",
-    launched ? FailureCode.EXECUTION_OUTCOME_UNKNOWN : FailureCode.EXECUTION_FAILED,
-    launched,
+    launchAttempted ? "spawn outcome is ambiguous after launch" : "spawn failed before successor launch",
+    launchAttempted ? FailureCode.EXECUTION_OUTCOME_UNKNOWN : FailureCode.EXECUTION_FAILED,
+    launchAttempted,
+  );
+}
+
+function supervisorTransportConnectivity(
+  error: PiRpcTransportError,
+): PriorRecoveryDisposition["connectivity"] {
+  if (!error.processExit) return "stale";
+  return confirmedCleanSupervisorExit(error.processExit) ? "offline" : "failed";
+}
+
+function confirmedCleanSupervisorExit(exit: {
+  readonly expected: boolean;
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+}): boolean {
+  return exit.expected && (
+    (exit.code === 0 && exit.signal === null) ||
+    (exit.code === 143 && exit.signal === null) ||
+    (exit.code === null && exit.signal === "SIGTERM")
   );
 }
 

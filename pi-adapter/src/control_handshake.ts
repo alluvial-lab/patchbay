@@ -7,6 +7,7 @@ import {
   PiControlHandshakeFailure,
   type PiControlExtensionProfile,
 } from "@patchbay/contracts";
+import { PiRpcTransportError } from "./rpc_client.js";
 import {
   PATCHBAY_CONTROL_CHALLENGE_BYTES,
   PATCHBAY_CONTROL_EXTENSION_EPOCH_BYTES,
@@ -402,13 +403,20 @@ async function rpcCall<T>(
       action(),
       new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(
-          () => reject(new PiControlHandshakeError(failure)),
+          () => reject(new PiRpcTransportError(
+            "timeout",
+            "Pi control RPC response timed out",
+            undefined,
+            "possibly_written",
+          )),
           timeoutMs,
         );
       }),
     ]);
   } catch (error) {
-    if (error instanceof PiControlHandshakeError) throw error;
+    if (error instanceof PiRpcTransportError || error instanceof PiControlHandshakeError) {
+      throw error;
+    }
     throw new PiControlHandshakeError(failure);
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);

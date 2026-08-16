@@ -21,6 +21,17 @@ const PHASE_ORDER = new Map<SpawnExecutionPhase, number>([
   [SpawnExecutionPhase.HANDSHAKE_RECONCILING, 6],
   [SpawnExecutionPhase.SUCCESS_EVIDENCE_REPORTED, 7],
 ]);
+const FRESH_PHASE_CHAIN = Object.freeze([
+  SpawnExecutionPhase.LAUNCH_ATTEMPTED,
+  SpawnExecutionPhase.EXTERNAL_IDENTITY_KNOWN,
+  SpawnExecutionPhase.HANDSHAKE_RECONCILING,
+  SpawnExecutionPhase.SUCCESS_EVIDENCE_REPORTED,
+]);
+const CONTINUATION_PHASE_CHAIN = Object.freeze([
+  SpawnExecutionPhase.QUIESCING_PRIOR,
+  SpawnExecutionPhase.PRIOR_TERMINATED,
+  ...FRESH_PHASE_CHAIN,
+]);
 
 interface JournalClaim {
   readonly authorityDomainId: string;
@@ -130,6 +141,22 @@ export interface SpawnEffectJournal {
   reconcileAll(): Promise<readonly PiSpawnJournalState[]>;
   markPromotionObserved(claimOperationId: string, runtime: RuntimeGenerationRef): Promise<void>;
   markPublicationCommitted(claimOperationId: string): Promise<void>;
+}
+
+/** Promotion replay is authorized only by a complete, semantically ordered journal. */
+export function assertPromotionReplayReady(
+  state: PiSpawnJournalState,
+): asserts state is PiSpawnJournalState & {
+  readonly externalIdentity: PiExternalIdentityRecord;
+  readonly stagedPublication: PiStagedPublicationRecord;
+} {
+  const semanticChain = validatePhaseChain(
+    state.exactClaim.expectedPrior !== undefined,
+    state.phases,
+  );
+  if (!semanticChain.complete || !state.externalIdentity || !state.stagedPublication) {
+    throw new Error("spawn journal promotion replay lacks its complete semantic chain");
+  }
 }
 
 /** 0600 atomic evidence journal. It never chooses or increments a generation. */
@@ -371,6 +398,7 @@ export class FileSpawnEffectJournal implements SpawnEffectJournal {
   }
 
   async #writeStored(claimOperationId: string, state: StoredJournalState): Promise<void> {
+    validateStoredState(state, claimOperationId);
     const path = this.#pathFor(claimOperationId);
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const directoryHandle = await open(dirname(path), constants.O_RDONLY);
@@ -493,6 +521,94 @@ function journalToRuntime(runtime: JournalRuntime): RuntimeGenerationRef {
   };
 }
 
+interface ValidatedPhaseChain {
+  readonly launchAttempted: boolean;
+  readonly externalIdentityKnown: boolean;
+  readonly handshakeReconciled: boolean;
+  readonly successReported: boolean;
+  readonly complete: boolean;
+  readonly poisoned: boolean;
+}
+
+function validatePhaseChain(
+  continuation: boolean,
+  phases: readonly StoredPhase[],
+): ValidatedPhaseChain {
+  const expected = continuation ? CONTINUATION_PHASE_CHAIN : FRESH_PHASE_CHAIN;
+  const observed = new Set<SpawnExecutionPhase>();
+  let expectedIndex = 0;
+  let previous: StoredPhase | undefined;
+  let poisoned = false;
+  let launchAttempts = 0;
+
+  for (const phase of phases) {
+    if (
+      !isRecord(phase) ||
+      !PHASE_ORDER.has(phase.phase) ||
+      !validJournalPhaseDisposition(phase.phase, phase.externalEffectDisposition)
+    ) {
+      throw new Error("spawn journal phase is malformed");
+    }
+    validateTimestamp(phase.recordedAt);
+    if (phase.phase === previous?.phase) {
+      if (
+        phase.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED ||
+        previous.externalEffectDisposition !== ExternalEffectDisposition.PROVED_NONE ||
+        phase.externalEffectDisposition !== ExternalEffectDisposition.MAY_EXIST
+      ) {
+        throw new Error("spawn journal phase is duplicated or contradictory");
+      }
+    } else {
+      if (phase.phase !== expected[expectedIndex]) {
+        throw new Error("spawn journal semantic phase chain is missing or reordered");
+      }
+      expectedIndex += 1;
+      observed.add(phase.phase);
+      if (phase.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED) launchAttempts += 1;
+      if (
+        previous?.externalEffectDisposition === ExternalEffectDisposition.MAY_EXIST &&
+        previous.phase !== SpawnExecutionPhase.LAUNCH_ATTEMPTED
+      ) {
+        throw new Error("spawn journal continues after an ambiguous pre-launch phase");
+      }
+    }
+    poisoned ||= phase.externalEffectDisposition === ExternalEffectDisposition.MAY_EXIST;
+    previous = phase;
+  }
+
+  if (launchAttempts > 1) {
+    throw new Error("spawn journal records at most one launch attempt per claim");
+  }
+  return Object.freeze({
+    launchAttempted: observed.has(SpawnExecutionPhase.LAUNCH_ATTEMPTED),
+    externalIdentityKnown: observed.has(SpawnExecutionPhase.EXTERNAL_IDENTITY_KNOWN),
+    handshakeReconciled: observed.has(SpawnExecutionPhase.HANDSHAKE_RECONCILING),
+    successReported: observed.has(SpawnExecutionPhase.SUCCESS_EVIDENCE_REPORTED),
+    complete: expectedIndex === expected.length,
+    poisoned,
+  });
+}
+
+function validJournalPhaseDisposition(
+  phase: SpawnExecutionPhase,
+  disposition: ExternalEffectDisposition,
+): boolean {
+  switch (phase) {
+    case SpawnExecutionPhase.QUIESCING_PRIOR:
+    case SpawnExecutionPhase.PRIOR_TERMINATED:
+      return disposition === ExternalEffectDisposition.PROVED_NONE ||
+        disposition === ExternalEffectDisposition.MAY_EXIST;
+    case SpawnExecutionPhase.LAUNCH_ATTEMPTED:
+      return disposition === ExternalEffectDisposition.MAY_EXIST;
+    case SpawnExecutionPhase.EXTERNAL_IDENTITY_KNOWN:
+    case SpawnExecutionPhase.HANDSHAKE_RECONCILING:
+    case SpawnExecutionPhase.SUCCESS_EVIDENCE_REPORTED:
+      return disposition === ExternalEffectDisposition.IDENTIFIED;
+    default:
+      return false;
+  }
+}
+
 function validateStoredState(value: unknown, claimOperationId: string): StoredJournalState {
   if (!isRecord(value) || value["version"] !== JOURNAL_VERSION || !isRecord(value["claim"])) {
     throw new Error("spawn journal state is malformed");
@@ -505,31 +621,39 @@ function validateStoredState(value: unknown, claimOperationId: string): StoredJo
   if (!/^[a-f0-9]{64}$/u.test(state.targetFingerprint) || !Array.isArray(state.phases)) {
     throw new Error("spawn journal state is malformed");
   }
-  for (const phase of state.phases) {
-    if (!PHASE_ORDER.has(phase.phase) || phase.externalEffectDisposition === ExternalEffectDisposition.UNSPECIFIED) {
-      throw new Error("spawn journal phase is malformed");
-    }
-    validateTimestamp(phase.recordedAt);
-  }
+  const semanticChain = validatePhaseChain(
+    state.claim.expectedPrior !== undefined,
+    state.phases,
+  );
   if (
     typeof state.poisoned !== "boolean" ||
     typeof state.promotionObserved !== "boolean" ||
     typeof state.publicationCommitted !== "boolean" ||
-    state.publicationCommitted && !state.promotionObserved
+    state.publicationCommitted && !state.promotionObserved ||
+    state.poisoned !== semanticChain.poisoned
   ) {
-    throw new Error("spawn journal flags are malformed");
+    throw new Error("spawn journal flags are semantically inconsistent");
   }
   if (state.externalIdentity) {
     requireRuntimeMatchesClaim(state.externalIdentity.runtime, state.claim);
-    if (!Number.isSafeInteger(state.externalIdentity.pid) || state.externalIdentity.pid <= 0) {
-      throw new Error("spawn journal identity is malformed");
+    if (
+      !semanticChain.launchAttempted ||
+      !Number.isSafeInteger(state.externalIdentity.pid) ||
+      state.externalIdentity.pid <= 0 ||
+      !isBoundedText(state.externalIdentity.processToken, 256)
+    ) {
+      throw new Error("spawn journal identity is malformed or precedes launch");
     }
     validateTimestamp(state.externalIdentity.recordedAt);
+  }
+  if (semanticChain.externalIdentityKnown && !state.externalIdentity) {
+    throw new Error("spawn journal identity phase has no exact external identity");
   }
   if (state.stagedPublication) {
     requireRuntimeMatchesClaim(state.stagedPublication.runtime, state.claim);
     if (
       !state.externalIdentity ||
+      !semanticChain.handshakeReconciled ||
       JSON.stringify(state.stagedPublication.runtime) !== JSON.stringify(state.externalIdentity.runtime) ||
       !/^[a-f0-9]{64}$/u.test(state.stagedPublication.readinessDigest) ||
       !Number.isSafeInteger(state.stagedPublication.entryCount) ||
@@ -540,10 +664,17 @@ function validateStoredState(value: unknown, claimOperationId: string): StoredJo
         isBoundedText(state.stagedPublication.leafId, 4_096)) ||
       !Object.values(ContinuationContextStatus).includes(state.stagedPublication.continuationContextStatus)
     ) {
-      throw new Error("spawn journal staged publication is malformed");
+      throw new Error("spawn journal staged publication is malformed or precedes handshake");
     }
-  } else if (state.promotionObserved || state.publicationCommitted) {
-    throw new Error("spawn journal promotion has no staged publication");
+  }
+  if (semanticChain.successReported && !state.stagedPublication) {
+    throw new Error("spawn journal success phase has no exact staged publication");
+  }
+  if (
+    (state.promotionObserved || state.publicationCommitted) &&
+    (!semanticChain.complete || !state.externalIdentity || !state.stagedPublication)
+  ) {
+    throw new Error("spawn journal promotion precedes its complete semantic chain");
   }
   return state;
 }

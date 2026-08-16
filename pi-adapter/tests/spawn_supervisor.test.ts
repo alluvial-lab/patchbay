@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { create, toBinary } from "@bufbuild/protobuf";
@@ -76,6 +76,8 @@ class FakeRpc {
   readonly events = new Set<(event: Record<string, unknown>) => void>();
   readonly failures = new Set<(error: PiRpcTransportError) => void>();
   closed = false;
+  streaming = false;
+  abortError: Error | undefined;
 
   constructor(
     readonly sessionId: string,
@@ -90,7 +92,7 @@ class FakeRpc {
         return {
           sessionId: this.sessionId,
           sessionFile: this.sessionFile,
-          isStreaming: false,
+          isStreaming: this.streaming,
           isCompacting: false,
           pendingMessageCount: 0,
           model: null,
@@ -99,6 +101,7 @@ class FakeRpc {
       case "get_entries":
         return { entries: this.entries, leafId: this.leafId } as T;
       case "abort":
+        if (this.abortError) throw this.abortError;
         return {} as T;
       default:
         return {} as T;
@@ -423,18 +426,52 @@ async function seedRecoverableJournal(
     pid: 42,
     recordedAt: new Date().toISOString(),
   });
+  await journal.recordPhase({
+    claimOperationId,
+    phase: SpawnExecutionPhase.EXTERNAL_IDENTITY_KNOWN,
+    externalEffectDisposition: ExternalEffectDisposition.IDENTIFIED,
+    recordedAt: new Date().toISOString(),
+  });
   if (staged) {
+    await journal.recordPhase({
+      claimOperationId,
+      phase: SpawnExecutionPhase.HANDSHAKE_RECONCILING,
+      externalEffectDisposition: ExternalEffectDisposition.IDENTIFIED,
+      recordedAt: new Date().toISOString(),
+    });
+    const projection = await new LocalStagedPiReconciler(async () => undefined)
+      .stageClaimedSuccessor(runtime, [], null);
     await journal.recordStagedPublication({
       claimOperationId,
       runtime,
-      readinessDigest: "b".repeat(64),
-      entryCount: 0,
+      readinessDigest: projection.readinessDigest,
+      entryCount: projection.entryCount,
       continuationContextStatus: ContinuationContextStatus.UNSPECIFIED,
-      entries: [],
-      leafId: null,
+      entries: projection.recoveryEntries,
+      leafId: projection.recoveryLeafId,
+    });
+    await journal.recordPhase({
+      claimOperationId,
+      phase: SpawnExecutionPhase.SUCCESS_EVIDENCE_REPORTED,
+      externalEffectDisposition: ExternalEffectDisposition.IDENTIFIED,
+      recordedAt: new Date().toISOString(),
     });
   }
   return runtime;
+}
+
+async function mutateStoredJournal(
+  directory: string,
+  mutate: (stored: { phases: Array<{ phase: SpawnExecutionPhase }> }) => void,
+): Promise<void> {
+  const [name] = await readdir(directory);
+  assert.ok(name);
+  const path = join(directory, name);
+  const stored = JSON.parse(await readFile(path, "utf8")) as {
+    phases: Array<{ phase: SpawnExecutionPhase }>;
+  };
+  mutate(stored);
+  await writeFile(path, `${JSON.stringify(stored)}\n`);
 }
 
 test("local staged reconciler replays the exact durable projection after restart promotion", async () => {
@@ -629,7 +666,7 @@ test("restart poisons every unpromoted journal launch and never auto-launches it
     assert.equal(runtimePort.launchCalls, 0);
     assert.equal(registry.gateFor(logicalTargetId).poisoned, true);
     assert.ok(events.some((event) => event.startsWith(
-      `evidence:${SpawnExecutionPhase.LAUNCH_ATTEMPTED}:`,
+      `evidence:${SpawnExecutionPhase.EXTERNAL_IDENTITY_KNOWN}:`,
     )));
     assert.ok(events.includes("recovered-session:stale:unknown"));
   } finally {
@@ -655,7 +692,7 @@ test("replayed promotion recovers and commits staged publication without launchi
     },
     async publishRecoveredAfterPromotion(staged, recoveredRuntime) {
       recovered += 1;
-      assert.equal(staged.readinessDigest, "b".repeat(64));
+      assert.match(staged.readinessDigest, /^[a-f0-9]{64}$/u);
       assert.equal(recoveredRuntime.externalRuntime?.runtimeSessionId?.value, "pi-recovered");
     },
   };
@@ -681,6 +718,63 @@ test("replayed promotion recovers and commits staged publication without launchi
   } finally {
     await registry.dispose();
     await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("promotion replay rejects missing or duplicated launch-attempt phases before every effect", async () => {
+  const corruptions = ["missing", "duplicated"] as const;
+  for (const corruption of corruptions) {
+    const events: string[] = [];
+    const runtimePort = new FakeRuntimePort(events);
+    const registry = new SessionRegistry();
+    const fixture = await journalFixture(events);
+    const accepted = acceptedSpawn({
+      commandId: `restart-corrupt-${corruption}`,
+      generation: 1n,
+    });
+    const runtime = await seedRecoverableJournal(fixture.journal, accepted, true);
+    await mutateStoredJournal(fixture.directory, (stored) => {
+      const launchIndex = stored.phases.findIndex(
+        (phase) => phase.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED,
+      );
+      assert.notEqual(launchIndex, -1);
+      if (corruption === "missing") stored.phases.splice(launchIndex, 1);
+      else stored.phases.splice(launchIndex + 1, 0, structuredClone(stored.phases[launchIndex]!));
+    });
+    let publications = 0;
+    const supervisor = new ClaimAwareSpawnSupervisor({
+      runtimePort,
+      journal: fixture.journal,
+      registry,
+      core: createCore(events),
+      targets: [managedTarget()],
+      reconciler: new LocalStagedPiReconciler(async () => {
+        publications += 1;
+      }),
+    });
+    try {
+      await assert.rejects(
+        supervisor.acceptPromotion(create(SpawnPromotionCommittedSchema, {
+          acceptedClaim: accepted,
+          promotedRuntime: runtime,
+        })),
+        /spawn journal (semantic phase chain|phase is duplicated)/,
+      );
+      assert.equal(publications, 0);
+      assert.equal(runtimePort.launchCalls, 0);
+      assert.equal(events.some((event) => event.startsWith("recovered-session:")), false);
+      const [name] = await readdir(fixture.directory);
+      assert.ok(name);
+      const stored = JSON.parse(await readFile(join(fixture.directory, name), "utf8")) as {
+        promotionObserved: boolean;
+        publicationCommitted: boolean;
+      };
+      assert.equal(stored.promotionObserved, false);
+      assert.equal(stored.publicationCommitted, false);
+    } finally {
+      await registry.dispose();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
   }
 });
 
@@ -807,6 +901,102 @@ test("continuation rejects each omitted or mutated authority, fence, and prior-w
   } finally {
     await registry.dispose();
     await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("possibly-written quiesce abort loss reports unknown outcome and unproved prior state", async () => {
+  const cases = [
+    {
+      name: "timeout",
+      error: new PiRpcTransportError(
+        "timeout",
+        "injected post-write abort timeout",
+        undefined,
+        "possibly_written",
+      ),
+      connectivity: "stale",
+    },
+    {
+      name: "unclean-exit",
+      error: new PiRpcTransportError(
+        "process_exit",
+        "injected post-write abort process exit",
+        { code: 9, signal: null, expected: false },
+        "possibly_written",
+      ),
+      connectivity: "failed",
+    },
+  ] as const;
+  for (const candidate of cases) {
+    const events: string[] = [];
+    const runtimePort = new FakeRuntimePort();
+    const registry = new SessionRegistry();
+    const fixture = await journalFixture(events);
+    const priorRef = runtimeRef(`pi-prior-abort-${candidate.name}`, 7n);
+    const priorRuntime = fakeRuntime(
+      `pi-prior-abort-${candidate.name}`,
+      join(cwd, `missing-prior-abort-${candidate.name}.jsonl`),
+      `prior-abort-${candidate.name}-process`,
+    );
+    const priorRpc = priorRuntime.rpc as unknown as FakeRpc;
+    priorRpc.streaming = true;
+    priorRpc.abortError = candidate.error;
+    const prior = await RpcPiSession.bind({
+      runtimeSessionId: `pi-prior-abort-${candidate.name}`,
+      generation: 7,
+      runtime: priorRuntime,
+      runtimePort,
+      actionGate: registry.gateFor(logicalTargetId),
+      publication: "current",
+    });
+    registry.register(
+      {
+        runtimeSessionId: prior.runtimeSessionId,
+        deploymentScope,
+        cwd,
+        logicalTargetId,
+      },
+      prior,
+      () => undefined,
+      () => undefined,
+    );
+    const accepted = acceptedSpawn({
+      commandId: `quiesce-abort-${candidate.name}`,
+      generation: 8n,
+      continuation: priorRef,
+      continuationMode: PiContinuationMode.ALLOW_NEW_CONTEXT,
+    });
+    const supervisor = new ClaimAwareSpawnSupervisor({
+      runtimePort,
+      journal: fixture.journal,
+      registry,
+      core: createCore(events),
+      targets: [managedTarget()],
+      reconciler: testReconciler(),
+    });
+    try {
+      await assert.rejects(
+        supervisor.handleAcceptedSpawn(accepted),
+        { failureCode: FailureCode.EXECUTION_OUTCOME_UNKNOWN },
+      );
+      assert.equal(runtimePort.launchCalls, 0);
+      assert.equal(registry.gateFor(logicalTargetId).poisoned, true);
+      assert.ok(events.includes(`session:${candidate.connectivity}:unknown`));
+      assert.equal(events.includes("session:live:idle"), false);
+      assert.ok(events.includes(`failure:${FailureCode.EXECUTION_OUTCOME_UNKNOWN}`));
+      assert.ok(events.includes(
+        `evidence:${SpawnExecutionPhase.QUIESCING_PRIOR}:${ExternalEffectDisposition.MAY_EXIST}`,
+      ));
+      const state = await fixture.journal.reconcile(accepted.claim!.claimOperationId!.value);
+      assert.equal(state?.poisoned, true);
+      assert.equal(
+        state?.phases.at(-1)?.externalEffectDisposition,
+        ExternalEffectDisposition.MAY_EXIST,
+      );
+    } finally {
+      await registry.dispose();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
   }
 });
 
