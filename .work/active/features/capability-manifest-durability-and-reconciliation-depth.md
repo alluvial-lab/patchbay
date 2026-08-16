@@ -1,7 +1,7 @@
 ---
 id: capability-manifest-durability-and-reconciliation-depth
 kind: feature
-stage: review
+stage: done
 tags: [adapter, architecture, protocol]
 parent: null
 depends_on: []
