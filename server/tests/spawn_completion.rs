@@ -2355,6 +2355,25 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
         .and_then(|event| event.event_id.lsn)
         .expect("deferred prefix has an LSN")
         .value;
+    control
+        .projection_state()
+        .catch_up(&storage, &domain())
+        .await
+        .expect("hot projections fold the deferred prefix");
+    let hot_deferred_inspection = control
+        .projection_state()
+        .diagnostics_command_result(&command_id())
+        .await
+        .expect("hot diagnostics contain the accepted spawn")
+        .inspection
+        .expect("hot diagnostics inspect the accepted spawn");
+    assert_eq!(
+        hot_deferred_inspection.current_state,
+        OperationState::Delivered as i32,
+        "hot deferred success evidence must not present terminal success"
+    );
+    assert!(hot_deferred_inspection.terminal_event_id.is_none());
+
     let diagnostics = control
         .projection_state()
         .diagnostics_at(&storage, &domain(), as_of)
@@ -2364,7 +2383,7 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
     assert_eq!(
         deferred_inspection.current_state,
         OperationState::Delivered as i32,
-        "deferred success evidence must not present terminal success"
+        "bounded deferred success evidence must not present terminal success"
     );
     assert!(deferred_inspection.terminal_event_id.is_none());
 
@@ -2390,6 +2409,67 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
     }
     driver_task.abort();
     let _ = driver_task.await;
+
+    control
+        .projection_state()
+        .catch_up(&storage, &domain())
+        .await
+        .expect("hot projections fold the promotion prefix");
+    let promotion_event_id = all_events(&storage)
+        .await
+        .into_iter()
+        .find(|event| event.payload.kind == StoredEventKind::SpawnPromotionCommitted as i32)
+        .expect("completion commits one promotion source")
+        .event_id;
+    let promotion_lsn = promotion_event_id
+        .lsn
+        .expect("promotion source has an LSN")
+        .value;
+    let hot_completed_inspection = control
+        .projection_state()
+        .diagnostics_command_result(&command_id())
+        .await
+        .expect("hot diagnostics retain the promoted spawn")
+        .inspection
+        .expect("hot diagnostics inspect the promoted spawn");
+    assert_eq!(
+        hot_completed_inspection.current_state,
+        OperationState::Completed as i32
+    );
+    assert_eq!(
+        hot_completed_inspection.terminal_event_id,
+        Some(promotion_event_id.clone()),
+        "the atomic promotion source is the command terminal source"
+    );
+    assert_eq!(
+        hot_completed_inspection.history.last().map(|entry| (
+            entry.event_id.clone(),
+            entry.state,
+            entry.failure_code,
+        )),
+        Some((
+            Some(promotion_event_id.clone()),
+            OperationState::Completed as i32,
+            FailureCode::Unspecified as i32,
+        ))
+    );
+
+    let bounded_completed = control
+        .projection_state()
+        .diagnostics_at(&storage, &domain(), promotion_lsn)
+        .await
+        .unwrap()
+        .inspect_command(&command_id())
+        .expect("bounded promotion prefix contains the spawn");
+    assert_eq!(
+        bounded_completed.current_state,
+        OperationState::Completed as i32
+    );
+    assert_eq!(
+        bounded_completed.terminal_event_id,
+        Some(promotion_event_id.clone())
+    );
+
     drop(deliveries);
     drop(adapter_service);
     drop(control);
@@ -2419,6 +2499,22 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
     )
     .await
     .unwrap();
+    let restarted_inspection = restarted_control
+        .projection_state()
+        .diagnostics_command_result(&command_id())
+        .await
+        .expect("restart diagnostics retain the promoted spawn")
+        .inspection
+        .expect("restart diagnostics inspect the promoted spawn");
+    assert_eq!(
+        restarted_inspection.current_state,
+        OperationState::Completed as i32
+    );
+    assert_eq!(
+        restarted_inspection.terminal_event_id,
+        Some(promotion_event_id)
+    );
+
     let restarted_auth = login_control(&restarted_control).await;
     let subsequent = restarted_control
         .submit(authenticated_control(

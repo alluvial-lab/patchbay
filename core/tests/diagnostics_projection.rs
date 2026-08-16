@@ -247,6 +247,7 @@ fn replay_and_incremental_command_folds_match() {
             kind: TargetScopeKind::RuntimeSession as i32,
             ..TargetScope::default()
         }),
+        idempotency_key: "command-1-key".to_owned(),
         ..Operation::default()
     };
     let transition = CommandTransition {
