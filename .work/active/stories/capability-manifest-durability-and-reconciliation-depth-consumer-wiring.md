@@ -1,7 +1,7 @@
 ---
 id: capability-manifest-durability-and-reconciliation-depth-consumer-wiring
 kind: story
-stage: review
+stage: done
 tags: [adapter, protocol, verification]
 parent: capability-manifest-durability-and-reconciliation-depth
 depends_on: [capability-manifest-durability-and-reconciliation-depth-contract-validation]
