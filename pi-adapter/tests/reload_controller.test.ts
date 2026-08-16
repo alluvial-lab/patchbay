@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
@@ -8,6 +8,7 @@ import {
   AdapterIdSchema,
   CommandIdSchema,
   ExternalRuntimeRefSchema,
+  FailureCode,
   GenerationSchema,
   LogicalTargetIdSchema,
   OperationKind,
@@ -82,10 +83,12 @@ test("idle materialized reload completes only after both markers, new handshake,
   });
 });
 
-test("real Pi reload rereads the entrypoint but leaves its transitive dependency cached", { timeout: 30_000 }, async () => {
+test("real Pi reload refreshes the entrypoint but leaves transitive and installed-package dist artifacts old", { timeout: 30_000 }, async () => {
   const root = await mkdtemp(join(process.cwd(), "tmp-real-reload-controller-"));
   const sessionFile = join(root, "session.jsonl");
   const dependencyPath = join(root, "reload-dependency.mjs");
+  const packageRoot = join(root, "node_modules", "@patchbay", "reload-dist-probe");
+  const packageDistPath = join(packageRoot, "dist", "index.mjs");
   const extensionPath = join(root, "reload-entrypoint.ts");
   const source = await readFile(fixturePath, "utf8");
   const sessionObjects = source.trimEnd().split("\n").map(
@@ -98,17 +101,25 @@ test("real Pi reload rereads the entrypoint but leaves its transitive dependency
     { mode: 0o600 },
   );
   await writeFile(dependencyPath, "export const dependencyVersion = 'A';\n", { mode: 0o600 });
+  await mkdir(join(packageRoot, "dist"), { recursive: true });
+  await writeFile(join(packageRoot, "package.json"), JSON.stringify({
+    name: "@patchbay/reload-dist-probe",
+    type: "module",
+    exports: "./dist/index.mjs",
+  }), { mode: 0o600 });
+  await writeFile(packageDistPath, "export const distVersion = 'A';\n", { mode: 0o600 });
   const controlPath = await realpath(fileURLToPath(
     new URL("../extensions/patchbay-control.js", import.meta.url),
   ));
   const writeWrapper = (entrypointVersion: string) => writeFile(extensionPath, `
 import patchbayControl from ${JSON.stringify(pathToFileURL(controlPath).href)};
 import { dependencyVersion } from "./reload-dependency.mjs";
+import { distVersion } from "@patchbay/reload-dist-probe";
 export default function reloadProbe(pi) {
   patchbayControl(pi);
   pi.on("session_start", (event) => {
     if (event.reason === "reload") {
-      pi.appendEntry("patchbay.test.reload-probe.v1", { entrypointVersion: ${JSON.stringify(entrypointVersion)}, dependencyVersion });
+      pi.appendEntry("patchbay.test.reload-probe.v1", { entrypointVersion: ${JSON.stringify(entrypointVersion)}, dependencyVersion, distVersion });
     }
   });
 }
@@ -155,6 +166,7 @@ export default function reloadProbe(pi) {
     );
     await writeWrapper("B");
     await writeFile(dependencyPath, "export const dependencyVersion = 'B';\n", { mode: 0o600 });
+    await writeFile(packageDistPath, "export const distVersion = 'B';\n", { mode: 0o600 });
     const controller = new PiReloadController({
       session,
       runtimePort,
@@ -173,7 +185,11 @@ export default function reloadProbe(pi) {
       (entry) => entry.type === "custom" && entry.customType === "patchbay.test.reload-probe.v1",
     );
     assert.ok(probe && probe.type === "custom");
-    assert.deepEqual(probe.data, { entrypointVersion: "B", dependencyVersion: "A" });
+    assert.deepEqual(probe.data, {
+      entrypointVersion: "B",
+      dependencyVersion: "A",
+      distVersion: "A",
+    });
     assert.equal(publications.length, 1);
   } finally {
     if (session) {
@@ -197,6 +213,15 @@ test("streaming, compacting, queued, retry-unsettled, delivery-busy, and unmater
     {
       name: "auto retry without settlement",
       configure: (h) => { h.rpc.emit({ type: "auto_retry_start" }); },
+      reason: "busy_unsettled",
+    },
+    {
+      name: "auto retry after a prior activity settled",
+      configure: (h) => {
+        h.rpc.emit({ type: "agent_start" });
+        h.rpc.emit({ type: "agent_settled" });
+        h.rpc.emit({ type: "auto_retry_start" });
+      },
       reason: "busy_unsettled",
     },
     {
@@ -297,6 +322,41 @@ test("a persisted completed reload reconciles without blindly invoking ctx.reloa
   });
 });
 
+test("persisted post-effect reporting failures remain redacted execution ambiguity", async () => {
+  const rawFailure = "secret session report failed";
+  const cases: Array<{
+    readonly name: string;
+    readonly arrange: (harness: ReloadHarness) => Promise<void>;
+  }> = [
+    {
+      name: "completed marker pair",
+      arrange: (harness) => harness.rpc.appendPersistedCompletedReload(),
+    },
+    {
+      name: "conflicting marker set",
+      arrange: (harness) => harness.rpc.appendForgedRequest("reload-command", reloadNonce),
+    },
+  ];
+
+  for (const candidate of cases) {
+    await withHarness(async (harness) => {
+      await candidate.arrange(harness);
+      await assert.rejects(
+        harness.controller.reloadEnumeratedResources(reloadOperation(), harness.runtime),
+        (error: unknown) => {
+          assert.ok(error instanceof PiReloadAmbiguousError, candidate.name);
+          assert.equal(error.failureCode, FailureCode.EXECUTION_OUTCOME_UNKNOWN);
+          assert.equal(error.message.includes(rawFailure), false, "raw reporting error is redacted");
+          return true;
+        },
+      );
+      assert.equal(harness.rpc.promptCalls, 0, "recovery must not invoke ctx.reload again");
+    }, {
+      markRehydrating: async () => { throw new Error(rawFailure); },
+    });
+  }
+});
+
 test("completion without an earlier request is invalid durable state and rejects before command", async () => {
   await withHarness(async (harness) => {
     harness.rpc.appendForgedCompletion("missing-request");
@@ -309,7 +369,7 @@ test("completion without an earlier request is invalid durable state and rejects
   });
 });
 
-test("unknown/transitive or runtime-dist scope requires process replacement without reload effect", async () => {
+test("unknown enum scope requires process replacement without reload effect", async () => {
   await withHarness(async (harness) => {
     const result = await harness.controller.reloadEnumeratedResources(
       reloadOperation([999 as PiReloadableResourceKind]),
@@ -336,7 +396,10 @@ interface ReloadHarness {
 
 async function withHarness(
   action: (harness: ReloadHarness) => Promise<void>,
-  controllerOptions: { readonly maxMarkerPolls?: number } = {},
+  controllerOptions: {
+    readonly maxMarkerPolls?: number;
+    readonly markRehydrating?: () => Promise<void>;
+  } = {},
 ): Promise<void> {
   const root = await mkdtemp(join(process.cwd(), "tmp-reload-controller-"));
   const cursorRoot = join(root, "cursor");
@@ -392,7 +455,8 @@ async function withHarness(
     configuredSessionRoot: root,
     expectedProjectCwd: process.cwd(),
     hasConflictingDelivery: () => harness.conflictingDelivery,
-    markRehydrating: async () => { states.push("stale"); },
+    markRehydrating: controllerOptions.markRehydrating
+      ?? (async () => { states.push("stale"); }),
     markRehydrated: async () => { states.push("live"); },
     randomBytes: () => Buffer.alloc(32, 33),
     sleep: async () => undefined,

@@ -153,6 +153,8 @@ test("delivery classification preserves post-write RPC ambiguity and session axe
   assert.equal(ambiguousReload.failureCode, FailureCode.EXECUTION_OUTCOME_UNKNOWN);
   assert.equal(ambiguousReload.connectivity, SessionConnectivityState.STALE);
   assert.equal(ambiguousReload.rejected, false);
+  assert.equal(ambiguousReload.diagnostic, "pi_reload_rehydration_outcome_unknown");
+  assert.equal(ambiguousReload.diagnostic.includes("session report failed"), false);
 
   const timeout = classifyDeliveryFailure(new PiRpcTransportError(
     "timeout",

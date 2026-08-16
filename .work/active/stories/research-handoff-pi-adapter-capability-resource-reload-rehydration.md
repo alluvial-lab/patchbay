@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-resource-reload-rehydration
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol]
 parent: research-handoff-pi-adapter-capability
 depends_on: [research-handoff-pi-adapter-capability-manifest-profile, research-handoff-pi-adapter-capability-control-session-integrity, research-handoff-pi-adapter-capability-rpc-process-supervisor, research-handoff-pi-adapter-capability-cursor-replay-resync]
@@ -103,4 +103,23 @@ Consumes the opaque Pi profile schema, strict control/materialization proof, sha
   - `cd pi-adapter && npm test` — passed, 119 tests, including the real-process entrypoint-versus-transitive-dependency reload boundary.
   - `cd web-cockpit && npm test` — passed, 148 tests; `cd cli && npm test` — passed, 53 tests plus the real-core resource projection; `cd token-commune-adapter && npm test` — passed, 63 tests.
 - Mutation evidence: six temporary production mutants were each killed by a focused test and restored with `git restore`: streaming admission bypass; unmaterialized request accepted; one-marker success; old-epoch handshake accepted; transitive/runtime-dist scope admitted; and busy-path effect before rejection. The post-mutation tree and regenerated focused/full tests were clean.
+- Adjacent issues parked: none.
+
+### Fix round r1 — post-effect ambiguity and real-process scope oracle
+
+- Finding 1: persisted marker evidence now enters one post-effect recovery boundary. A failure while reporting stale/rehydrating state can no longer replace an existing ambiguity or leak its raw message; matching completed pairs and conflicting marker sets both return the sanitized `PiReloadAmbiguousError` / `execution_outcome_unknown` shape, remain stale at delivery classification, and never invoke `ctx.reload()` a second time.
+- Finding 2: the real offline Pi process fixture now installs an isolated package alias backed by `node_modules/@patchbay/reload-dist-probe/dist/index.mjs`, rewrites that compiled `/dist` artifact and the direct transitive `.mjs` from A to B, and proves the reloaded entrypoint observes B while both imported artifacts remain A in the same process. The numeric unknown-enum test was renamed so it no longer claims transitive or `/dist` evidence.
+- Judgment rationale: the `/dist` oracle uses a package created only beneath the test's temporary root. This proves the installed-package alias/cache boundary without mutating Pi's installed package or relying on loader-source prose as the implementation oracle.
+- Regression coverage: added persisted completed/conflicting-marker reporting-failure cases with raw-secret non-disclosure and canonical failure-code assertions; extended delivery classification to assert the closed safe diagnostic; retained the real-process entrypoint/transitive probe and added the independent package-`/dist` value; made the historical-settlement/then-new-retry admission oracle permanent.
+- Mutation evidence: every temporary mutation ran on the main tree, was killed by a focused test, and was reverted with `git restore`: raw persisted-recovery reporting error escape; simulated broad installed-`/dist` refresh; streaming-admission bypass; unmaterialized request acceptance; old-epoch handshake acceptance; and stale historical settlement admitted for a later retry. The clean focused set passed after all restorations.
+- Full verification (2026-08-16):
+  - Rust group: `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings` — passed, including mandatory warning denial.
+  - Contracts group: `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build` — passed; 59 vectors, 31 implementation checks, and 38 registered mutation witnesses.
+  - Operator-domain group: `cd operator-domain && npm run build && npm test` — passed, 32/32.
+  - Pi-adapter group: `cd pi-adapter && npm test` — passed, 120/120, including the real-process entrypoint/transitive/package-`/dist` oracle.
+  - Web cockpit: `cd web-cockpit && npm test` — passed, 148/148.
+  - CLI: `cd cli && npm test` — passed, 53/53 plus the real-core resource projection.
+  - token-commune adapter: `cd token-commune-adapter && npm test` — passed, 63/63, including both real-core flows.
+  - A first parallel launch of dependent TypeScript package groups raced `operator-domain`'s `rm -rf dist` rebuild; those results were discarded. Dependency-safe reruns above all passed.
+- Scope and simplification: no Protobuf or generated-contract edits; no new recovery state or raw-error carrier. The fix reuses the existing closed ambiguity error and one isolated process fixture.
 - Adjacent issues parked: none.

@@ -197,19 +197,24 @@ export class PiReloadController implements ReloadController {
         resources,
       );
     } catch (error) {
-      await this.#options.markRehydrating();
-      throw error;
+      await this.#reportPersistedAmbiguity(error);
     }
     if (recovered) {
-      await this.#options.markRehydrating();
-      return this.#rehydrate(
-        runtime,
-        snapshot,
-        control.extensionPath,
-        recovered.correlation,
-        recovered.pair,
-        new Set(),
-      );
+      try {
+        await this.#options.markRehydrating();
+        return await this.#rehydrate(
+          runtime,
+          snapshot,
+          control.extensionPath,
+          recovered.correlation,
+          recovered.pair,
+          new Set(),
+        );
+      } catch (error) {
+        if (error instanceof PiReloadRejectedError) throw error;
+        if (error instanceof PiReloadAmbiguousError) throw error;
+        throw new PiReloadAmbiguousError();
+      }
     }
 
     const correlation: ReloadCorrelation = Object.freeze({
@@ -335,6 +340,13 @@ export class PiReloadController implements ReloadController {
       if (error instanceof PiReloadAmbiguousError) throw error;
       throw new PiReloadAmbiguousError();
     }
+  }
+
+  async #reportPersistedAmbiguity(error: unknown): Promise<never> {
+    await this.#options.markRehydrating().catch(() => undefined);
+    if (error instanceof PiReloadRejectedError) throw error;
+    if (error instanceof PiReloadAmbiguousError) throw error;
+    throw new PiReloadAmbiguousError();
   }
 
   #requireIdleAdmission(runtime: PiRpcRuntime, snapshot: SettledRuntimeSnapshot): void {
