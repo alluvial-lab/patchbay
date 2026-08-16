@@ -66,6 +66,13 @@ jobs:
         working-directory: token-commune-adapter
         run: npm ci
 
+      # pi-adapter's test:conformance (vector runner) builds itself including
+      # extensions/patchbay-control.ts, so it needs its node_modules + the
+      # workspace-linked contracts/operator-domain builds above.
+      - name: Install pi-adapter dependencies (conformance runner)
+        working-directory: pi-adapter
+        run: npm ci
+
       - name: Protocol conformance vectors
         working-directory: contracts/ts
         run: npm run check:vectors
