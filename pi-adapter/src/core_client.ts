@@ -10,11 +10,14 @@ import { createGrpcTransport } from "@connectrpc/connect-node";
 import {
   ActorEndpointRefSchema,
   ActorIdSchema,
+  AdapterAssuranceManifestSchema,
+  AdapterAssuranceManifestV1Schema,
   AdapterCapabilitySchema,
   AdapterDiagnosticReportingCapabilitySchema,
   AdapterControlService,
   AdapterIdSchema,
   AdapterRegistrationSchema,
+  AdapterReconciliationStrength,
   AdapterSnapshotSupport,
   AdapterTargetCategory,
   AttachmentMethodSchema,
@@ -34,6 +37,7 @@ import {
   PayloadContentType,
   PayloadEnvelopeSchema,
   ReceiveRequestSchema,
+  ReconciliationAction,
   RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
@@ -441,7 +445,19 @@ function piCapabilityManifest() {
     sessionSnapshotSupport: AdapterSnapshotSupport.PARTIAL,
     cancellationSupport: true,
     sessionReplacementSupport: true,
-    idempotencyStrength: IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
+    assurance: create(AdapterAssuranceManifestSchema, {
+      contract: {
+        case: "v1",
+        value: create(AdapterAssuranceManifestV1Schema, {
+          deduplicationStrength: IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
+          continuationProofSupport: false,
+          cursorSupport: false,
+          generationFenceSupport: false,
+          reconciliationStrength: AdapterReconciliationStrength.NONE,
+          unprovenOutcomeAction: ReconciliationAction.MANUAL_REQUIRED,
+        }),
+      },
+    }),
     attachmentMethod: create(AttachmentMethodSchema, {
       kind: "configured-local-material",
       descriptor: new Uint8Array(),

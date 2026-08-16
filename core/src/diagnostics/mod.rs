@@ -712,6 +712,7 @@ impl DiagnosticsProjection {
         self.current_process_adapters.insert(adapter_id, state);
     }
 
+    #[allow(deprecated)] // Compatibility projection is replaced by canonical assurance carriage.
     pub fn adapter_page(
         &self,
         query: &AdapterStatusQuery,

@@ -1,0 +1,70 @@
+{
+  "vector_id": "adapter-assurance-advisory-only",
+  "property_id": "GrantAuthorityIsOperationKinds",
+  "promotion_status": "promoted",
+  "implementation_checks": [
+    { "runner": "rust-core", "case": "adapter_assurance_advisory_only" }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.AdapterCapability.supported_operation_kinds",
+    "patchbay.AdapterCapability.assurance",
+    "patchbay.AdapterAssuranceManifest.v1",
+    "patchbay.AdapterAssuranceManifestV1.deduplication_strength",
+    "patchbay.AdapterAssuranceManifestV1.continuation_proof_support",
+    "patchbay.AdapterAssuranceManifestV1.cursor_support",
+    "patchbay.AdapterAssuranceManifestV1.generation_fence_support",
+    "patchbay.AdapterAssuranceManifestV1.reconciliation_strength",
+    "patchbay.AdapterAssuranceManifestV1.unproven_outcome_action",
+    "patchbay.Grant.allowed_operation_kinds",
+    "patchbay.Operation.kind",
+    "patchbay.SubmissionResult.outcome",
+    "patchbay.SubmissionResult.failure_code"
+  ],
+  "description": "A maximal assurance declaration cannot authorize an Operation without a Grant, and a conservative declaration with an empty advertised Operation set cannot suppress grant-authorized delivery admission.",
+  "input": {
+    "maximal_without_grant": {
+      "supported_operation_kinds": ["OPERATION_KIND_INSTRUCT"],
+      "assurance": {
+        "v1": {
+          "deduplication_strength": "IDEMPOTENCY_STRENGTH_END_TO_END",
+          "continuation_proof_support": true,
+          "cursor_support": true,
+          "generation_fence_support": true,
+          "reconciliation_strength": "ADAPTER_RECONCILIATION_STRENGTH_AUTHORITATIVE",
+          "unproven_outcome_action": "RECONCILIATION_ACTION_MANUAL_REQUIRED"
+        }
+      },
+      "available_grants": []
+    },
+    "conservative_with_grant": {
+      "supported_operation_kinds": [],
+      "assurance": {
+        "v1": {
+          "deduplication_strength": "IDEMPOTENCY_STRENGTH_NONE",
+          "continuation_proof_support": false,
+          "cursor_support": false,
+          "generation_fence_support": false,
+          "reconciliation_strength": "ADAPTER_RECONCILIATION_STRENGTH_NONE",
+          "unproven_outcome_action": "RECONCILIATION_ACTION_NONE"
+        }
+      },
+      "grant": {
+        "allowed_operation_kinds": ["OPERATION_KIND_INSTRUCT"]
+      }
+    }
+  },
+  "expected_outcome": {
+    "maximal_without_grant": {
+      "rejected_before_acceptance": true,
+      "failure_code": "FAILURE_CODE_AUTHORIZATION_DENIED",
+      "delivered_to_adapter": false
+    },
+    "conservative_with_grant": {
+      "accepted_for_delivery": true,
+      "adapter_delivery_outcome_remains_authoritative": true
+    },
+    "capability_grants_authority": false,
+    "capability_replaces_delivery_outcome": false
+  },
+  "invariant_check": "GrantAuthorityIsOperationKinds: assurance and advertised support remain advisory diagnostics; only a live canonical OperationKind Grant authorizes acceptance, and cached capability cannot replace adapter-authoritative delivery support/outcome."
+}

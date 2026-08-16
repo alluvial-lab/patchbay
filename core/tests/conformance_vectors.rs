@@ -1,21 +1,27 @@
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 use patchbay_contracts::patchbay::{
-    resource_report_mutation, resource_state_mutation, AcceptedOperation, ActorEndpointRef,
-    ActorId, AdapterId, AdapterSnapshotSupport, AuthorityDomainId, CommandId, DeviceId, EndpointId,
-    ExternalEffectDisposition, FailureCode, Generation, Grant, GrantId, GrantProvenance,
-    GrantRevocationPolicy, Lsn, Observation, ObservationKind, Operation, OperationKind,
-    OperationState, PayloadContentType, PayloadEnvelope, ResourceFreshnessState, ResourceId,
-    ResourceKind, ResourceReportMutation, ResourceStateEvent, ResourceStateMutation,
-    ResourceStateTombstone, ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport,
-    ResourceViewStateUpdate, RuntimeSessionId, SessionActivityState, SessionConnectivityState,
-    SessionRegistered, SessionState, SpawnExecutionPhase, StoredEventKind, SubmissionOutcome,
-    TargetScope, TargetScopeKind, TimeWindow,
+    adapter_assurance_manifest, resource_report_mutation, resource_state_mutation,
+    AcceptedOperation, ActorEndpointRef, ActorId, AdapterAssuranceManifest,
+    AdapterAssuranceManifestV1, AdapterCapability, AdapterId, AdapterReconciliationStrength,
+    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AuthorityDomainId,
+    CommandId, DeviceId, EndpointId, ExternalEffectDisposition, FailureCode, Generation, Grant,
+    GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyStrength, Lsn, Observation,
+    ObservationKind, Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
+    ReconciliationAction, ResourceFreshnessState, ResourceId, ResourceKind, ResourceReportMutation,
+    ResourceStateEvent, ResourceStateMutation, ResourceStateTombstone, ResourceStateUnknown,
+    ResourceStateUpsert, ResourceViewReport, ResourceViewStateUpdate, RuntimeSessionId,
+    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionState,
+    SpawnExecutionPhase, StoredEventKind, SubmissionOutcome, TargetScope, TargetScopeKind,
+    TimeWindow,
 };
 use patchbay_core::{
     acceptance::{
         ingest_observation, submit_with_clock, target_key_for, ActiveElicitation, CommandIndex,
         CommandSnapshot, CommandStateLookup, ElicitationContractLookup,
+    },
+    adapter::{
+        AdapterRecord, AdapterRegistry, CapabilityValidationContext, ValidatedAdapterCapability,
     },
     authority::{ingest_grant, target_scope_matches, AuthorityRegistry, IssuerContext},
     resource::{
@@ -1676,6 +1682,512 @@ fn spawn_claim_reconciliation_contract(vector: &ConformanceVector) -> Result<(),
     Ok(())
 }
 
+fn idempotency_strength(name: &str) -> Result<IdempotencyStrength, String> {
+    IdempotencyStrength::from_str_name(name)
+        .ok_or_else(|| format!("unknown vector IdempotencyStrength {name}"))
+}
+
+fn reconciliation_strength(name: &str) -> Result<AdapterReconciliationStrength, String> {
+    AdapterReconciliationStrength::from_str_name(name)
+        .ok_or_else(|| format!("unknown vector AdapterReconciliationStrength {name}"))
+}
+
+fn reconciliation_action(name: &str) -> Result<ReconciliationAction, String> {
+    ReconciliationAction::from_str_name(name)
+        .ok_or_else(|| format!("unknown vector ReconciliationAction {name}"))
+}
+
+fn assurance_from_value(value: &Value) -> Result<AdapterAssuranceManifest, String> {
+    Ok(AdapterAssuranceManifest {
+        contract: Some(adapter_assurance_manifest::Contract::V1(
+            AdapterAssuranceManifestV1 {
+                deduplication_strength: idempotency_strength(string(
+                    value,
+                    "/deduplication_strength",
+                )?)? as i32,
+                continuation_proof_support: Some(boolean(value, "/continuation_proof_support")?),
+                cursor_support: Some(boolean(value, "/cursor_support")?),
+                generation_fence_support: Some(boolean(value, "/generation_fence_support")?),
+                reconciliation_strength: reconciliation_strength(string(
+                    value,
+                    "/reconciliation_strength",
+                )?)? as i32,
+                unproven_outcome_action: reconciliation_action(string(
+                    value,
+                    "/unproven_outcome_action",
+                )?)? as i32,
+            },
+        )),
+    })
+}
+
+fn assurance_capability(assurance: Option<AdapterAssuranceManifest>) -> AdapterCapability {
+    AdapterCapability {
+        session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
+        target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+        assurance,
+        ..AdapterCapability::default()
+    }
+}
+
+fn adapter_assurance_complete_manifest(vector: &ConformanceVector) -> Result<(), String> {
+    let fresh_value = vector
+        .input
+        .pointer("/fresh_complete/v1")
+        .ok_or("missing complete V1 input")?;
+    let complete = assurance_capability(Some(assurance_from_value(fresh_value)?));
+    let validated =
+        ValidatedAdapterCapability::try_from_wire(&complete, CapabilityValidationContext::Attach)
+            .map_err(|error| error.to_string())?;
+    if !boolean(&vector.expected_outcome, "/fresh_complete_valid")?
+        || validated.assurance().to_wire_v1()
+            != complete.assurance.ok_or("complete assurance absent")?
+    {
+        return Err("complete explicit-false V1 did not round-trip canonically".to_owned());
+    }
+
+    let missing = assurance_capability(None);
+    if !boolean(&vector.expected_outcome, "/missing_manifest_rejected")?
+        || ValidatedAdapterCapability::try_from_wire(&missing, CapabilityValidationContext::Attach)
+            .is_ok()
+    {
+        return Err("missing fresh assurance manifest was accepted".to_owned());
+    }
+
+    let omitted = vector
+        .input
+        .pointer("/reject/omitted_boolean_fields")
+        .and_then(Value::as_array)
+        .ok_or("missing omitted-boolean inventory")?;
+    for field in omitted {
+        let field = field.as_str().ok_or("omitted field must be a string")?;
+        let mut capability = complete.clone();
+        let Some(adapter_assurance_manifest::Contract::V1(v1)) = capability
+            .assurance
+            .as_mut()
+            .and_then(|manifest| manifest.contract.as_mut())
+        else {
+            return Err("complete fixture lost V1".to_owned());
+        };
+        match field {
+            "continuation_proof_support" => v1.continuation_proof_support = None,
+            "cursor_support" => v1.cursor_support = None,
+            "generation_fence_support" => v1.generation_fence_support = None,
+            other => return Err(format!("unknown omitted-boolean field {other}")),
+        }
+        if ValidatedAdapterCapability::try_from_wire(
+            &capability,
+            CapabilityValidationContext::Attach,
+        )
+        .is_ok()
+        {
+            return Err(format!("omitted {field} was accepted"));
+        }
+    }
+
+    let enum_fields = vector
+        .input
+        .pointer("/reject/enum_fields")
+        .and_then(Value::as_array)
+        .ok_or("missing enum-field inventory")?;
+    let unknown_numeric = vector
+        .input
+        .pointer("/reject/unknown_enum_numeric")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .ok_or("missing bounded unknown enum numeric")?;
+    for field in enum_fields {
+        let field = field.as_str().ok_or("enum field must be a string")?;
+        for value in [0, unknown_numeric] {
+            let mut capability = complete.clone();
+            let Some(adapter_assurance_manifest::Contract::V1(v1)) = capability
+                .assurance
+                .as_mut()
+                .and_then(|manifest| manifest.contract.as_mut())
+            else {
+                return Err("complete fixture lost V1".to_owned());
+            };
+            match field {
+                "deduplication_strength" => v1.deduplication_strength = value,
+                "reconciliation_strength" => v1.reconciliation_strength = value,
+                "unproven_outcome_action" => v1.unproven_outcome_action = value,
+                other => return Err(format!("unknown enum field {other}")),
+            }
+            if ValidatedAdapterCapability::try_from_wire(
+                &capability,
+                CapabilityValidationContext::Attach,
+            )
+            .is_ok()
+            {
+                return Err(format!("{field} value {value} was accepted"));
+            }
+        }
+    }
+
+    let enum_set_fields = vector
+        .input
+        .pointer("/reject/enum_set_fields")
+        .and_then(Value::as_array)
+        .ok_or("missing enum-set inventory")?;
+    for field in enum_set_fields {
+        let field = field.as_str().ok_or("enum-set field must be a string")?;
+        for case in ["unspecified", "unknown", "duplicate"] {
+            let mut capability = complete.clone();
+            match (field, case) {
+                ("supported_operation_kinds", "unspecified") => {
+                    capability.supported_operation_kinds = vec![OperationKind::Unspecified as i32]
+                }
+                ("supported_operation_kinds", "unknown") => {
+                    capability.supported_operation_kinds = vec![unknown_numeric]
+                }
+                ("supported_operation_kinds", "duplicate") => {
+                    capability.supported_operation_kinds = vec![
+                        OperationKind::Instruct as i32,
+                        OperationKind::Instruct as i32,
+                    ]
+                }
+                ("known_failure_modes", "unspecified") => {
+                    capability.known_failure_modes = vec![FailureCode::Unspecified as i32]
+                }
+                ("known_failure_modes", "unknown") => {
+                    capability.known_failure_modes = vec![unknown_numeric]
+                }
+                ("known_failure_modes", "duplicate") => {
+                    capability.known_failure_modes = vec![
+                        FailureCode::ExecutionFailed as i32,
+                        FailureCode::ExecutionFailed as i32,
+                    ]
+                }
+                (other, _) => return Err(format!("unknown enum-set field {other}")),
+            }
+            if ValidatedAdapterCapability::try_from_wire(
+                &capability,
+                CapabilityValidationContext::Attach,
+            )
+            .is_ok()
+            {
+                return Err(format!("{field} {case} value was accepted"));
+            }
+        }
+    }
+
+    #[allow(deprecated)]
+    let dual_result = {
+        let mut dual = complete.clone();
+        dual.idempotency_strength =
+            idempotency_strength(string(&vector.input, "/reject/dual_legacy_strength")?)? as i32;
+        ValidatedAdapterCapability::try_from_wire(&dual, CapabilityValidationContext::Attach)
+    };
+    if !boolean(&vector.expected_outcome, "/dual_declaration_rejected")? || dual_result.is_ok() {
+        return Err("dual legacy/current deduplication was accepted".to_owned());
+    }
+
+    let unknown_contract = assurance_capability(Some(AdapterAssuranceManifest { contract: None }));
+    if vector
+        .input
+        .pointer("/reject/unknown_contract_version")
+        .and_then(Value::as_u64)
+        .is_none_or(|version| version <= 1)
+        || !boolean(&vector.expected_outcome, "/unknown_version_rejected")?
+        || ValidatedAdapterCapability::try_from_wire(
+            &unknown_contract,
+            CapabilityValidationContext::Attach,
+        )
+        .is_ok()
+        || ValidatedAdapterCapability::try_from_wire(
+            &unknown_contract,
+            CapabilityValidationContext::Replay,
+        )
+        .is_ok()
+    {
+        return Err("unknown assurance version entered V1 or legacy replay".to_owned());
+    }
+
+    let replay_cases = vector
+        .input
+        .pointer("/historical_replay/cases")
+        .and_then(Value::as_array)
+        .ok_or("missing historical replay cases")?;
+    for replay_case in replay_cases {
+        #[allow(deprecated)]
+        let legacy = {
+            let mut capability = assurance_capability(None);
+            capability.idempotency_strength = if let Some(value) = replay_case
+                .get("legacy_numeric")
+                .and_then(Value::as_i64)
+                .and_then(|value| i32::try_from(value).ok())
+            {
+                value
+            } else {
+                idempotency_strength(string(replay_case, "/legacy_strength")?)? as i32
+            };
+            capability
+        };
+        let replayed =
+            ValidatedAdapterCapability::try_from_wire(&legacy, CapabilityValidationContext::Replay)
+                .map_err(|error| error.to_string())?;
+        let expected = idempotency_strength(string(replay_case, "/canonical_strength")?)?;
+        if replayed.assurance().deduplication_strength() != expected
+            || replayed.assurance().continuation_proof_support()
+            || replayed.assurance().cursor_support()
+            || replayed.assurance().generation_fence_support()
+            || replayed.assurance().reconciliation_strength() != AdapterReconciliationStrength::None
+            || replayed.assurance().unproven_outcome_action() != ReconciliationAction::None
+            || ValidatedAdapterCapability::try_from_wire(
+                &legacy,
+                CapabilityValidationContext::Attach,
+            )
+            .is_ok()
+        {
+            return Err(
+                "historical replay did not normalize conservatively and exclusively".into(),
+            );
+        }
+    }
+    if !boolean(&vector.expected_outcome, "/historical_replay_complete")?
+        || !boolean(
+            &vector.expected_outcome,
+            "/historical_replay_attach_rejected",
+        )?
+        || omitted.len() != 3
+        || !boolean(
+            &vector.expected_outcome,
+            "/enum_set_unspecified_unknown_duplicate_rejected",
+        )?
+        || enum_fields.len() != 3
+        || enum_set_fields.len() != 2
+    {
+        return Err("assurance vector expected outcome or registry inventory is incomplete".into());
+    }
+    Ok(())
+}
+
+fn registry_with_adapter_assurance(
+    authority_domain_id: &AuthorityDomainId,
+    capability: AdapterCapability,
+) -> Result<AdapterRegistry, String> {
+    let adapter_id = AdapterId {
+        value: "pi".to_owned(),
+    };
+    let validated =
+        ValidatedAdapterCapability::try_from_wire(&capability, CapabilityValidationContext::Attach)
+            .map_err(|error| error.to_string())?;
+    Ok(AdapterRegistry::from_single(
+        adapter_id.clone(),
+        AdapterRecord {
+            registration: AdapterRegistration {
+                adapter_id: Some(adapter_id),
+                endpoint_id: Some(EndpointId {
+                    value: "pi-endpoint".to_owned(),
+                }),
+                authority_domain_id: Some(authority_domain_id.clone()),
+                adapter_generation: Some(Generation { value: 1 }),
+                capability: Some(capability),
+                ..AdapterRegistration::default()
+            },
+            validated_capability: validated,
+            attach_event_id: event_id(authority_domain_id.clone(), 1),
+        },
+    ))
+}
+
+async fn submit_with_declared_assurance(
+    assurance_value: &Value,
+    supported_operation_kinds: Vec<i32>,
+    with_grant: bool,
+) -> Result<patchbay_contracts::patchbay::SubmissionResult, String> {
+    let authority_domain_id = AuthorityDomainId {
+        value: "auth-main".to_owned(),
+    };
+    let target = TargetScope {
+        kind: TargetScopeKind::RuntimeSession as i32,
+        adapter_id: Some(AdapterId {
+            value: "pi".to_owned(),
+        }),
+        deployment_scope: "conformance".to_owned(),
+        runtime_session_id: Some(RuntimeSessionId {
+            value: "session-assurance".to_owned(),
+        }),
+        session_generation: Some(Generation { value: 1 }),
+        ..TargetScope::default()
+    };
+    let mut capability = assurance_capability(Some(assurance_from_value(assurance_value)?));
+    capability.supported_operation_kinds = supported_operation_kinds;
+    let targets = TargetRegistry::with_adapters(
+        session_registry(&authority_domain_id, &target)?,
+        ResourceRegistry::new(),
+        registry_with_adapter_assurance(&authority_domain_id, capability)?,
+    );
+    let storage = RusqliteStorage::open_in_memory().map_err(|error| error.to_string())?;
+    let mut authority = AuthorityRegistry::new();
+    if with_grant {
+        ingest_grant(
+            &storage,
+            &mut authority,
+            &authority_domain_id,
+            Grant {
+                grant_id: Some(GrantId {
+                    value: "assurance-independent-grant".to_owned(),
+                }),
+                authority_domain_id: Some(authority_domain_id.clone()),
+                subject_actor_id: Some(ActorId {
+                    value: "operator".to_owned(),
+                }),
+                subject_endpoint_id: Some(EndpointId {
+                    value: "web".to_owned(),
+                }),
+                target_scope: Some(target.clone()),
+                allowed_operation_kinds: vec![OperationKind::Instruct as i32],
+                provenance: Some(GrantProvenance {
+                    reason: "assurance advisory conformance".to_owned(),
+                    ..GrantProvenance::default()
+                }),
+                revocation_policy: GrantRevocationPolicy::Continue as i32,
+                ..Grant::default()
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+    submit_with_clock(
+        &storage,
+        &authority,
+        &targets,
+        &CommandIndex::new(),
+        &NoContracts,
+        &Issuer {
+            actor: ActorId {
+                value: "operator".to_owned(),
+            },
+            endpoint: EndpointId {
+                value: "web".to_owned(),
+            },
+            device: DeviceId {
+                value: "conformance-device".to_owned(),
+            },
+            domain: authority_domain_id.clone(),
+        },
+        Operation {
+            command_id: Some(CommandId {
+                value: if with_grant {
+                    "conservative-with-grant".to_owned()
+                } else {
+                    "maximal-without-grant".to_owned()
+                },
+            }),
+            authority_domain_id: Some(authority_domain_id),
+            sender: Some(ActorEndpointRef {
+                actor_id: Some(ActorId {
+                    value: "operator".to_owned(),
+                }),
+                ..ActorEndpointRef::default()
+            }),
+            kind: OperationKind::Instruct as i32,
+            target_scope: Some(target),
+            idempotency_key: if with_grant {
+                "conservative-with-grant-key".to_owned()
+            } else {
+                "maximal-without-grant-key".to_owned()
+            },
+            payload: Some(PayloadEnvelope::default()),
+            validity_window: Some(TimeWindow {
+                starts_at: Some(Timestamp {
+                    seconds: 99,
+                    nanos: 0,
+                }),
+                expires_at: Some(Timestamp {
+                    seconds: 101,
+                    nanos: 0,
+                }),
+            }),
+            submitted_at: Some(Timestamp {
+                seconds: 100,
+                nanos: 0,
+            }),
+            ..Operation::default()
+        },
+        &TestClock::new(Timestamp {
+            seconds: 100,
+            nanos: 0,
+        }),
+    )
+    .await
+    .map_err(|error| error.to_string())
+}
+
+async fn adapter_assurance_advisory_only(vector: &ConformanceVector) -> Result<(), String> {
+    if vector
+        .input
+        .pointer("/maximal_without_grant/supported_operation_kinds")
+        .and_then(Value::as_array)
+        .is_none_or(|kinds| {
+            kinds.as_slice() != [Value::String("OPERATION_KIND_INSTRUCT".to_owned())]
+        })
+        || vector
+            .input
+            .pointer("/maximal_without_grant/available_grants")
+            .and_then(Value::as_array)
+            .is_none_or(|grants| !grants.is_empty())
+        || vector
+            .input
+            .pointer("/conservative_with_grant/supported_operation_kinds")
+            .and_then(Value::as_array)
+            .is_none_or(|kinds| !kinds.is_empty())
+        || string(
+            &vector.input,
+            "/conservative_with_grant/grant/allowed_operation_kinds/0",
+        )? != "OPERATION_KIND_INSTRUCT"
+    {
+        return Err("advisory-only vector capability/grant inputs are inconsistent".to_owned());
+    }
+    let maximal = vector
+        .input
+        .pointer("/maximal_without_grant/assurance/v1")
+        .ok_or("missing maximal assurance")?;
+    let conservative = vector
+        .input
+        .pointer("/conservative_with_grant/assurance/v1")
+        .ok_or("missing conservative assurance")?;
+    let denied =
+        submit_with_declared_assurance(maximal, vec![OperationKind::Instruct as i32], false)
+            .await?;
+    let admitted = submit_with_declared_assurance(conservative, Vec::new(), true).await?;
+    if denied.outcome != SubmissionOutcome::Rejected as i32
+        || denied.failure_code != FailureCode::AuthorizationDenied as i32
+        || admitted.outcome != SubmissionOutcome::Accepted as i32
+        || admitted.operation_state != OperationState::Accepted as i32
+        || !boolean(
+            &vector.expected_outcome,
+            "/maximal_without_grant/rejected_before_acceptance",
+        )?
+        || string(
+            &vector.expected_outcome,
+            "/maximal_without_grant/failure_code",
+        )? != "FAILURE_CODE_AUTHORIZATION_DENIED"
+        || !boolean(
+            &vector.expected_outcome,
+            "/conservative_with_grant/accepted_for_delivery",
+        )?
+        || boolean(&vector.expected_outcome, "/capability_grants_authority")?
+        || boolean(
+            &vector.expected_outcome,
+            "/capability_replaces_delivery_outcome",
+        )?
+    {
+        return Err(format!(
+            "assurance declaration affected authority or delivery admission: denied=({},{},{}) admitted=({},{},{},{})",
+            denied.outcome,
+            denied.failure_code,
+            denied.reason_code,
+            admitted.outcome,
+            admitted.operation_state,
+            admitted.failure_code,
+            admitted.reason_code
+        ));
+    }
+    Ok(())
+}
+
 async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), String> {
     if vector.property_id.is_empty()
         || !matches!(vector.promotion_status.as_str(), "draft" | "promoted")
@@ -1690,6 +2202,8 @@ async fn execute_case(vector: &ConformanceVector, case: &str) -> Result<(), Stri
         "resource_identity_collision_fenced" => collision(vector),
         "opaque_observation_cannot_fold_resource_state" => injection(vector).await,
         "spawn_claim_reconciliation_contract" => spawn_claim_reconciliation_contract(vector),
+        "adapter_assurance_complete_manifest" => adapter_assurance_complete_manifest(vector),
+        "adapter_assurance_advisory_only" => adapter_assurance_advisory_only(vector).await,
         _ => Err(format!(
             "unhandled {RUNNER} conformance case {}:{case}",
             vector.vector_id

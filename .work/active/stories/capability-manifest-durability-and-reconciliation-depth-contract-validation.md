@@ -1,7 +1,7 @@
 ---
 id: capability-manifest-durability-and-reconciliation-depth-contract-validation
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: capability-manifest-durability-and-reconciliation-depth
 depends_on: []
@@ -81,18 +81,33 @@ The V1 branch is frozen. New semantic fields require V2. A current decoder that 
 
 ## Acceptance evidence
 
-- [ ] Buf generation changes Rust and TypeScript from the same `.proto`; generated drift is green and no generated file is edited manually.
-- [ ] A fresh manifest with V1 and `Some(false)` for every uncertain boolean validates; omission of V1 or any boolean rejects.
-- [ ] Every unknown or `UNSPECIFIED` assurance enum rejects; an unknown/future assurance branch is not treated as V1.
-- [ ] Fresh dual declaration through deprecated tag 7 plus V1 rejects, while tag 7 remains a replay-only migration input.
-- [ ] Each historical legacy dedup value replays into exactly one canonical V1 assurance; absent/unspecified legacy strength and all new fields normalize conservatively.
-- [ ] Missing V1 under `CapabilityValidationContext::Attach` rejects even when the same bytes qualify for historical Replay normalization.
-- [ ] Invalid fresh attach/redeclaration writes no adapter-registration Observation and publishes no replacement token.
-- [ ] Touched manifest enum/set registries reject unknown/unspecified/applicable duplicate values rather than silently defaulting.
-- [ ] `adapter-assurance-complete-manifest` runs an exact Rust implementation check and is described as implementation-checked/stated-normative, not model-promoted.
-- [ ] `adapter-assurance-advisory-only` proves maximal declaration cannot bypass a missing grant and conservative declaration cannot replace adapter-authoritative delivery behavior.
-- [ ] Mutations accepting omitted false, coercing unknown values, applying Replay normalization at Attach, or allowing capability-derived authority fail the vector/test oracle.
+- [x] Buf generation changes Rust and TypeScript from the same `.proto`; generated drift is green and no generated file is edited manually.
+- [x] A fresh manifest with V1 and `Some(false)` for every uncertain boolean validates; omission of V1 or any boolean rejects.
+- [x] Every unknown or `UNSPECIFIED` assurance enum rejects; an unknown/future assurance branch is not treated as V1.
+- [x] Fresh dual declaration through deprecated tag 7 plus V1 rejects, while tag 7 remains a replay-only migration input.
+- [x] Each historical legacy dedup value replays into exactly one canonical V1 assurance; absent/unspecified legacy strength and all new fields normalize conservatively.
+- [x] Missing V1 under `CapabilityValidationContext::Attach` rejects even when the same bytes qualify for historical Replay normalization.
+- [x] Invalid fresh attach/redeclaration writes no adapter-registration Observation and publishes no replacement token.
+- [x] Touched manifest enum/set registries reject unknown/unspecified/applicable duplicate values rather than silently defaulting.
+- [x] `adapter-assurance-complete-manifest` runs an exact Rust implementation check and is described as implementation-checked/stated-normative, not model-promoted.
+- [x] `adapter-assurance-advisory-only` proves maximal declaration cannot bypass a missing grant and conservative declaration cannot replace adapter-authoritative delivery behavior.
+- [x] Mutations accepting omitted false, coercing unknown values, applying Replay normalization at Attach, or allowing capability-derived authority fail the vector/test oracle.
 
 ## Ordering constraint
 
 No sibling dependency. This checkpoint must complete before `capability-manifest-durability-and-reconciliation-depth-consumer-wiring` and before the Pi manifest/profile consumer can implement its generic assurance fields.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`; caller-selected for the generated-contract, durable-replay, and authority-sensitive validation leaf. Review weight: `thorough`; implementation intentionally stops at `stage: review` for the independent review.
+- Contract and mechanism: `adapter.proto` now owns the frozen, versioned assurance registry and deprecates tag 7 as replay-only input. `ValidatedAdapterAssurance` parses complete current V1 declarations, requires explicit optional-boolean presence and known non-sentinel enums, rejects legacy/current dual declarations, and emits one canonical V1 projection. Only trusted adapter-log replay call sites select conservative legacy normalization; fresh attach and redeclaration select strict validation before append/token publication.
+- Registry hardening: the touched `supported_operation_kinds` and `known_failure_modes` generated-enum sets now reject unknown, `UNSPECIFIED`, and duplicate members. Existing target/resource/schema validation remains unchanged.
+- Generated and compatibility surfaces: Buf generated Rust and TypeScript bindings from the same proto. Rust server/core fixtures were migrated to complete V1. The Pi constructor was minimally migrated to its already-designed conservative current declaration (`AT_PATCHBAY_BOUNDARY`, false/false/false, `NONE`, `MANUAL_REQUIRED`) because strict attach otherwise makes the mandated real-core Pi E2E invalid; focused Pi manifest tests, diagnostics carriage, token-commune migration, and presentation remain owned by the dependent consumer-wiring story.
+- Conformance evidence: added promoted implementation-checked vectors `adapter-assurance-complete-manifest` (`AdapterCapabilityAssuranceHonesty`, stated-normative/reserved-unmodeled) and `adapter-assurance-advisory-only` (`GrantAuthorityIsOperationKinds`). The Rust runner exercises the production validator, canonical replay projection, real authority submission path, and grant-authorized delivery admission; traceability and `docs/VERIFICATION.md` were regenerated/updated without claiming model promotion.
+- Tests: boundary matrices cover complete explicit-false V1, each missing boolean, every unknown/sentinel assurance enum, missing/unknown version, dual declaration, all historical legacy values, conservative unknown legacy normalization, attach-only exclusion, and touched enum-set invalidity. Server tests prove rejected initial attach and newer-generation redeclaration append no registration, publish no replacement token, and leave the prior token current.
+- Mutation kills: all injected mutants failed focused or vector oracles and were restored with exact baseline hashes: omitted uncertainty inferred/accepted; incomplete fresh manifest accepted; unknown version accepted; dual legacy/current declaration accepted; Replay normalization admitted at Attach; and capability-derived authority manufactured for the maximal declaration. Restored focused tests and vector checks pass.
+- Discrepancies from design: only the minimal Pi producer migration noted above moved forward from child 2 to preserve the caller-mandated group-4 E2E under strict fresh validation. No diagnostics schema/presentation consumer, token-commune producer, or positive Pi capability activation moved into this leaf. Adjacent issues parked: none.
+- Verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS**; all workspace targets/tests/doctests pass with warnings denied.
+- Verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS**; 59 vectors, 19 promoted vectors, 28 implementation checks, and 38 registered mutation witnesses; generated drift and traceability are current.
+- Verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS**, 27/27 tests.
+- Verification group 4 — `cd pi-adapter && npm test`: **PASS**, 60/60 tests including the real core/adapter generation-bump, reconnect, and restart E2E.

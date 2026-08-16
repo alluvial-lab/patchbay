@@ -9,23 +9,24 @@ use std::{
 use patchbay_contracts::patchbay::{
     observation_request, resource_report, resource_report_mutation, session_state_event,
     spawn_claim_event, spawn_request, typed_correlation, AcceptedOperation, ActorEndpointRef,
-    ActorId, AdapterCapability, AdapterDiagnosticPayload, AdapterDiagnosticReport,
-    AdapterDiagnosticSeverity, AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory,
-    AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition,
-    ContinuationAuthorityProvenance, ContinuationContextStatus, Elicitation, ElicitationId,
-    ElicitationState, EndpointId, ExternalEffectDisposition, ExternalRuntimeRef, FailureCode,
-    FreshSpawn, Generation, GrantId, IdempotencyKey, LogicalTargetCreated, LogicalTargetId,
-    LogicalTargetInitialCurrentAssigned, Lsn, Observation, ObservationKind, Operation,
-    OperationKind, PayloadContentType, PayloadEnvelope, ReceiveRequest, ResourceCapability,
-    ResourceFreshnessState, ResourceId, ResourceIdentity, ResourceKind, ResourceProjectionContract,
-    ResourceReport, ResourceReportMutation, ResourceSnapshotReport, ResourceStateUnknown,
-    ResourceStateUpsert, ResourceViewReport, RuntimeGenerationRef, RuntimeSessionId,
-    SchemaDescriptor, SecurityLockdownEntered, SessionActivityState, SessionConnectivityState,
-    SessionReportSourceCursor, SessionStateEvent, SpawnClaimAccepted, SpawnClaimDisposition,
-    SpawnClaimEvent, SpawnContinuation, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer,
-    SpawnExecutionPhase, SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnRequest,
-    SpawnTargetSpec, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
-    TypedCorrelation,
+    ActorId, AdapterAssuranceManifest, AdapterAssuranceManifestV1, AdapterCapability,
+    AdapterDiagnosticPayload, AdapterDiagnosticReport, AdapterDiagnosticSeverity,
+    AdapterReconciliationStrength, AdapterRegistration, AdapterSnapshotSupport,
+    AdapterTargetCategory, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId,
+    CommandTransition, ContinuationAuthorityProvenance, ContinuationContextStatus, Elicitation,
+    ElicitationId, ElicitationState, EndpointId, ExternalEffectDisposition, ExternalRuntimeRef,
+    FailureCode, FreshSpawn, Generation, GrantId, IdempotencyKey, IdempotencyStrength,
+    LogicalTargetCreated, LogicalTargetId, LogicalTargetInitialCurrentAssigned, Lsn, Observation,
+    ObservationKind, Operation, OperationKind, PayloadContentType, PayloadEnvelope, ReceiveRequest,
+    ReconciliationAction, ResourceCapability, ResourceFreshnessState, ResourceId, ResourceIdentity,
+    ResourceKind, ResourceProjectionContract, ResourceReport, ResourceReportMutation,
+    ResourceSnapshotReport, ResourceStateUnknown, ResourceStateUpsert, ResourceViewReport,
+    RuntimeGenerationRef, RuntimeSessionId, SchemaDescriptor, SecurityLockdownEntered,
+    SessionActivityState, SessionConnectivityState, SessionReportSourceCursor, SessionStateEvent,
+    SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent, SpawnContinuation,
+    SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
+    SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnRequest, SpawnTargetSpec,
+    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
@@ -867,7 +868,7 @@ async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_wit
             resource_declaration("provider_pool", AdapterSnapshotSupport::Authoritative),
             resource_declaration("usage_window", AdapterSnapshotSupport::Partial),
         ],
-        ..AdapterCapability::default()
+        ..current_capability()
     });
     service
         .attach(Request::new(AttachRequest {
@@ -914,7 +915,7 @@ async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_wit
     okf.capability = Some(AdapterCapability {
         target_categories: vec![AdapterTargetCategory::KnowledgeBundle as i32],
         resource_capabilities: vec![declaration],
-        ..AdapterCapability::default()
+        ..current_capability()
     });
     let error = rejected_service
         .attach(Request::new(AttachRequest {
@@ -941,6 +942,102 @@ async fn resource_manifest_attach_accepts_two_kinds_and_rejects_reserved_okf_wit
 }
 
 #[tokio::test]
+async fn invalid_assurance_attach_and_redeclaration_publish_no_registration_or_token() {
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
+
+    let mut missing_manifest = registration(domain.clone());
+    missing_manifest
+        .capability
+        .as_mut()
+        .expect("capability")
+        .assurance = None;
+    let error = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(missing_manifest),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect_err("incomplete fresh manifest rejects");
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    assert!(service.attachment_tokens.lock().await.is_empty());
+    assert!(storage
+        .read_after(&domain, Lsn { value: 0 })
+        .await
+        .expect("events read")
+        .iter()
+        .all(|event| {
+            Observation::decode(event.payload.payload.as_slice())
+                .ok()
+                .and_then(|observation| observation.payload)
+                .is_none_or(|payload| payload.schema_ref != adapter::ADAPTER_REGISTRATION_SCHEMA)
+        }));
+
+    let attached = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(registration(domain.clone())),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("complete V1 attaches");
+    let prior_token = attachment_token(&attached);
+    let tokens_before = service.attachment_tokens.lock().await.clone();
+
+    let mut incomplete_redeclaration = registration(domain.clone());
+    incomplete_redeclaration.adapter_generation = Some(Generation { value: 2 });
+    let Some(patchbay_contracts::patchbay::adapter_assurance_manifest::Contract::V1(manifest)) =
+        incomplete_redeclaration
+            .capability
+            .as_mut()
+            .and_then(|capability| capability.assurance.as_mut())
+            .and_then(|assurance| assurance.contract.as_mut())
+    else {
+        unreachable!()
+    };
+    manifest.cursor_support = None;
+    let error = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(incomplete_redeclaration),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect_err("incomplete redeclaration rejects");
+    assert_eq!(error.code(), tonic::Code::InvalidArgument);
+    assert_eq!(*service.attachment_tokens.lock().await, tokens_before);
+    assert_eq!(
+        storage
+            .read_after(&domain, Lsn { value: 0 })
+            .await
+            .expect("events read")
+            .iter()
+            .filter(|event| {
+                Observation::decode(event.payload.payload.as_slice())
+                    .ok()
+                    .and_then(|observation| observation.payload)
+                    .is_some_and(|payload| {
+                        payload.schema_ref == adapter::ADAPTER_REGISTRATION_SCHEMA
+                    })
+            })
+            .count(),
+        1,
+        "rejected redeclaration cannot append adapter routing identity"
+    );
+    assert_eq!(
+        service
+            .authenticate_request(&authenticated_with_attachment_token((), &prior_token))
+            .await
+            .expect("rejected redeclaration leaves prior token current"),
+        adapter_id()
+    );
+}
+
+#[tokio::test]
 async fn authenticated_resource_report_uses_manifest_admission_and_durable_projection() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId {
@@ -957,7 +1054,7 @@ async fn authenticated_resource_report_uses_manifest_admission_and_durable_proje
             "provider_pool",
             AdapterSnapshotSupport::Partial,
         )],
-        ..AdapterCapability::default()
+        ..current_capability()
     });
     let attached = service
         .attach(Request::new(AttachRequest {
@@ -1130,7 +1227,7 @@ async fn authenticated_resource_status_records_one_observation_and_fences_invali
             "provider_pool",
             AdapterSnapshotSupport::Partial,
         )],
-        ..AdapterCapability::default()
+        ..current_capability()
     });
     let attached = service
         .attach(Request::new(AttachRequest {
@@ -1429,7 +1526,7 @@ async fn same_generation_manifest_redeclaration_atomically_degrades_affected_res
             .iter()
             .map(|kind| resource_declaration(kind, AdapterSnapshotSupport::Authoritative))
             .collect(),
-        ..AdapterCapability::default()
+        ..current_capability()
     });
     let attached = service
         .attach(Request::new(AttachRequest {
@@ -1475,7 +1572,7 @@ async fn same_generation_manifest_redeclaration_atomically_degrades_affected_res
             resource_declaration("down_tiered_pool", AdapterSnapshotSupport::Partial),
             schema_changed,
         ],
-        ..AdapterCapability::default()
+        ..current_capability()
     });
     let replacement = service
         .attach(Request::new(AttachRequest {
@@ -1565,7 +1662,7 @@ async fn committed_registration_with_failed_projection_fences_prior_attachment()
             "provider_pool",
             AdapterSnapshotSupport::Authoritative,
         )],
-        ..AdapterCapability::default()
+        ..current_capability()
     });
     let attached = service
         .attach(Request::new(AttachRequest {
@@ -1611,7 +1708,7 @@ async fn committed_registration_with_failed_projection_fences_prior_attachment()
             "provider_pool",
             AdapterSnapshotSupport::Authoritative,
         )],
-        ..AdapterCapability::default()
+        ..current_capability()
     });
     service
         .attach(Request::new(AttachRequest {
@@ -1670,7 +1767,7 @@ async fn newer_generation_attachment_degrades_cached_resources_without_a_report(
             "provider_pool",
             AdapterSnapshotSupport::Authoritative,
         )],
-        ..AdapterCapability::default()
+        ..current_capability()
     });
     let attached = service
         .attach(Request::new(AttachRequest {
@@ -1704,7 +1801,7 @@ async fn newer_generation_attachment_degrades_cached_resources_without_a_report(
             "provider_pool",
             AdapterSnapshotSupport::Authoritative,
         )],
-        ..AdapterCapability::default()
+        ..current_capability()
     });
     service
         .attach(Request::new(AttachRequest {
@@ -1745,7 +1842,7 @@ async fn authoritative_snapshot_unknown_rejects_before_resource_append() {
             "provider_pool",
             AdapterSnapshotSupport::Authoritative,
         )],
-        ..AdapterCapability::default()
+        ..current_capability()
     });
     let attached = service
         .attach(Request::new(AttachRequest {
@@ -5694,6 +5791,30 @@ fn delivery_acknowledgement(
     }
 }
 
+fn current_assurance() -> AdapterAssuranceManifest {
+    AdapterAssuranceManifest {
+        contract: Some(
+            patchbay_contracts::patchbay::adapter_assurance_manifest::Contract::V1(
+                AdapterAssuranceManifestV1 {
+                    deduplication_strength: IdempotencyStrength::None as i32,
+                    continuation_proof_support: Some(false),
+                    cursor_support: Some(false),
+                    generation_fence_support: Some(false),
+                    reconciliation_strength: AdapterReconciliationStrength::None as i32,
+                    unproven_outcome_action: ReconciliationAction::None as i32,
+                },
+            ),
+        ),
+    }
+}
+
+fn current_capability() -> AdapterCapability {
+    AdapterCapability {
+        assurance: Some(current_assurance()),
+        ..AdapterCapability::default()
+    }
+}
+
 fn registration(domain: AuthorityDomainId) -> AdapterRegistration {
     AdapterRegistration {
         adapter_id: Some(adapter_id()),
@@ -5709,7 +5830,7 @@ fn registration(domain: AuthorityDomainId) -> AdapterRegistration {
             cancellation_support: true,
             session_replacement_support: true,
             target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
-            ..Default::default()
+            ..current_capability()
         }),
         ..Default::default()
     }

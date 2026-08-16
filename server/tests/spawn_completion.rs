@@ -9,20 +9,22 @@ use std::{
 
 use patchbay_contracts::patchbay::{
     observation_request, session_state_event, spawn_claim_event, spawn_request, typed_correlation,
-    AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
+    AcceptedOperation, ActorEndpointRef, ActorId, AdapterAssuranceManifest,
+    AdapterAssuranceManifestV1, AdapterCapability, AdapterId, AdapterReconciliationStrength,
     AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
     AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, CommandTransition, DescendantGrant,
     DescendantGrantProvenance, DeviceId, EndpointId, EventId, ExternalEffectDisposition,
     ExternalRuntimeRef, FailureCode, FreshSpawn, Generation, Grant, GrantId, GrantProvenance,
-    GrantRevocationPolicy, IdempotencyKey, LogicalTargetCreated, LogicalTargetId, Lsn, Observation,
-    ObservationKind, ObservationRequest, Operation, OperationKind, OperationState, OperatorRecord,
-    PayloadContentType, PayloadEnvelope, PrincipalEnrollment, ReceiveRequest, ResourceId,
-    ResourceIdentity, ResourceKind, Revocation, RuntimeGenerationRef, RuntimeSessionId,
-    SessionActivityState, SessionConnectivityState, SessionRegistered, SessionStateEvent,
-    SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent, SpawnExecutionEvidence,
-    SpawnExecutionPhase, SpawnGenerationClaim, SpawnPromotionCommitted, SpawnRequest,
-    SpawnTargetSpec, StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmitRequest,
-    TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation, VerifyOperatorPasswordRequest,
+    GrantRevocationPolicy, IdempotencyKey, IdempotencyStrength, LogicalTargetCreated,
+    LogicalTargetId, Lsn, Observation, ObservationKind, ObservationRequest, Operation,
+    OperationKind, OperationState, OperatorRecord, PayloadContentType, PayloadEnvelope,
+    PrincipalEnrollment, ReceiveRequest, ReconciliationAction, ResourceId, ResourceIdentity,
+    ResourceKind, Revocation, RuntimeGenerationRef, RuntimeSessionId, SessionActivityState,
+    SessionConnectivityState, SessionRegistered, SessionStateEvent, SpawnClaimAccepted,
+    SpawnClaimDisposition, SpawnClaimEvent, SpawnExecutionEvidence, SpawnExecutionPhase,
+    SpawnGenerationClaim, SpawnPromotionCommitted, SpawnRequest, SpawnTargetSpec, StoredEventKind,
+    StoredEventPayload, SubmissionOutcome, SubmitRequest, TargetScope, TargetScopeKind, TimeWindow,
+    TypedCorrelation, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
     acceptance::SPAWN_REQUEST_SCHEMA,
@@ -469,6 +471,20 @@ fn adapter_registration() -> AdapterRegistration {
             session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
             session_replacement_support: true,
             target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+            assurance: Some(AdapterAssuranceManifest {
+                contract: Some(
+                    patchbay_contracts::patchbay::adapter_assurance_manifest::Contract::V1(
+                        AdapterAssuranceManifestV1 {
+                            deduplication_strength: IdempotencyStrength::None as i32,
+                            continuation_proof_support: Some(false),
+                            cursor_support: Some(false),
+                            generation_fence_support: Some(false),
+                            reconciliation_strength: AdapterReconciliationStrength::None as i32,
+                            unproven_outcome_action: ReconciliationAction::None as i32,
+                        },
+                    ),
+                ),
+            }),
             ..AdapterCapability::default()
         }),
         ..AdapterRegistration::default()

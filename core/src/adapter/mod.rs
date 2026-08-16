@@ -10,8 +10,9 @@ use std::collections::HashMap;
 pub mod capability;
 
 pub use capability::{
-    CapabilityValidationContext, CapabilityValidationError, ValidatedAdapterCapability,
-    ValidatedProjectionContract, ValidatedResourceCapability, ValidatedSchemaDescriptor,
+    CapabilityValidationContext, CapabilityValidationError, ValidatedAdapterAssurance,
+    ValidatedAdapterCapability, ValidatedProjectionContract, ValidatedResourceCapability,
+    ValidatedSchemaDescriptor,
 };
 
 use patchbay_contracts::patchbay::{
@@ -832,7 +833,9 @@ pub enum AdapterError {
 #[cfg(test)]
 mod tests {
     use patchbay_contracts::patchbay::{
-        AdapterCapability, AdapterSnapshotSupport, AdapterTargetCategory, EndpointId, Generation,
+        adapter_assurance_manifest, AdapterAssuranceManifest, AdapterAssuranceManifestV1,
+        AdapterCapability, AdapterReconciliationStrength, AdapterSnapshotSupport,
+        AdapterTargetCategory, EndpointId, Generation, IdempotencyStrength, ReconciliationAction,
     };
 
     use super::*;
@@ -890,6 +893,18 @@ mod tests {
             capability: Some(AdapterCapability {
                 session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
                 target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+                assurance: Some(AdapterAssuranceManifest {
+                    contract: Some(adapter_assurance_manifest::Contract::V1(
+                        AdapterAssuranceManifestV1 {
+                            deduplication_strength: IdempotencyStrength::None as i32,
+                            continuation_proof_support: Some(false),
+                            cursor_support: Some(false),
+                            generation_fence_support: Some(false),
+                            reconciliation_strength: AdapterReconciliationStrength::None as i32,
+                            unproven_outcome_action: ReconciliationAction::None as i32,
+                        },
+                    )),
+                }),
                 ..AdapterCapability::default()
             }),
             ..Default::default()

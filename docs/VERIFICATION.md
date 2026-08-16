@@ -43,6 +43,7 @@ The security-lockdown model (`specs/seed/security_lockdown.qnt`) and five draft 
 
 - OperationState transition adjacency and read/query lifecycle refinements: `NoAcceptedToCompleted` is checked-model, while the full transition graph and no-direct-to-completed fast-path reads rule remain stated-normative until a full adjacency/read-specific model or conformance vector coverage is promoted.
 - Authority safety: no-command/no-Operation-without-grant rejection before acceptance and delivery; `CompoundIssuer`; `GrantAuthorityIsCommandKinds` / `GrantAuthorityIsOperationKinds`; revocation prevents future Operation acceptance under the revoked grant; adapter-scoped spawn authorization and target compatibility; non-cascading spawn-grant revocation (`SpawnRevocationDoesNotCascade`); Elicitation responder authority (`ElicitationResponderAuthority`); and descendant-grant creation (`SpawnCreatesDescendantGrant`). These remain stated-normative until models represent the submitting evidence and claimed failure boundaries with mutation-survivable independent oracles. `FleetAuthorityForSpawn` is retained as a reserved future property id for a separate fleet-selector promotion, not a v0.1.0 product claim.
+- Adapter capability honesty: `AdapterCapabilityAssuranceHonesty` requires one complete known assurance contract at current attach/redeclaration, explicit false/none uncertainty, fail-closed enum/version handling, and conservative historical normalization only during replay. It is stated-normative with promoted implementation-checked evidence, not a formal-model promotion.
 - Session/principal revocation: `RevokeAllInvalidatesPriorSessionGeneration`, `PrincipalRevocationPreventsFuture`, `EndpointRevocationPreventsFuture`, and `DeviceRevocationPreventsFuture` remain stated-normative draft properties. The real-process/replay tests, vectors, and guard-removal mutations are implementation evidence and do not silently promote these model properties.
 - Subscription audit, cursor-replay authorization, and grant authorization: `SubscriptionAudited`, `SubscriptionCursorReplayAuthorized`, and `SubscriptionGrantChecked` remain stated-normative until the model separates attempted audit/replay/actor/scope evidence from state written by the subscription actions.
 - Command durability and terminal-race/retry refinements: `CommandDurability`, `PreAppendTerminalChoice`, `LsnDeterminesTerminalWinner`, `RetryReusesIdAndKey`, and `RetryAfterTerminalReturnsExisting` remain stated-normative until models represent their claimed failure boundaries.
@@ -311,6 +312,12 @@ The post-v0.1 capability-manifest extension is implementation-checked. Generated
 
 This evidence establishes format binding, not semantic validation of opaque resource bytes. Malformed typed resource reports, revision/stale-state behavior, cockpit decoding/composition, and promoted resource-plane vectors remain with the resource-state, cockpit-composition, and conformance features. No target-category or projection-contract claim is currently checked-model or checked-normative.
 
+### Adapter assurance-manifest evidence (implementation-checked)
+
+`AdapterCapabilityAssuranceHonesty` is stated-normative and implementation-checked. The generated `AdapterAssuranceManifest` contract freezes a complete V1 registry for deduplication, continuation proof, cursor support, generation fencing, reconciliation strength, and unproven-outcome action. Rust boundary tests require explicit presence for every uncertainty-bearing boolean, reject unknown/`UNSPECIFIED` enums, duplicate generated-enum sets, missing or unknown contract versions, and legacy/current dual declarations, and prove the same legacy bytes normalize conservatively only in replay. Authenticated server tests prove invalid fresh attach and redeclaration append no adapter-registration Observation and publish no replacement attachment token.
+
+The promoted `adapter-assurance-complete-manifest` example executes the production Rust validator and canonical V1 projection. The promoted `adapter-assurance-advisory-only` example traces `GrantAuthorityIsOperationKinds`: maximal declaration without a Grant still rejects before acceptance, while a grant-authorized Operation remains delivery-eligible despite a conservative/empty advertised capability. These examples do not establish that an adapter's positive declaration is true in the external runtime, do not replace adapter-authoritative delivery outcomes, and do not promote a formal model or checked-normative claim.
+
 ### Operational-resource state evidence (implementation-checked)
 
 The post-v0.1 resource-state projection is implementation-checked. Generated
@@ -346,8 +353,8 @@ the executable conformance evidence below.
 
 ### Operational-resource conformance evidence (implementation-checked)
 
-The resource-plane corpus promotes ten executable examples through the single
-`contracts/vectors/` registry. The umbrella checker runs thirteen exact package
+The resource-plane corpus promotes twelve executable examples through the single
+`contracts/vectors/` registry. The umbrella checker runs fifteen exact package
 checks across Rust core, Rust server, and web cockpit and rejects any promoted
 example whose expected outcome, runner registration, or reported execution id
 does not match. The legacy corpus count includes the checked-normative
@@ -509,11 +516,12 @@ A promoted vector that later contradicts its model is a reconciliation event: ei
 
 Source models: `specs/seed/*.qnt` and `specs/seed/*.als`. Product tier is derived from model `status` plus promoted conformance-vector coverage; model files do not store a `tier` field.
 
-Summary: 54 modeled properties (9 promoted, 45 draft), 15 reserved-unmodeled stated-normative properties, 17 properties with promoted vector coverage.
+Summary: 54 modeled properties (9 promoted, 45 draft), 16 reserved-unmodeled stated-normative properties, 19 properties with promoted vector coverage.
 
 | Property id | Model status | Derived tier | Model | Backend | Promoted vectors | Invocation | Semantics |
 |---|---|---|---|---|---|---|---|
 | `ActorIdsUnique` | draft | stated-normative | specs/seed/patchbay-relational.als | alloy-cli | — | <TBD — demoted; assertion checks a constraint already imposed by the ActorIdsUnique fact; actor uniqueness belongs in generated/database constraints plus executable negative tests> | actor-id injectivity remains a product obligation; this retained fact-consequence check is only a structural regression test against accidental weakening of the ActorIdsUnique fact and is not independent assurance or proof of non-vacuity |
+| `AdapterCapabilityAssuranceHonesty` | reserved-unmodeled | stated-normative | — | — | adapter-assurance-complete-manifest | — | — |
 | `AuthorityGraphAcyclic` | draft | stated-normative | specs/seed/patchbay-relational.als | alloy-cli | — | <TBD — not yet checked; promote when delegation is modeled> | RESERVED: acyclicity of the grant issuer-subject graph is only meaningful once a delegation/parent-grant edge exists. v0 has no delegation (docs/PROTOCOL.md:305), so the graph has no cycle-bearing edge to check — asserting acyclicity now is either vacuous (empty graph) or false (unconstrained self-grants). Promote when delegation is added. |
 | `BootstrapOnlyExit` | draft | stated-normative | specs/seed/security_lockdown.qnt | apalache | — | quint verify security_lockdown.qnt --invariant BootstrapOnlyExit --max-steps 12 | only the configured loopback admin bootstrap channel can clear lockdown |
 | `BoundaryDedup` | promoted | checked-model | specs/seed/command_lifecycle.qnt | apalache | — | quint verify command_lifecycle.qnt --invariant boundary_dedup --max-steps 12 | retrying the same idempotency key cannot double-apply a command at the Patchbay boundary |
@@ -536,7 +544,7 @@ Summary: 54 modeled properties (9 promoted, 45 draft), 15 reserved-unmodeled sta
 | `FleetAuthorityForSpawn` | draft | stated-normative | specs/seed/authority.qnt | apalache | — | <TBD — demoted; formula does not independently establish the claimed behavior; v1 formal gate owns the real property> | spawn acceptance requires a live fleet-scope spawn Grant whose subject matches the submitting actor; per-session grants alone cannot authorize spawning a not-yet-existing session |
 | `GenerationMonotonic` | promoted | checked-model | specs/seed/session_generation.qnt | apalache-temporal | — | echo y \| quint verify session_generation.qnt --temporal generation_monotonic --max-steps 10 | the live session generation never decreases (checked). Strict-supersession (equal/lower reports are no-ops) is additionally enforced by the action guard (`if gen > generation`) but is NOT a checked temporal property — it exceeded Apalache's experimental temporal support; see idea-tlc-temporal-workaround. |
 | `GrantAuthorityIsCommandKinds` | draft | stated-normative | specs/seed/authority.qnt | apalache | — | <TBD — not yet checked; promote in a follow-on item> | grant checks constrain authority by canonical command kinds, not adapter capability declarations |
-| `GrantAuthorityIsOperationKinds` | reserved-unmodeled | stated-normative | — | — | — | — | — |
+| `GrantAuthorityIsOperationKinds` | reserved-unmodeled | stated-normative | — | — | adapter-assurance-advisory-only | — | — |
 | `IdempotentLogReplay` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | resource-replay-prefix-idempotent | <TBD — not yet checked; promote in a follow-on item> | replaying the same committed prefix does not produce additional state divergence |
 | `LabelsCannotOverrideIdentity` | draft | stated-normative | specs/seed/session_generation.qnt | apalache | — | <TBD — demoted; formula does not model the claimed failure boundary; v1 formal gate owns the real property> | project/cwd/name labels update independently and cannot override the verified session identity tuple |
 | `LateEventNoRewrite` | draft | stated-normative | specs/seed/snapshot_recovery.qnt | tlc | — | <TBD — not yet checked; promote in a follow-on item> | older late events are recorded as audit/reconciliation and must not rewrite the in-memory command view |
@@ -592,11 +600,12 @@ Summary: 54 modeled properties (9 promoted, 45 draft), 15 reserved-unmodeled sta
 
 Source vectors: `contracts/vectors/*.json`. CI check: `node contracts/scripts/check-vectors.mjs` (or `npm run check:vectors` from `contracts/ts/`).
 
-Summary: 57 vector(s), 17 promoted vector(s), 1 checked-normative property requiring promoted-vector coverage. Current checked-normative coverage gate is active.
+Summary: 59 vector(s), 19 promoted vector(s), 1 checked-normative property requiring promoted-vector coverage. Current checked-normative coverage gate is active.
 
 | Property id | Classification | Vectors | `.proto` fields/enums exercised by vectors |
 |---|---|---|---|
 | `ActorIdsUnique` | stated-normative | — | — |
+| `AdapterCapabilityAssuranceHonesty` | stated-normative | [adapter-assurance-complete-manifest](../contracts/vectors/adapter-assurance-complete-manifest.json) (promoted) | patchbay.AdapterAssuranceManifest.v1<br>patchbay.AdapterAssuranceManifestV1.continuation_proof_support<br>patchbay.AdapterAssuranceManifestV1.cursor_support<br>patchbay.AdapterAssuranceManifestV1.deduplication_strength<br>patchbay.AdapterAssuranceManifestV1.generation_fence_support<br>patchbay.AdapterAssuranceManifestV1.reconciliation_strength<br>patchbay.AdapterAssuranceManifestV1.unproven_outcome_action<br>patchbay.AdapterCapability.assurance<br>patchbay.AdapterCapability.idempotency_strength<br>patchbay.AdapterCapability.known_failure_modes<br>patchbay.AdapterCapability.supported_operation_kinds<br>patchbay.AdapterReconciliationStrength<br>patchbay.ReconciliationAction |
 | `AuthorityGraphAcyclic` | stated-normative | — | — |
 | `BootstrapOnlyExit` | stated-normative | [lockdown-bootstrap-only-exit](../contracts/vectors/lockdown-bootstrap-only-exit.json) (draft) | patchbay.BootstrapChannelKind<br>patchbay.ExitSecurityLockdownRequest<br>patchbay.ExitSecurityLockdownResult |
 | `BoundaryDedup` | checked-model | [replay-committed-prefix-idempotent](../contracts/vectors/replay-committed-prefix-idempotent.json) (draft) | patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.SubmissionResult.accepted_lsn<br>patchbay.SubmissionResult.deduplicated |
@@ -619,7 +628,7 @@ Summary: 57 vector(s), 17 promoted vector(s), 1 checked-normative property requi
 | `FleetAuthorityForSpawn` | stated-normative | — | — |
 | `GenerationMonotonic` | checked-model | — | — |
 | `GrantAuthorityIsCommandKinds` | stated-normative | — | — |
-| `GrantAuthorityIsOperationKinds` | stated-normative | — | — |
+| `GrantAuthorityIsOperationKinds` | stated-normative | [adapter-assurance-advisory-only](../contracts/vectors/adapter-assurance-advisory-only.json) (promoted) | patchbay.AdapterAssuranceManifest.v1<br>patchbay.AdapterAssuranceManifestV1.continuation_proof_support<br>patchbay.AdapterAssuranceManifestV1.cursor_support<br>patchbay.AdapterAssuranceManifestV1.deduplication_strength<br>patchbay.AdapterAssuranceManifestV1.generation_fence_support<br>patchbay.AdapterAssuranceManifestV1.reconciliation_strength<br>patchbay.AdapterAssuranceManifestV1.unproven_outcome_action<br>patchbay.AdapterCapability.assurance<br>patchbay.AdapterCapability.supported_operation_kinds<br>patchbay.Grant.allowed_operation_kinds<br>patchbay.Operation.kind<br>patchbay.SubmissionResult.failure_code<br>patchbay.SubmissionResult.outcome |
 | `IdempotentLogReplay` | stated-normative | [resource-replay-prefix-idempotent](../contracts/vectors/resource-replay-prefix-idempotent.json) (promoted) | patchbay.Resource.revision_lsn<br>patchbay.Resource.tombstoned<br>patchbay.ResourceStateEvent.authority_domain_id<br>patchbay.ResourceStateEvent.mutations<br>patchbay.ResourceStateEvent.source_adapter_generation<br>patchbay.ResourceStateMutation.from_revision_lsn<br>patchbay.ResourceStateTombstone.replaced_by<br>patchbay.StoredEventPayload.kind |
 | `LabelsCannotOverrideIdentity` | stated-normative | [session-model-change-preserves-identity](../contracts/vectors/session-model-change-preserves-identity.json) (draft) | patchbay.Session.model<br>patchbay.SessionModelChanged.adapter_id<br>patchbay.SessionModelChanged.deployment_scope<br>patchbay.SessionModelChanged.from<br>patchbay.SessionModelChanged.runtime_session_id<br>patchbay.SessionModelChanged.session_generation<br>patchbay.SessionModelChanged.to |
 | `LateEventNoRewrite` | stated-normative | — | — |

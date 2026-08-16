@@ -1,0 +1,99 @@
+{
+  "vector_id": "adapter-assurance-complete-manifest",
+  "property_id": "AdapterCapabilityAssuranceHonesty",
+  "promotion_status": "promoted",
+  "implementation_checks": [
+    { "runner": "rust-core", "case": "adapter_assurance_complete_manifest" }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.AdapterCapability.assurance",
+    "patchbay.AdapterCapability.idempotency_strength",
+    "patchbay.AdapterCapability.supported_operation_kinds",
+    "patchbay.AdapterCapability.known_failure_modes",
+    "patchbay.AdapterAssuranceManifest.v1",
+    "patchbay.AdapterAssuranceManifestV1.deduplication_strength",
+    "patchbay.AdapterAssuranceManifestV1.continuation_proof_support",
+    "patchbay.AdapterAssuranceManifestV1.cursor_support",
+    "patchbay.AdapterAssuranceManifestV1.generation_fence_support",
+    "patchbay.AdapterAssuranceManifestV1.reconciliation_strength",
+    "patchbay.AdapterAssuranceManifestV1.unproven_outcome_action",
+    "patchbay.AdapterReconciliationStrength",
+    "patchbay.ReconciliationAction"
+  ],
+  "description": "Fresh adapters declare one complete V1 assurance manifest with explicit false/none uncertainty, while only historical v0.2 registrations receive conservative replay normalization.",
+  "input": {
+    "fresh_complete": {
+      "v1": {
+        "deduplication_strength": "IDEMPOTENCY_STRENGTH_NONE",
+        "continuation_proof_support": false,
+        "cursor_support": false,
+        "generation_fence_support": false,
+        "reconciliation_strength": "ADAPTER_RECONCILIATION_STRENGTH_NONE",
+        "unproven_outcome_action": "RECONCILIATION_ACTION_NONE"
+      }
+    },
+    "reject": {
+      "omitted_boolean_fields": [
+        "continuation_proof_support",
+        "cursor_support",
+        "generation_fence_support"
+      ],
+      "enum_fields": [
+        "deduplication_strength",
+        "reconciliation_strength",
+        "unproven_outcome_action"
+      ],
+      "enum_set_fields": [
+        "supported_operation_kinds",
+        "known_failure_modes"
+      ],
+      "unknown_enum_numeric": 99,
+      "dual_legacy_strength": "IDEMPOTENCY_STRENGTH_AT_PATCHBAY_BOUNDARY",
+      "unknown_contract_version": 2
+    },
+    "historical_replay": {
+      "cases": [
+        {
+          "legacy_strength": "IDEMPOTENCY_STRENGTH_UNSPECIFIED",
+          "canonical_strength": "IDEMPOTENCY_STRENGTH_NONE"
+        },
+        {
+          "legacy_strength": "IDEMPOTENCY_STRENGTH_NONE",
+          "canonical_strength": "IDEMPOTENCY_STRENGTH_NONE"
+        },
+        {
+          "legacy_strength": "IDEMPOTENCY_STRENGTH_AT_PATCHBAY_BOUNDARY",
+          "canonical_strength": "IDEMPOTENCY_STRENGTH_AT_PATCHBAY_BOUNDARY"
+        },
+        {
+          "legacy_strength": "IDEMPOTENCY_STRENGTH_END_TO_END",
+          "canonical_strength": "IDEMPOTENCY_STRENGTH_END_TO_END"
+        },
+        {
+          "legacy_numeric": 99,
+          "canonical_strength": "IDEMPOTENCY_STRENGTH_NONE"
+        }
+      ]
+    }
+  },
+  "expected_outcome": {
+    "fresh_complete_valid": true,
+    "missing_manifest_rejected": true,
+    "omitted_boolean_rejected": true,
+    "unspecified_enum_rejected": true,
+    "unknown_enum_rejected": true,
+    "enum_set_unspecified_unknown_duplicate_rejected": true,
+    "dual_declaration_rejected": true,
+    "unknown_version_rejected": true,
+    "historical_replay_complete": true,
+    "historical_replay_attach_rejected": true,
+    "historical_uncertainty_defaults": {
+      "continuation_proof_support": false,
+      "cursor_support": false,
+      "generation_fence_support": false,
+      "reconciliation_strength": "ADAPTER_RECONCILIATION_STRENGTH_NONE",
+      "unproven_outcome_action": "RECONCILIATION_ACTION_NONE"
+    }
+  },
+  "invariant_check": "AdapterCapabilityAssuranceHonesty: current ingress accepts exactly one complete known V1 with explicit uncertainty, while the compatibility reader maps historical v0.2 data to one complete conservative V1 and is unavailable to attach."
+}

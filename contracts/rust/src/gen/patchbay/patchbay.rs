@@ -891,6 +891,9 @@ pub struct AdapterCapability {
     pub cancellation_support: bool,
     #[prost(bool, tag="6")]
     pub session_replacement_support: bool,
+    /// Replay-only input for durable pre-assurance registrations. Fresh attach
+    /// requires UNSPECIFIED and uses assurance.v1.deduplication_strength.
+    #[deprecated]
     #[prost(enumeration="IdempotencyStrength", tag="7")]
     pub idempotency_strength: i32,
     #[prost(message, optional, tag="8")]
@@ -903,6 +906,38 @@ pub struct AdapterCapability {
     pub target_categories: ::prost::alloc::vec::Vec<i32>,
     #[prost(message, repeated, tag="12")]
     pub resource_capabilities: ::prost::alloc::vec::Vec<ResourceCapability>,
+    #[prost(message, optional, tag="13")]
+    pub assurance: ::core::option::Option<AdapterAssuranceManifest>,
+}
+/// Versioned, complete declaration of adapter durability and reconciliation
+/// assurances. V1 is frozen; new semantic dimensions require a new branch.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AdapterAssuranceManifest {
+    #[prost(oneof="adapter_assurance_manifest::Contract", tags="1")]
+    pub contract: ::core::option::Option<adapter_assurance_manifest::Contract>,
+}
+/// Nested message and enum types in `AdapterAssuranceManifest`.
+pub mod adapter_assurance_manifest {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Contract {
+        #[prost(message, tag="1")]
+        V1(super::AdapterAssuranceManifestV1),
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AdapterAssuranceManifestV1 {
+    #[prost(enumeration="IdempotencyStrength", tag="1")]
+    pub deduplication_strength: i32,
+    #[prost(bool, optional, tag="2")]
+    pub continuation_proof_support: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag="3")]
+    pub cursor_support: ::core::option::Option<bool>,
+    #[prost(bool, optional, tag="4")]
+    pub generation_fence_support: ::core::option::Option<bool>,
+    #[prost(enumeration="AdapterReconciliationStrength", tag="5")]
+    pub reconciliation_strength: i32,
+    #[prost(enumeration="ReconciliationAction", tag="6")]
+    pub unproven_outcome_action: i32,
 }
 /// A schema identity binding. Matching this descriptor does not establish that
 /// opaque payload bytes semantically conform to the named schema.
@@ -961,6 +996,67 @@ pub struct AdapterRegistration {
     pub attach_lsn: ::core::option::Option<Lsn>,
     #[prost(message, optional, tag="7")]
     pub attached_at: ::core::option::Option<::prost_types::Timestamp>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AdapterReconciliationStrength {
+    Unspecified = 0,
+    None = 1,
+    Bounded = 2,
+    Authoritative = 3,
+}
+impl AdapterReconciliationStrength {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ADAPTER_RECONCILIATION_STRENGTH_UNSPECIFIED",
+            Self::None => "ADAPTER_RECONCILIATION_STRENGTH_NONE",
+            Self::Bounded => "ADAPTER_RECONCILIATION_STRENGTH_BOUNDED",
+            Self::Authoritative => "ADAPTER_RECONCILIATION_STRENGTH_AUTHORITATIVE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ADAPTER_RECONCILIATION_STRENGTH_UNSPECIFIED" => Some(Self::Unspecified),
+            "ADAPTER_RECONCILIATION_STRENGTH_NONE" => Some(Self::None),
+            "ADAPTER_RECONCILIATION_STRENGTH_BOUNDED" => Some(Self::Bounded),
+            "ADAPTER_RECONCILIATION_STRENGTH_AUTHORITATIVE" => Some(Self::Authoritative),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum ReconciliationAction {
+    Unspecified = 0,
+    None = 1,
+    ManualRequired = 2,
+}
+impl ReconciliationAction {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "RECONCILIATION_ACTION_UNSPECIFIED",
+            Self::None => "RECONCILIATION_ACTION_NONE",
+            Self::ManualRequired => "RECONCILIATION_ACTION_MANUAL_REQUIRED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "RECONCILIATION_ACTION_UNSPECIFIED" => Some(Self::Unspecified),
+            "RECONCILIATION_ACTION_NONE" => Some(Self::None),
+            "RECONCILIATION_ACTION_MANUAL_REQUIRED" => Some(Self::ManualRequired),
+            _ => None,
+        }
+    }
 }
 /// Registry-owned adapter target families. Knowledge bundles are wire-present
 /// for a future promotion whose candidate payload family is OKF v0.2; current

@@ -379,17 +379,18 @@ mod tests {
     use std::sync::{atomic::AtomicBool, Mutex as StdMutex};
 
     use patchbay_contracts::patchbay::{
-        resource_state_mutation, runtime_generation_disposition, ActorEndpointRef, ActorId,
-        AdapterCapability, AdapterId, AdapterRegistration, AdapterSnapshotSupport,
-        AdapterTargetCategory, EventId, ExternalRuntimeRef, Generation, IdempotencyKey,
-        LogicalTargetCandidateReserved, LogicalTargetCreated, LogicalTargetId,
-        LogicalTargetInitialCurrentAssigned, Observation, PayloadContentType, PayloadEnvelope,
-        ResourceId, ResourceIdentity, ResourceKind, ResourceStateEvent, ResourceStateMutation,
-        ResourceStateUpsert, ResourceViewStateUpdate, RuntimeEvidenceSourceAttachment,
-        RuntimeGenerationRef, RuntimeSessionId, SecurityLockdownEntered, SessionActivityState,
-        SessionConnectivityState, SessionGenerationBumped, SessionRegistered, SessionReport,
-        SessionReportApplied, SessionReportSourceCursor, SessionState, StoredEventKind,
-        StoredEventPayload,
+        adapter_assurance_manifest, resource_state_mutation, runtime_generation_disposition,
+        ActorEndpointRef, ActorId, AdapterAssuranceManifest, AdapterAssuranceManifestV1,
+        AdapterCapability, AdapterId, AdapterReconciliationStrength, AdapterRegistration,
+        AdapterSnapshotSupport, AdapterTargetCategory, EventId, ExternalRuntimeRef, Generation,
+        IdempotencyKey, IdempotencyStrength, LogicalTargetCandidateReserved, LogicalTargetCreated,
+        LogicalTargetId, LogicalTargetInitialCurrentAssigned, Observation, PayloadContentType,
+        PayloadEnvelope, ReconciliationAction, ResourceId, ResourceIdentity, ResourceKind,
+        ResourceStateEvent, ResourceStateMutation, ResourceStateUpsert, ResourceViewStateUpdate,
+        RuntimeEvidenceSourceAttachment, RuntimeGenerationRef, RuntimeSessionId,
+        SecurityLockdownEntered, SessionActivityState, SessionConnectivityState,
+        SessionGenerationBumped, SessionRegistered, SessionReport, SessionReportApplied,
+        SessionReportSourceCursor, SessionState, StoredEventKind, StoredEventPayload,
     };
     use patchbay_core::{
         adapter::{
@@ -1271,6 +1272,18 @@ mod tests {
         let capability = AdapterCapability {
             session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
             target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+            assurance: Some(AdapterAssuranceManifest {
+                contract: Some(adapter_assurance_manifest::Contract::V1(
+                    AdapterAssuranceManifestV1 {
+                        deduplication_strength: IdempotencyStrength::None as i32,
+                        continuation_proof_support: Some(false),
+                        cursor_support: Some(false),
+                        generation_fence_support: Some(false),
+                        reconciliation_strength: AdapterReconciliationStrength::None as i32,
+                        unproven_outcome_action: ReconciliationAction::None as i32,
+                    },
+                )),
+            }),
             ..AdapterCapability::default()
         };
         let attachment_event_id = EventId {

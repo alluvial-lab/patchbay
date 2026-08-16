@@ -1,11 +1,12 @@
 use patchbay_contracts::patchbay::{
-    resource_state_mutation, spawn_request, AdapterCapability, AdapterId, AdapterRegistration,
-    AdapterSnapshotSupport, AdapterTargetCategory, AuthorityDomainId, CommandId, EndpointId,
-    ExternalRuntimeRef, FreshSpawn, Generation, LogicalTargetId, Operation, OperationKind,
-    PayloadContentType, PayloadEnvelope, ResourceId, ResourceKind, ResourceStateEvent,
-    ResourceStateMutation, ResourceStateUpsert, ResourceViewStateUpdate, RuntimeGenerationRef,
-    RuntimeSessionId, SpawnContinuation, SpawnRequest, SpawnTargetSpec, TargetScope,
-    TargetScopeKind,
+    adapter_assurance_manifest, resource_state_mutation, spawn_request, AdapterAssuranceManifest,
+    AdapterAssuranceManifestV1, AdapterCapability, AdapterId, AdapterReconciliationStrength,
+    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AuthorityDomainId,
+    CommandId, EndpointId, ExternalRuntimeRef, FreshSpawn, Generation, IdempotencyStrength,
+    LogicalTargetId, Operation, OperationKind, PayloadContentType, PayloadEnvelope,
+    ReconciliationAction, ResourceId, ResourceKind, ResourceStateEvent, ResourceStateMutation,
+    ResourceStateUpsert, ResourceViewStateUpdate, RuntimeGenerationRef, RuntimeSessionId,
+    SpawnContinuation, SpawnRequest, SpawnTargetSpec, TargetScope, TargetScopeKind,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
@@ -17,6 +18,21 @@ use patchbay_core::{
     target::{target_adapter_id, TargetRegistry},
 };
 use prost_types::Timestamp;
+
+fn conservative_assurance() -> AdapterAssuranceManifest {
+    AdapterAssuranceManifest {
+        contract: Some(adapter_assurance_manifest::Contract::V1(
+            AdapterAssuranceManifestV1 {
+                deduplication_strength: IdempotencyStrength::None as i32,
+                continuation_proof_support: Some(false),
+                cursor_support: Some(false),
+                generation_fence_support: Some(false),
+                reconciliation_strength: AdapterReconciliationStrength::None as i32,
+                unproven_outcome_action: ReconciliationAction::None as i32,
+            },
+        )),
+    }
+}
 
 fn domain() -> AuthorityDomainId {
     AuthorityDomainId {
@@ -188,6 +204,7 @@ async fn spawn_resolution_commits_one_attached_adapter_boundary_only() {
                 supported_operation_kinds: vec![OperationKind::Spawn as i32],
                 session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
                 target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+                assurance: Some(conservative_assurance()),
                 ..AdapterCapability::default()
             }),
             ..AdapterRegistration::default()
@@ -211,6 +228,7 @@ async fn spawn_resolution_commits_one_attached_adapter_boundary_only() {
                 supported_operation_kinds: vec![OperationKind::Spawn as i32],
                 session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
                 target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+                assurance: Some(conservative_assurance()),
                 ..AdapterCapability::default()
             }),
             ..AdapterRegistration::default()

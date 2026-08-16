@@ -1,12 +1,14 @@
 use patchbay_contracts::patchbay::{
     no_external_effect_proof, observation_request, spawn_claim_event, spawn_request,
-    AcceptedOperation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
+    AcceptedOperation, ActorEndpointRef, ActorId, AdapterAssuranceManifest,
+    AdapterAssuranceManifestV1, AdapterCapability, AdapterId, AdapterReconciliationStrength,
     AdapterRefusalBeforeDeliveryProof, AdapterRegistration, AdapterSnapshotSupport,
     AdapterTargetCategory, AttachRequest, AuditEventKind, AuthorityDomainId, CommandId, DeviceId,
     EndpointId, ExternalEffectDisposition, FailureCode, FreshSpawn, Generation, GrantId,
-    IdempotencyKey, LogicalTargetId, Lsn, NoExternalEffectProof, ObservationRequest, Operation,
-    OperationKind, PayloadContentType, PayloadEnvelope, SpawnClaimAccepted, SpawnClaimDisposition,
-    SpawnClaimEvent, SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
+    IdempotencyKey, IdempotencyStrength, LogicalTargetId, Lsn, NoExternalEffectProof,
+    ObservationRequest, Operation, OperationKind, PayloadContentType, PayloadEnvelope,
+    ReconciliationAction, SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent,
+    SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
     SpawnGenerationClaim, SpawnRequest, SpawnTargetSpec, StoredEventKind, TargetScope,
     TargetScopeKind,
 };
@@ -68,6 +70,21 @@ async fn authenticated_evidence_is_canonicalized_and_wrong_claim_is_not_appended
                 capability: Some(AdapterCapability {
                     session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
                     target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+                    assurance: Some(AdapterAssuranceManifest {
+                        contract: Some(
+                            patchbay_contracts::patchbay::adapter_assurance_manifest::Contract::V1(
+                                AdapterAssuranceManifestV1 {
+                                    deduplication_strength: IdempotencyStrength::None as i32,
+                                    continuation_proof_support: Some(false),
+                                    cursor_support: Some(false),
+                                    generation_fence_support: Some(false),
+                                    reconciliation_strength: AdapterReconciliationStrength::None
+                                        as i32,
+                                    unproven_outcome_action: ReconciliationAction::None as i32,
+                                },
+                            ),
+                        ),
+                    }),
                     ..AdapterCapability::default()
                 }),
                 ..AdapterRegistration::default()

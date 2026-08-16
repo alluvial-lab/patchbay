@@ -9,17 +9,18 @@ use std::{
 
 use patchbay_contracts::patchbay::{
     diagnostics_query, observation_request, query_diagnostics_response, resource_report,
-    resource_report_mutation, ActorEndpointRef, ActorId, AdapterCapability, AdapterId,
+    resource_report_mutation, ActorEndpointRef, ActorId, AdapterAssuranceManifest,
+    AdapterAssuranceManifestV1, AdapterCapability, AdapterId, AdapterReconciliationStrength,
     AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
     AuditEventKind, AuditQuery, AuthorityDomainId, CommandId, CommandTransition,
     ControlSurfacePrincipalRecord, ControlSurfaceRevocation, DeviceId, DiagnosticsQuery,
     EndpointId, EnterSecurityLockdownRequest, EventId, ExitSecurityLockdownRequest, FailureCode,
     Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyKey,
-    LoadSnapshotRequest, Lsn, ObservationRequest, Operation, OperationKind, OperationState,
-    OperatorRecord, PayloadContentType, PayloadEnvelope, PrincipalEnrollment,
-    QueryDiagnosticsRequest, ResourceCapability, ResourceFreshnessState, ResourceId, ResourceKind,
-    ResourceProjectionContract, ResourceReport, ResourceReportMutation, ResourceSnapshot,
-    ResourceSnapshotReport, ResourceStateUpsert, ResourceViewReport,
+    IdempotencyStrength, LoadSnapshotRequest, Lsn, ObservationRequest, Operation, OperationKind,
+    OperationState, OperatorRecord, PayloadContentType, PayloadEnvelope, PrincipalEnrollment,
+    QueryDiagnosticsRequest, ReconciliationAction, ResourceCapability, ResourceFreshnessState,
+    ResourceId, ResourceKind, ResourceProjectionContract, ResourceReport, ResourceReportMutation,
+    ResourceSnapshot, ResourceSnapshotReport, ResourceStateUpsert, ResourceViewReport,
     RevokeAllOperatorSessionsRequest, RevokeControlSurfaceEndpointRequest,
     RevokeControlSurfacePrincipalRequest, RevokeGrantRequest, RuntimeSessionId, SchemaDescriptor,
     SessionActivityState, SessionConnectivityState, SessionRegistered, SessionSnapshot,
@@ -910,6 +911,21 @@ async fn grpc_seam_submits_streams_and_loads_snapshots() {
                             }),
                         }),
                     }],
+                    assurance: Some(AdapterAssuranceManifest {
+                        contract: Some(
+                            patchbay_contracts::patchbay::adapter_assurance_manifest::Contract::V1(
+                                AdapterAssuranceManifestV1 {
+                                    deduplication_strength: IdempotencyStrength::None as i32,
+                                    continuation_proof_support: Some(false),
+                                    cursor_support: Some(false),
+                                    generation_fence_support: Some(false),
+                                    reconciliation_strength: AdapterReconciliationStrength::None
+                                        as i32,
+                                    unproven_outcome_action: ReconciliationAction::None as i32,
+                                },
+                            ),
+                        ),
+                    }),
                     ..AdapterCapability::default()
                 }),
                 ..AdapterRegistration::default()

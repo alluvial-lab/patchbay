@@ -2,14 +2,16 @@ extern crate patchbay_test_support;
 use std::{collections::BTreeMap, env, fs, path::PathBuf, sync::Arc};
 
 use patchbay_contracts::patchbay::{
-    observation_request, resource_report, resource_report_mutation, AcceptedOperation,
-    ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRegistration,
-    AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest, AuditEventKind, AuditRecord,
-    AuthorityDomainId, CommandId, DeviceId, EndpointId, FailureCode, Generation, Grant, GrantId,
-    GrantProvenance, GrantRevocationPolicy, LoadSnapshotRequest, Lsn, Observation, ObservationKind,
-    ObservationRequest, Operation, OperationKind, OperationState, OperatorRecord,
-    PayloadContentType, PayloadEnvelope, PrincipalEnrollment, ReceiveRequest, ResourceCapability,
-    ResourceId, ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
+    adapter_assurance_manifest, observation_request, resource_report, resource_report_mutation,
+    AcceptedOperation, ActorEndpointRef, ActorId, AdapterAssuranceManifest,
+    AdapterAssuranceManifestV1, AdapterCapability, AdapterId, AdapterReconciliationStrength,
+    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachRequest,
+    AuditEventKind, AuditRecord, AuthorityDomainId, CommandId, DeviceId, EndpointId, FailureCode,
+    Generation, Grant, GrantId, GrantProvenance, GrantRevocationPolicy, IdempotencyStrength,
+    LoadSnapshotRequest, Lsn, Observation, ObservationKind, ObservationRequest, Operation,
+    OperationKind, OperationState, OperatorRecord, PayloadContentType, PayloadEnvelope,
+    PrincipalEnrollment, ReceiveRequest, ReconciliationAction, ResourceCapability, ResourceId,
+    ResourceIdentity, ResourceKind, ResourceProjectionContract, ResourceReport,
     ResourceReportMutation, ResourceSnapshot, ResourceSnapshotReport, ResourceStateUnknown,
     ResourceStateUpsert, ResourceViewReport, RuntimeSessionId, SchemaDescriptor,
     SessionActivityState, SessionConnectivityState, SessionRegistered, SessionReport,
@@ -191,6 +193,21 @@ fn tuple(value: &Value, pointer: &str) -> Result<ResourceIdentity, String> {
     })
 }
 
+fn conservative_assurance() -> AdapterAssuranceManifest {
+    AdapterAssuranceManifest {
+        contract: Some(adapter_assurance_manifest::Contract::V1(
+            AdapterAssuranceManifestV1 {
+                deduplication_strength: IdempotencyStrength::None as i32,
+                continuation_proof_support: Some(false),
+                cursor_support: Some(false),
+                generation_fence_support: Some(false),
+                reconciliation_strength: AdapterReconciliationStrength::None as i32,
+                unproven_outcome_action: ReconciliationAction::None as i32,
+            },
+        )),
+    }
+}
+
 fn registration(
     domain: &AuthorityDomainId,
     adapter_id: &AdapterId,
@@ -221,6 +238,7 @@ fn registration(
                     }),
                 }),
             }],
+            assurance: Some(conservative_assurance()),
             ..AdapterCapability::default()
         }),
         ..AdapterRegistration::default()
@@ -246,6 +264,7 @@ fn session_registration(
             cancellation_support: true,
             session_replacement_support: true,
             target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
+            assurance: Some(conservative_assurance()),
             ..AdapterCapability::default()
         }),
         ..AdapterRegistration::default()

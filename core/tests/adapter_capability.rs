@@ -1,7 +1,9 @@
 use patchbay_contracts::patchbay::{
-    ActorEndpointRef, ActorId, AdapterCapability, AdapterId, AdapterRegistration,
-    AdapterSnapshotSupport, AdapterTargetCategory, AttachmentMethod, AuthorityDomainId, EndpointId,
-    Generation, Observation, ObservationKind, PayloadContentType, PayloadEnvelope,
+    adapter_assurance_manifest, ActorEndpointRef, ActorId, AdapterAssuranceManifest,
+    AdapterAssuranceManifestV1, AdapterCapability, AdapterId, AdapterReconciliationStrength,
+    AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachmentMethod,
+    AuthorityDomainId, EndpointId, FailureCode, Generation, IdempotencyStrength, Observation,
+    ObservationKind, OperationKind, PayloadContentType, PayloadEnvelope, ReconciliationAction,
     ResourceCapability, ResourceId, ResourceKind, ResourceProjectionContract, SchemaDescriptor,
     StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
 };
@@ -42,11 +44,33 @@ fn resource(kind: &str, snapshot_support: AdapterSnapshotSupport) -> ResourceCap
     }
 }
 
+fn assurance_v1(deduplication_strength: IdempotencyStrength) -> AdapterAssuranceManifest {
+    AdapterAssuranceManifest {
+        contract: Some(adapter_assurance_manifest::Contract::V1(
+            AdapterAssuranceManifestV1 {
+                deduplication_strength: deduplication_strength as i32,
+                continuation_proof_support: Some(false),
+                cursor_support: Some(false),
+                generation_fence_support: Some(false),
+                reconciliation_strength: AdapterReconciliationStrength::None as i32,
+                unproven_outcome_action: ReconciliationAction::None as i32,
+            },
+        )),
+    }
+}
+
+fn current_capability() -> AdapterCapability {
+    AdapterCapability {
+        assurance: Some(assurance_v1(IdempotencyStrength::None)),
+        ..AdapterCapability::default()
+    }
+}
+
 fn session_capability() -> AdapterCapability {
     AdapterCapability {
         session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
         target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
-        ..AdapterCapability::default()
+        ..current_capability()
     }
 }
 
@@ -58,7 +82,7 @@ fn resource_capability() -> AdapterCapability {
             resource("provider_pool", AdapterSnapshotSupport::Authoritative),
             resource("usage_window", AdapterSnapshotSupport::Partial),
         ],
-        ..AdapterCapability::default()
+        ..current_capability()
     }
 }
 
@@ -450,10 +474,194 @@ async fn replay_accepts_only_the_complete_canonical_attachment_envelope() {
 }
 
 #[test]
+fn complete_assurance_manifest_requires_explicit_false_and_known_non_sentinel_values() {
+    let complete = session_capability();
+    let validated =
+        ValidatedAdapterCapability::try_from_wire(&complete, CapabilityValidationContext::Attach)
+            .expect("complete explicit-false V1 validates");
+    assert_eq!(
+        validated.assurance().to_wire_v1(),
+        assurance_v1(IdempotencyStrength::None)
+    );
+
+    for missing in [
+        "continuation_proof_support",
+        "cursor_support",
+        "generation_fence_support",
+    ] {
+        let mut capability = session_capability();
+        let Some(adapter_assurance_manifest::Contract::V1(manifest)) = capability
+            .assurance
+            .as_mut()
+            .and_then(|assurance| assurance.contract.as_mut())
+        else {
+            unreachable!()
+        };
+        match missing {
+            "continuation_proof_support" => manifest.continuation_proof_support = None,
+            "cursor_support" => manifest.cursor_support = None,
+            "generation_fence_support" => manifest.generation_fence_support = None,
+            _ => unreachable!(),
+        }
+        assert!(
+            ValidatedAdapterCapability::try_from_wire(
+                &capability,
+                CapabilityValidationContext::Attach,
+            )
+            .is_err(),
+            "omitted {missing} must not be inferred as false"
+        );
+    }
+
+    for (field, value) in [
+        ("deduplication_strength", 0),
+        ("reconciliation_strength", 0),
+        ("unproven_outcome_action", 0),
+        ("deduplication_strength", 99),
+        ("reconciliation_strength", 99),
+        ("unproven_outcome_action", 99),
+    ] {
+        let mut capability = session_capability();
+        let Some(adapter_assurance_manifest::Contract::V1(manifest)) = capability
+            .assurance
+            .as_mut()
+            .and_then(|assurance| assurance.contract.as_mut())
+        else {
+            unreachable!()
+        };
+        match field {
+            "deduplication_strength" => manifest.deduplication_strength = value,
+            "reconciliation_strength" => manifest.reconciliation_strength = value,
+            "unproven_outcome_action" => manifest.unproven_outcome_action = value,
+            _ => unreachable!(),
+        }
+        assert!(
+            ValidatedAdapterCapability::try_from_wire(
+                &capability,
+                CapabilityValidationContext::Attach,
+            )
+            .is_err(),
+            "{field} value {value} must fail closed"
+        );
+    }
+}
+
+#[test]
+#[allow(deprecated)]
+fn attach_rejects_missing_unknown_version_and_dual_declarations() {
+    let mut missing = session_capability();
+    missing.assurance = None;
+    assert!(ValidatedAdapterCapability::try_from_wire(
+        &missing,
+        CapabilityValidationContext::Attach,
+    )
+    .is_err());
+
+    let mut dual = session_capability();
+    dual.idempotency_strength = IdempotencyStrength::AtPatchbayBoundary as i32;
+    assert!(
+        ValidatedAdapterCapability::try_from_wire(&dual, CapabilityValidationContext::Attach,)
+            .is_err()
+    );
+
+    let mut future_encoded = missing.encode_to_vec();
+    // AdapterCapability.assurance (tag 13) containing an unknown future
+    // AdapterAssuranceManifest oneof branch (tag 2). Prost preserves the known
+    // wrapper but cannot select an admitted contract, which must reject.
+    future_encoded.extend_from_slice(&[0x6a, 0x02, 0x12, 0x00]);
+    let future = AdapterCapability::decode(future_encoded.as_slice()).expect("future wire decodes");
+    assert!(future.assurance.is_some());
+    assert!(future
+        .assurance
+        .as_ref()
+        .is_some_and(|manifest| manifest.contract.is_none()));
+    for context in [
+        CapabilityValidationContext::Attach,
+        CapabilityValidationContext::Replay,
+    ] {
+        assert!(
+            ValidatedAdapterCapability::try_from_wire(&future, context).is_err(),
+            "unknown contract version must not become current V1 or legacy replay"
+        );
+    }
+}
+
+#[test]
+#[allow(deprecated)]
+fn replay_only_legacy_assurance_normalizes_conservatively() {
+    for (wire, expected) in [
+        (
+            IdempotencyStrength::Unspecified as i32,
+            IdempotencyStrength::None,
+        ),
+        (IdempotencyStrength::None as i32, IdempotencyStrength::None),
+        (
+            IdempotencyStrength::AtPatchbayBoundary as i32,
+            IdempotencyStrength::AtPatchbayBoundary,
+        ),
+        (
+            IdempotencyStrength::EndToEnd as i32,
+            IdempotencyStrength::EndToEnd,
+        ),
+        (99, IdempotencyStrength::None),
+    ] {
+        let mut legacy = session_capability();
+        legacy.assurance = None;
+        legacy.idempotency_strength = wire;
+        let replayed =
+            ValidatedAdapterCapability::try_from_wire(&legacy, CapabilityValidationContext::Replay)
+                .expect("historical v0.2 manifest normalizes on replay");
+        assert_eq!(
+            replayed.assurance().to_wire_v1(),
+            assurance_v1(expected),
+            "legacy deduplication value {wire} maps to one complete conservative V1"
+        );
+        assert!(
+            ValidatedAdapterCapability::try_from_wire(
+                &legacy,
+                CapabilityValidationContext::Attach,
+            )
+            .is_err(),
+            "the same historical bytes must not use replay normalization at attach"
+        );
+    }
+}
+
+#[test]
 fn invalid_manifest_shapes_fail_closed() {
     let mut cases = Vec::new();
 
-    cases.push(("missing categories", AdapterCapability::default()));
+    cases.push(("missing categories", current_capability()));
+
+    let mut unspecified_operation = session_capability();
+    unspecified_operation.supported_operation_kinds = vec![OperationKind::Unspecified as i32];
+    cases.push(("unspecified supported operation", unspecified_operation));
+
+    let mut unknown_operation = session_capability();
+    unknown_operation.supported_operation_kinds = vec![99];
+    cases.push(("unknown supported operation", unknown_operation));
+
+    let mut duplicate_operation = session_capability();
+    duplicate_operation.supported_operation_kinds = vec![
+        OperationKind::Instruct as i32,
+        OperationKind::Instruct as i32,
+    ];
+    cases.push(("duplicate supported operation", duplicate_operation));
+
+    let mut unspecified_failure = session_capability();
+    unspecified_failure.known_failure_modes = vec![FailureCode::Unspecified as i32];
+    cases.push(("unspecified known failure", unspecified_failure));
+
+    let mut unknown_failure = session_capability();
+    unknown_failure.known_failure_modes = vec![99];
+    cases.push(("unknown known failure", unknown_failure));
+
+    let mut duplicate_failure = session_capability();
+    duplicate_failure.known_failure_modes = vec![
+        FailureCode::ExecutionFailed as i32,
+        FailureCode::ExecutionFailed as i32,
+    ];
+    cases.push(("duplicate known failure", duplicate_failure));
 
     let mut duplicate_categories = session_capability();
     duplicate_categories

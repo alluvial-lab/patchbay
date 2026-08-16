@@ -34,6 +34,7 @@ const CHECKED_NORMATIVE_PROPERTIES = [
 
 const STATED_NORMATIVE_PROPERTIES = [
   'ActorIdsUnique',
+  'AdapterCapabilityAssuranceHonesty',
   'AuthorityGraphAcyclic',
   'CommandDurability',
   'CompoundIssuer',
@@ -303,6 +304,61 @@ const INVARIANT_EXPECTATION_CHECKS = Object.freeze({
       && (name !== 'resource_case'
         || (outcome?.requested_view_kind === 'SNAPSHOT_VIEW_KIND_RESOURCE'
           && outcome?.returned_view_kind === 'SNAPSHOT_VIEW_KIND_RESOURCE')),
+  ),
+  AdapterCapabilityAssuranceHonesty: (vector) => expectation(
+    vector.input?.fresh_complete?.v1?.continuation_proof_support === false
+      && vector.input?.fresh_complete?.v1?.cursor_support === false
+      && vector.input?.fresh_complete?.v1?.generation_fence_support === false
+      && vector.input?.fresh_complete?.v1?.reconciliation_strength === 'ADAPTER_RECONCILIATION_STRENGTH_NONE'
+      && vector.input?.fresh_complete?.v1?.unproven_outcome_action === 'RECONCILIATION_ACTION_NONE'
+      && JSON.stringify(vector.input?.reject?.omitted_boolean_fields) === JSON.stringify([
+        'continuation_proof_support',
+        'cursor_support',
+        'generation_fence_support',
+      ])
+      && JSON.stringify(vector.input?.reject?.enum_fields) === JSON.stringify([
+        'deduplication_strength',
+        'reconciliation_strength',
+        'unproven_outcome_action',
+      ])
+      && JSON.stringify(vector.input?.reject?.enum_set_fields) === JSON.stringify([
+        'supported_operation_kinds',
+        'known_failure_modes',
+      ])
+      && vector.input?.reject?.unknown_contract_version > 1
+      && vector.expected_outcome?.fresh_complete_valid === true
+      && vector.expected_outcome?.missing_manifest_rejected === true
+      && vector.expected_outcome?.omitted_boolean_rejected === true
+      && vector.expected_outcome?.unspecified_enum_rejected === true
+      && vector.expected_outcome?.unknown_enum_rejected === true
+      && vector.expected_outcome?.enum_set_unspecified_unknown_duplicate_rejected === true
+      && vector.expected_outcome?.dual_declaration_rejected === true
+      && vector.expected_outcome?.unknown_version_rejected === true
+      && vector.expected_outcome?.historical_replay_complete === true
+      && vector.expected_outcome?.historical_replay_attach_rejected === true
+      && vector.expected_outcome?.historical_uncertainty_defaults?.continuation_proof_support === false
+      && vector.expected_outcome?.historical_uncertainty_defaults?.cursor_support === false
+      && vector.expected_outcome?.historical_uncertainty_defaults?.generation_fence_support === false
+      && vector.expected_outcome?.historical_uncertainty_defaults?.reconciliation_strength === 'ADAPTER_RECONCILIATION_STRENGTH_NONE'
+      && vector.expected_outcome?.historical_uncertainty_defaults?.unproven_outcome_action === 'RECONCILIATION_ACTION_NONE',
+    'fresh assurance must be complete and explicit; historical replay alone normalizes uncertainty conservatively',
+  ),
+  GrantAuthorityIsOperationKinds: (vector) => expectation(
+    vector.input?.maximal_without_grant?.available_grants?.length === 0
+      && vector.input?.maximal_without_grant?.assurance?.v1?.continuation_proof_support === true
+      && vector.input?.maximal_without_grant?.assurance?.v1?.cursor_support === true
+      && vector.input?.maximal_without_grant?.assurance?.v1?.generation_fence_support === true
+      && vector.input?.maximal_without_grant?.assurance?.v1?.reconciliation_strength === 'ADAPTER_RECONCILIATION_STRENGTH_AUTHORITATIVE'
+      && vector.input?.conservative_with_grant?.supported_operation_kinds?.length === 0
+      && vector.input?.conservative_with_grant?.grant?.allowed_operation_kinds?.[0] === 'OPERATION_KIND_INSTRUCT'
+      && vector.expected_outcome?.maximal_without_grant?.rejected_before_acceptance === true
+      && vector.expected_outcome?.maximal_without_grant?.failure_code === 'FAILURE_CODE_AUTHORIZATION_DENIED'
+      && vector.expected_outcome?.maximal_without_grant?.delivered_to_adapter === false
+      && vector.expected_outcome?.conservative_with_grant?.accepted_for_delivery === true
+      && vector.expected_outcome?.conservative_with_grant?.adapter_delivery_outcome_remains_authoritative === true
+      && vector.expected_outcome?.capability_grants_authority === false
+      && vector.expected_outcome?.capability_replaces_delivery_outcome === false,
+    'capability declarations cannot grant authority or replace adapter-authoritative delivery support/outcome',
   ),
   ResourceObservationSourceAuthenticated: (vector) => expectation(
     vector.expected_outcome?.authenticated_owner?.observation_appended === true

@@ -13,12 +13,45 @@ message AdapterCapability {
   AdapterSnapshotSupport session_snapshot_support = 4;
   bool cancellation_support = 5;
   bool session_replacement_support = 6;
-  IdempotencyStrength idempotency_strength = 7;
+  // Replay-only input for durable pre-assurance registrations. Fresh attach
+  // requires UNSPECIFIED and uses assurance.v1.deduplication_strength.
+  IdempotencyStrength idempotency_strength = 7 [deprecated = true];
   AttachmentMethod attachment_method = 8;
   repeated FailureCode known_failure_modes = 9;
   AdapterDiagnosticReportingCapability diagnostic_reporting = 10;
   repeated AdapterTargetCategory target_categories = 11;
   repeated ResourceCapability resource_capabilities = 12;
+  AdapterAssuranceManifest assurance = 13;
+}
+
+// Versioned, complete declaration of adapter durability and reconciliation
+// assurances. V1 is frozen; new semantic dimensions require a new branch.
+message AdapterAssuranceManifest {
+  oneof contract {
+    AdapterAssuranceManifestV1 v1 = 1;
+  }
+}
+
+message AdapterAssuranceManifestV1 {
+  IdempotencyStrength deduplication_strength = 1;
+  optional bool continuation_proof_support = 2;
+  optional bool cursor_support = 3;
+  optional bool generation_fence_support = 4;
+  AdapterReconciliationStrength reconciliation_strength = 5;
+  ReconciliationAction unproven_outcome_action = 6;
+}
+
+enum AdapterReconciliationStrength {
+  ADAPTER_RECONCILIATION_STRENGTH_UNSPECIFIED = 0;
+  ADAPTER_RECONCILIATION_STRENGTH_NONE = 1;
+  ADAPTER_RECONCILIATION_STRENGTH_BOUNDED = 2;
+  ADAPTER_RECONCILIATION_STRENGTH_AUTHORITATIVE = 3;
+}
+
+enum ReconciliationAction {
+  RECONCILIATION_ACTION_UNSPECIFIED = 0;
+  RECONCILIATION_ACTION_NONE = 1;
+  RECONCILIATION_ACTION_MANUAL_REQUIRED = 2;
 }
 
 // Registry-owned adapter target families. Knowledge bundles are wire-present
