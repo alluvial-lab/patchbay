@@ -70,6 +70,7 @@ export class RuntimeActionGate {
   #activeLease: symbol | undefined;
   #actionReservations = 0;
   #activityEventEpoch = 0;
+  #observationsFenced = false;
   #lastActivityStartEpoch = 0;
   #lastAgentSettledEpoch = 0;
 
@@ -79,6 +80,10 @@ export class RuntimeActionGate {
 
   get poisoned(): boolean {
     return this.#fence?.poisoned ?? false;
+  }
+
+  get observationsFenced(): boolean {
+    return this.#observationsFenced;
   }
 
   async runAction<T>(kind: RuntimeActionKind, action: () => Promise<T>): Promise<T> {
@@ -126,12 +131,14 @@ export class RuntimeActionGate {
       if (runtime.rpc.pendingRequestCount !== 0) {
         throw new RuntimeActionBusyError("direct_rpc_busy");
       }
+      this.#observationsFenced = true;
       const state = await runtime.rpc.request<Record<string, unknown>>({ type: "get_state" });
       if (runtime.rpc.pendingRequestCount !== 0) {
         throw new RuntimeActionGateError("exclusive get_state left an outstanding RPC request");
       }
       return await action(this.#settledSnapshot(runtime, state));
     } finally {
+      this.#observationsFenced = false;
       this.#actionReservations -= 1;
       release();
     }

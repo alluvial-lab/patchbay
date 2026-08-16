@@ -5,6 +5,28 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const mutations = [
   {
+    name: "trust generic RPC identity without challenged marker cwd proof",
+    file: "src/control_handshake.ts",
+    find: `      if (candidate.marker.cwd !== markerCwd || markerCwd !== projectCwd) {
+        throw new PiControlHandshakeError(PiControlHandshakeFailure.CWD_MISMATCH);
+      }`,
+    replace: `      // mutant: generic RPC state is treated as cwd proof`,
+    test: "wrong initialized cwd cannot pass",
+    testFile: "dist/tests/control_handshake.test.js",
+  },
+  {
+    name: "silently skip a malformed raw Pi session line",
+    file: "src/session_file.ts",
+    find: `    } catch {
+      throw new IntegrityFault(PiSessionIntegrityFailure.JSON_INVALID);
+    }`,
+    replace: `    } catch {
+      continue;
+    }`,
+    test: "strict parser rejects malformed lines",
+    testFile: "dist/tests/session_file.test.js",
+  },
+  {
     name: "collapse distinct Pi session continuity into one cursor scope",
     file: "src/cursor_store.ts",
     find: `  const externalContinuityId = \`pi1:\${lengthFramedDigest([\n    input.adapterId,\n    input.deploymentScope,\n    input.piSessionId,\n    configuredSessionRootId,\n    rootRelativePath,\n  ])}\`;`,
@@ -101,6 +123,14 @@ const mutations = [
     testFile: "dist/tests/spawn_supervisor.test.js",
   },
   {
+    name: "admit reload while the runtime is streaming",
+    file: "src/reload_controller.ts",
+    find: `    if (snapshot.isStreaming) throw new PiReloadRejectedError("busy_streaming");`,
+    replace: `    if (false && snapshot.isStreaming) throw new PiReloadRejectedError("busy_streaming");`,
+    test: "streaming, compacting, queued",
+    testFile: "dist/tests/reload_controller.test.js",
+  },
+  {
     name: "classify possibly-written RPC response loss as execution_failed",
     file: "src/main.ts",
     find: `      failureCode: outcomeUnknown\n        ? FailureCode.EXECUTION_OUTCOME_UNKNOWN\n        : FailureCode.EXECUTION_FAILED,`,
@@ -139,6 +169,42 @@ const mutations = [
     replace: `    signalProcessGroup(runtime.pid, "SIGTERM");`,
     test: "stubborn process group forces bounded SIGKILL",
     testFile: "dist/tests/rpc_process_e2e.test.js",
+  },
+  {
+    name: "claim arbitrary dependency graphs are live-reloadable",
+    file: "src/core_client.ts",
+    find: `      processReplacementOnly: [
+        PiProcessReplacementOnlyKind.ARBITRARY_EXTENSION_DEPENDENCY_GRAPH,
+        PiProcessReplacementOnlyKind.PI_RUNTIME_PACKAGE_DIST,`,
+    replace: `      processReplacementOnly: [
+        PiProcessReplacementOnlyKind.PI_RUNTIME_PACKAGE_DIST,`,
+    test: "Pi manifest activates only",
+    testFile: "dist/tests/core_client.test.js",
+  },
+  {
+    name: "activate the full Pi manifest without mechanism evidence",
+    file: "src/core_client.ts",
+    find: `  requireCompletePiCapabilityEvidence(evidence);`,
+    replace: `  // mutant: capability activation ignores mechanism evidence`,
+    test: "Pi activation fails when any claimed mechanism",
+    testFile: "dist/tests/core_client.test.js",
+  },
+  {
+    name: "admit no-proof volatile projection as an unknown schema family",
+    file: "src/core_client.ts",
+    find: `    || value === PI_VOLATILE_PROJECTION_SCHEMA_REF;`,
+    replace: `    || false;`,
+    test: "Pi projection ingress admits durable and memory-only",
+    testFile: "dist/tests/core_client.test.js",
+  },
+  {
+    name: "let reload-owned callbacks queue behind their own action fence",
+    file: "src/session_registry.ts",
+    find: `      && !gate?.observationsFenced
+      && entry.active`,
+    replace: `      && entry.active`,
+    test: "SessionRegistry suppresses current-runtime callbacks",
+    testFile: "dist/tests/delivery.test.js",
   },
   {
     name: "construct offline fixture runtime through ambient discovery",

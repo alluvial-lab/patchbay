@@ -6,21 +6,33 @@ import test from "node:test";
 import { create, fromBinary } from "@bufbuild/protobuf";
 import {
   AdapterIdSchema,
+  AdapterReconciliationStrength,
   ExternalRuntimeRefSchema,
   GenerationSchema,
   LogicalTargetIdSchema,
+  OperationKind,
   PiPersistedProjectionReplacementSchema,
+  ReconciliationAction,
   RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
 } from "@patchbay/contracts";
+import {
+  PI_CAPABILITY_EVIDENCE,
+  PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION,
+  PI_RPC_TARGET_SHAPE,
+  piCapabilityManifest,
+  type PiCapabilityEvidence,
+} from "../src/core_client.js";
 import { FilePiCursorStore, derivePiSessionContinuityKey } from "../src/cursor_store.js";
 import { PiEntryReconciler } from "../src/entry_reconciler.js";
 import { PiUnknownCursorError } from "../src/pi_session.js";
 import { projectCompletePiEntries } from "../src/pi_projection.js";
 
 const RUNNER = "pi-adapter";
-const VECTOR_ID = "spawn-reconnect-cursor-convergence";
-const CASE = "pi_cursor_authoritative_replacement";
+const CURSOR_VECTOR_ID = "spawn-reconnect-cursor-convergence";
+const CURSOR_CASE = "pi_cursor_authoritative_replacement";
+const MANIFEST_VECTOR_ID = "pi-managed-lifecycle-manifest-activation";
+const MANIFEST_CASE = "pi_managed_lifecycle_manifest_activation";
 
 interface Vector {
   readonly vector_id: string;
@@ -34,20 +46,27 @@ test("conformance vector runner", async () => {
     ? JSON.parse(process.env.PATCHBAY_CONFORMANCE_REQUESTS) as { vector_id: string; case: string }[]
     : [];
   for (const request of requests) {
-    if (request.vector_id !== VECTOR_ID || request.case !== CASE) {
-      throw new Error(`unhandled ${RUNNER} conformance case ${request.vector_id}:${request.case}`);
-    }
     const vector = JSON.parse(await readFile(
-      resolve(process.cwd(), "../contracts/vectors/spawn-reconnect-cursor-convergence.json"),
+      resolve(process.cwd(), `../contracts/vectors/${request.vector_id}.json`),
       "utf8",
     )) as Vector;
-    assert.ok(vector.implementation_checks?.some((check) => check.runner === RUNNER && check.case === CASE));
-    await execute(vector);
+    assert.ok(
+      vector.implementation_checks?.some(
+        (check) => check.runner === RUNNER && check.case === request.case,
+      ),
+    );
+    if (request.vector_id === CURSOR_VECTOR_ID && request.case === CURSOR_CASE) {
+      await executeCursorReplacement(vector);
+    } else if (request.vector_id === MANIFEST_VECTOR_ID && request.case === MANIFEST_CASE) {
+      executeManifestActivation(vector);
+    } else {
+      throw new Error(`unhandled ${RUNNER} conformance case ${request.vector_id}:${request.case}`);
+    }
     console.log(`PATCHBAY_CONFORMANCE_EXECUTED=${request.vector_id}:${request.case}`);
   }
 });
 
-async function execute(vector: Vector): Promise<void> {
+async function executeCursorReplacement(vector: Vector): Promise<void> {
   const oldIds = stringList(vector.input.old_projection_ids);
   const replacementIds = stringList(vector.input.replacement_projection_ids);
   const expectedIds = stringList(vector.expected_outcome.external_projection_ids);
@@ -138,6 +157,72 @@ async function execute(vector: Vector): Promise<void> {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+function executeManifestActivation(vector: Vector): void {
+  assert.equal(vector.vector_id, MANIFEST_VECTOR_ID);
+  const mechanisms = [
+    "supervisor",
+    "controlHandshake",
+    "strictSessionTreeValidation",
+    "authoritativeCursorReplacement",
+    "idleMaterializedReload",
+  ] as const satisfies readonly (keyof PiCapabilityEvidence)[];
+  assert.deepEqual(stringList(vector.input.required_mechanisms), mechanisms);
+  assert.equal(vector.input.conformance_version, PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION);
+
+  const manifest = piCapabilityManifest();
+  assert.equal(
+    manifest.supportedOperationKinds.includes(OperationKind.SPAWN),
+    vector.expected_outcome.spawn_supported,
+  );
+  assert.deepEqual(
+    manifest.supportedTargetSpecShapes,
+    stringList(vector.expected_outcome.target_spec_shapes),
+  );
+  assert.equal(
+    manifest.sessionReplacementSupport,
+    vector.expected_outcome.session_replacement_supported,
+  );
+  assert.equal(manifest.assurance?.contract.case, "v1");
+  if (manifest.assurance?.contract.case !== "v1") assert.fail("Pi assurance V1 is required");
+  const assurance = manifest.assurance.contract.value;
+  assert.equal(
+    assurance.continuationProofSupport,
+    vector.expected_outcome.continuation_proof_supported,
+  );
+  assert.equal(assurance.cursorSupport, vector.expected_outcome.cursor_supported);
+  assert.equal(
+    assurance.generationFenceSupport,
+    vector.expected_outcome.generation_fence_supported,
+  );
+  assert.equal(
+    assurance.reconciliationStrength === AdapterReconciliationStrength.AUTHORITATIVE,
+    vector.expected_outcome.reconciliation_strength === "ADAPTER_RECONCILIATION_STRENGTH_AUTHORITATIVE",
+  );
+  assert.equal(
+    assurance.unprovenOutcomeAction === ReconciliationAction.MANUAL_REQUIRED,
+    vector.expected_outcome.unproven_outcome_action === "RECONCILIATION_ACTION_MANUAL_REQUIRED",
+  );
+  assert.equal(
+    PI_CAPABILITY_EVIDENCE.conformanceVersion,
+    PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION,
+  );
+  for (const mechanism of mechanisms) {
+    assert.throws(
+      () => piCapabilityManifest({ ...PI_CAPABILITY_EVIDENCE, [mechanism]: false }),
+      /lacks complete conformance evidence/,
+    );
+  }
+  assert.throws(
+    () => piCapabilityManifest({
+      ...PI_CAPABILITY_EVIDENCE,
+      conformanceVersion: "pi-managed-lifecycle.unproved",
+    }),
+    /lacks complete conformance evidence/,
+  );
+  assert.equal(vector.expected_outcome.missing_mechanism_rejected, true);
+  assert.equal(vector.expected_outcome.wrong_conformance_version_rejected, true);
 }
 
 function rawTree(ids: readonly string[]): readonly Record<string, unknown>[] {

@@ -28,6 +28,7 @@ import {
   classifyDeliveryFailure,
   type PreprovisionedSession,
 } from "../src/main.js";
+import type { PiRpcRuntime } from "../src/pi_process.js";
 import { AgentSessionRuntimeFixture, type PiSession } from "../src/pi_session.js";
 import {
   createOfflineFixtureServices,
@@ -705,6 +706,92 @@ test("AdapterProcess preserves a hostile registration failure while logging a sa
     await adapter.dispose();
     PatchbayCoreClient.prototype.attach = originalAttach;
   }
+});
+
+test("SessionRegistry suppresses current-runtime callbacks while replacement authority is fenced", async () => {
+  const registry = new SessionRegistry();
+  let transcript: (() => void) | undefined;
+  let model: (() => void) | undefined;
+  let lifecycle: (() => void) | undefined;
+  let persisted: (() => void) | undefined;
+  let observations = 0;
+  const session = {
+    runtimeSessionId: "runtime-fenced",
+    onTranscript(listener: () => void) {
+      transcript = listener;
+      return () => undefined;
+    },
+    onModelChange(listener: () => void) {
+      model = listener;
+      return () => undefined;
+    },
+    onLifecycle(listener: () => void) {
+      lifecycle = listener;
+      return () => undefined;
+    },
+    onPersistedEntry(listener: () => void) {
+      persisted = listener;
+      return () => undefined;
+    },
+    async dispose() {},
+  } as unknown as PiSession;
+  registry.register(
+    {
+      runtimeSessionId: "runtime-fenced",
+      deploymentScope: "machine-a",
+      cwd: "/work/patchbay",
+      logicalTargetId: "logical-target",
+    },
+    session,
+    () => { observations += 1; },
+    () => { observations += 1; },
+    () => { observations += 1; },
+    () => { observations += 1; },
+  );
+
+  const lease = await registry.gateFor("logical-target").acquireReplacement("claim-next");
+  transcript?.();
+  model?.();
+  lifecycle?.();
+  persisted?.();
+  assert.equal(observations, 0, "prior callbacks cannot escape an accepted replacement fence");
+
+  lease.release();
+  transcript?.();
+  model?.();
+  lifecycle?.();
+  persisted?.();
+  assert.equal(observations, 4, "released fences restore current-runtime observation ownership");
+
+  const runtime = {
+    pid: 1,
+    processToken: "process-token",
+    rpc: {
+      pendingRequestCount: 0,
+      async request() {
+        return {
+          sessionId: "runtime-fenced",
+          sessionFile: "/work/patchbay/session.jsonl",
+          isStreaming: false,
+          isCompacting: false,
+          pendingMessageCount: 0,
+        };
+      },
+    },
+  } as unknown as PiRpcRuntime;
+  await registry.gateFor("logical-target").withExclusiveCurrent(runtime, async () => {
+    transcript?.();
+    model?.();
+    lifecycle?.();
+    persisted?.();
+    assert.equal(observations, 4, "reload-owned callbacks cannot queue behind their own action fence");
+  });
+  transcript?.();
+  model?.();
+  lifecycle?.();
+  persisted?.();
+  assert.equal(observations, 8, "reload observation fencing is released with exclusive ownership");
+  await registry.dispose();
 });
 
 test("SessionRegistry owns complete runtime entries and observation wiring", async () => {

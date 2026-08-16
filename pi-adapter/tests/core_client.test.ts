@@ -44,31 +44,42 @@ import {
 import {
   decodePiRuntimeProfile,
   PatchbayCoreClient,
+  PI_CAPABILITY_EVIDENCE,
+  PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION,
+  PI_RPC_TARGET_SHAPE,
   PI_RUNTIME_PROFILE_SCHEMA_REF,
+  isPiProjectionSchemaRef,
   piCapabilityManifest,
+  type PiCapabilityEvidence,
   type SessionIdentity,
 } from "../src/core_client.js";
+import {
+  PI_PROJECTION_REPLACEMENT_SCHEMA_REF,
+  PI_PROJECTION_SUFFIX_SCHEMA_REF,
+  PI_VOLATILE_PROJECTION_SCHEMA_REF,
+} from "../src/pi_projection.js";
 import type { SessionReportOrder } from "../src/session_report_sequencer.js";
 
 const attachmentTokenHeader = "x-patchbay-adapter-attachment-token";
 
-test("Pi manifest declares one complete conservative assurance V1", () => {
+test("Pi manifest activates only from one complete implementation-conformance evidence set", () => {
   const manifest = piCapabilityManifest();
+  assert.equal(PI_CAPABILITY_EVIDENCE.conformanceVersion, PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION);
   assert.equal(manifest.idempotencyStrength, IdempotencyStrength.UNSPECIFIED);
   assert.deepEqual(manifest.targetCategories, [AdapterTargetCategory.RUNTIME_SESSION]);
   assert.equal(manifest.sessionSnapshotSupport, AdapterSnapshotSupport.PARTIAL);
-  assert.equal(manifest.sessionReplacementSupport, false);
-  assert.equal(manifest.supportedOperationKinds.includes(OperationKind.SPAWN), false);
-  assert.deepEqual(manifest.supportedTargetSpecShapes, []);
+  assert.equal(manifest.sessionReplacementSupport, true);
+  assert.equal(manifest.supportedOperationKinds.includes(OperationKind.SPAWN), true);
+  assert.deepEqual(manifest.supportedTargetSpecShapes, [PI_RPC_TARGET_SHAPE]);
   assert.equal(manifest.assurance?.contract.case, "v1");
   if (manifest.assurance?.contract.case !== "v1") assert.fail("Pi assurance V1 is required");
   assert.deepEqual(manifest.assurance.contract.value, {
     $typeName: "patchbay.AdapterAssuranceManifestV1",
     deduplicationStrength: IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
-    continuationProofSupport: false,
-    cursorSupport: false,
-    generationFenceSupport: false,
-    reconciliationStrength: AdapterReconciliationStrength.NONE,
+    continuationProofSupport: true,
+    cursorSupport: true,
+    generationFenceSupport: true,
+    reconciliationStrength: AdapterReconciliationStrength.AUTHORITATIVE,
     unprovenOutcomeAction: ReconciliationAction.MANUAL_REQUIRED,
   });
   assert.deepEqual(manifest.knownFailureModes, [
@@ -123,6 +134,37 @@ test("Pi manifest declares one complete conservative assurance V1", () => {
     PiProjectContextResolution.ADAPTER_RESOLVED_CWD_PROJECT_TRUST_AND_RESOURCE_ROOTS,
   );
   assert.equal(profile.projectContext?.cwdProof, PiCwdProofKind.CHALLENGED_CONTROL_EXTENSION);
+});
+
+test("Pi activation fails when any claimed mechanism or the conformance version is unproven", () => {
+  const mechanismKeys = [
+    "supervisor",
+    "controlHandshake",
+    "strictSessionTreeValidation",
+    "authoritativeCursorReplacement",
+    "idleMaterializedReload",
+  ] as const satisfies readonly (keyof PiCapabilityEvidence)[];
+  for (const mechanism of mechanismKeys) {
+    assert.throws(
+      () => piCapabilityManifest({ ...PI_CAPABILITY_EVIDENCE, [mechanism]: false }),
+      /lacks complete conformance evidence/,
+      mechanism,
+    );
+  }
+  assert.throws(
+    () => piCapabilityManifest({
+      ...PI_CAPABILITY_EVIDENCE,
+      conformanceVersion: "pi-managed-lifecycle.unproved",
+    }),
+    /lacks complete conformance evidence/,
+  );
+});
+
+test("Pi projection ingress admits durable and memory-only generated envelope families exactly", () => {
+  assert.equal(isPiProjectionSchemaRef(PI_PROJECTION_SUFFIX_SCHEMA_REF), true);
+  assert.equal(isPiProjectionSchemaRef(PI_PROJECTION_REPLACEMENT_SCHEMA_REF), true);
+  assert.equal(isPiProjectionSchemaRef(PI_VOLATILE_PROJECTION_SCHEMA_REF), true);
+  assert.equal(isPiProjectionSchemaRef("patchbay.PiPersistedProjectionUnknown.v1"), false);
 });
 
 test("Pi profile is required and malformed framing fails the adapter-owned decoder", () => {

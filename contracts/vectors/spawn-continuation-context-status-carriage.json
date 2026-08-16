@@ -3,7 +3,8 @@
   "property_id": "SpawnCreatesDescendantGrant",
   "promotion_status": "draft",
   "implementation_checks": [
-    { "runner": "rust-server", "case": "continuation_context_status_carriage" }
+    { "runner": "rust-server", "case": "continuation_context_status_carriage" },
+    { "runner": "operator-domain", "case": "continuation_context_status_presentation" }
   ],
   "proto_fields_constrained": [
     "patchbay.ContinuationContextStatus",
@@ -29,6 +30,7 @@
       "CONTINUATION_CONTEXT_STATUS_NEW_CONTEXT",
       "CONTINUATION_CONTEXT_STATUS_UNKNOWN"
     ],
+    "presentation_statuses": ["resumed", "new_context", "unknown"],
     "core_invents_status": false
   },
   "invariant_check": "For every committed continuation-context enum value, the production staging constructor carries the independent adapter input unchanged in both the exact report and staged envelope; replacing the copy with a constant RESUMED value violates the vector."

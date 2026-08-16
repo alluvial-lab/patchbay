@@ -320,6 +320,48 @@ The diagnostics projection retains the canonical validated capability alongside 
 
 The promoted `adapter-assurance-complete-manifest` example executes the production Rust validator and canonical V1 projection. The promoted `adapter-assurance-advisory-only` example traces `GrantAuthorityIsOperationKinds`: maximal declaration without a Grant still rejects before acceptance, while a grant-authorized Operation remains delivery-eligible despite a conservative/empty advertised capability. These examples do not establish that an adapter's positive declaration is true in the external runtime, do not replace adapter-authoritative delivery outcomes, and do not promote a formal model or checked-normative claim.
 
+### Pi managed-lifecycle evidence (implementation-checked)
+
+The Pi adapter's managed-lifecycle declaration is implementation-checked and
+fails closed unless one build-bound evidence set names the supervisor,
+challenged control handshake, strict session-tree validator, authoritative
+cursor replacement, idle materialized reload, and the exact lifecycle
+conformance version. Its generic V1 assurance declares Patchbay-boundary
+deduplication, continuation proof, cursor support, generation fencing,
+authoritative reconciliation, and manual action for unproven outcomes. Pi-only
+cwd, session-file, cursor, and reload vocabulary remains in the generated opaque
+`PiRuntimeProfile`; core capability vocabulary does not absorb it.
+
+Focused tests cover challenged cwd/session correlation, memory-only versus
+materialized durability, raw/RPC tree integrity, launch-effect journaling and
+poison, successor staging before atomic core promotion, native-continuity cursor
+replacement, reload admission/markers/re-handshake/reconciliation, and fully
+injected offline SDK fixtures. The integrated harness uses a real core server and
+real supervised `pi --mode rpc` children to perform fresh spawn, offline
+materialization, exact continuation, same-process reload, forced adapter-stream
+reconnect/replay, durable journal/cursor acknowledgement, and process-group
+shutdown without ambient model credentials. Replacement and reload fences also
+suppress prior/current callbacks that would otherwise queue behind their owning
+action gate.
+
+The draft
+[`pi-managed-lifecycle-manifest-activation`](../contracts/vectors/pi-managed-lifecycle-manifest-activation.json)
+example executes the Pi evidence-gated activation boundary. The draft
+[`spawn-continuation-context-status-carriage`](../contracts/vectors/spawn-continuation-context-status-carriage.json)
+example executes Rust staging and shared operator-domain fail-closed
+presentation. The draft
+[`spawn-reconnect-cursor-convergence`](../contracts/vectors/spawn-reconnect-cursor-convergence.json)
+example executes the shared authoritative-replacement owner and Pi cursor
+adapter, including omitted-entry deletion and cursor-after-publication ordering.
+Mutation witnesses remove individual activation evidence, external continuity,
+exact replacement publication, cursor persistence, pre-launch journal ordering,
+post-launch poison, resume materialization, promotion ordering, action fencing,
+and offline fixture injection; each is required to fail its focused oracle.
+
+This is implementation and draft-vector evidence only. It does not promote a
+formal property, does not make any of these draft vectors checked-normative, and
+is not a release-verification claim.
+
 ### Operational-resource state evidence (implementation-checked)
 
 The post-v0.1 resource-state projection is implementation-checked. Generated
@@ -602,12 +644,12 @@ Summary: 54 modeled properties (9 promoted, 45 draft), 16 reserved-unmodeled sta
 
 Source vectors: `contracts/vectors/*.json`. CI check: `node contracts/scripts/check-vectors.mjs` (or `npm run check:vectors` from `contracts/ts/`).
 
-Summary: 59 vector(s), 19 promoted vector(s), 1 checked-normative property requiring promoted-vector coverage. Current checked-normative coverage gate is active.
+Summary: 60 vector(s), 19 promoted vector(s), 1 checked-normative property requiring promoted-vector coverage. Current checked-normative coverage gate is active.
 
 | Property id | Classification | Vectors | `.proto` fields/enums exercised by vectors |
 |---|---|---|---|
 | `ActorIdsUnique` | stated-normative | — | — |
-| `AdapterCapabilityAssuranceHonesty` | stated-normative | [adapter-assurance-complete-manifest](../contracts/vectors/adapter-assurance-complete-manifest.json) (promoted) | patchbay.AdapterAssuranceManifest.v1<br>patchbay.AdapterAssuranceManifestV1.continuation_proof_support<br>patchbay.AdapterAssuranceManifestV1.cursor_support<br>patchbay.AdapterAssuranceManifestV1.deduplication_strength<br>patchbay.AdapterAssuranceManifestV1.generation_fence_support<br>patchbay.AdapterAssuranceManifestV1.reconciliation_strength<br>patchbay.AdapterAssuranceManifestV1.unproven_outcome_action<br>patchbay.AdapterCapability.assurance<br>patchbay.AdapterCapability.idempotency_strength<br>patchbay.AdapterCapability.known_failure_modes<br>patchbay.AdapterCapability.supported_operation_kinds<br>patchbay.AdapterReconciliationStrength<br>patchbay.ReconciliationAction |
+| `AdapterCapabilityAssuranceHonesty` | stated-normative | [adapter-assurance-complete-manifest](../contracts/vectors/adapter-assurance-complete-manifest.json) (promoted)<br>[pi-managed-lifecycle-manifest-activation](../contracts/vectors/pi-managed-lifecycle-manifest-activation.json) (draft) | patchbay.AdapterAssuranceManifest.v1<br>patchbay.AdapterAssuranceManifestV1.continuation_proof_support<br>patchbay.AdapterAssuranceManifestV1.cursor_support<br>patchbay.AdapterAssuranceManifestV1.deduplication_strength<br>patchbay.AdapterAssuranceManifestV1.generation_fence_support<br>patchbay.AdapterAssuranceManifestV1.reconciliation_strength<br>patchbay.AdapterAssuranceManifestV1.unproven_outcome_action<br>patchbay.AdapterCapability.adapter_profile<br>patchbay.AdapterCapability.assurance<br>patchbay.AdapterCapability.idempotency_strength<br>patchbay.AdapterCapability.known_failure_modes<br>patchbay.AdapterCapability.session_replacement_support<br>patchbay.AdapterCapability.supported_operation_kinds<br>patchbay.AdapterCapability.supported_target_spec_shapes<br>patchbay.AdapterReconciliationStrength<br>patchbay.ReconciliationAction |
 | `AuthorityGraphAcyclic` | stated-normative | — | — |
 | `BootstrapOnlyExit` | stated-normative | [lockdown-bootstrap-only-exit](../contracts/vectors/lockdown-bootstrap-only-exit.json) (draft) | patchbay.BootstrapChannelKind<br>patchbay.ExitSecurityLockdownRequest<br>patchbay.ExitSecurityLockdownResult |
 | `BoundaryDedup` | checked-model | [replay-committed-prefix-idempotent](../contracts/vectors/replay-committed-prefix-idempotent.json) (draft) | patchbay.Operation.command_id<br>patchbay.Operation.idempotency_key<br>patchbay.SubmissionResult.accepted_lsn<br>patchbay.SubmissionResult.deduplicated |

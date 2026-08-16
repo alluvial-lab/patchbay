@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, Socket } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -16,6 +24,7 @@ import {
   AdapterDiagnosticState,
   AdapterIdSchema,
   AdapterRegistrationSchema,
+  AdapterReconciliationStrength,
   AdapterSnapshotSupport,
   AdapterStatusQuerySchema,
   AdapterTargetCategory,
@@ -24,13 +33,16 @@ import {
   BootstrapRequestSchema,
   CommandIdSchema,
   CommandTransitionSchema,
+  ContinuationContextStatus,
   ControlService,
   DeviceIdSchema,
   DiagnosticsQuerySchema,
   EndpointIdSchema,
+  ExternalRuntimeRefSchema,
   FailureCode,
   GenerationSchema,
   LoadSnapshotRequestSchema,
+  LogicalTargetIdSchema,
   LsnSchema,
   SnapshotViewKind,
   ObservationKind,
@@ -41,11 +53,18 @@ import {
   PayloadContentType,
   PayloadEnvelopeSchema,
   FreshSpawnSchema,
+  PiContinuationMode,
+  PiReconfigureRequestSchema,
+  PiReloadableResourceKind,
+  PiSpawnTargetSpecSchema,
   PrincipalEnrollmentSchema,
   QueryDiagnosticsRequestSchema,
   QuarantinedRuntimeEvidenceSchema,
+  SpawnContinuationSchema,
+  SpawnPromotionCommittedSchema,
   SpawnRequestSchema,
   SpawnTargetSpecSchema,
+  RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
@@ -62,14 +81,21 @@ import {
   VerifyOperatorPasswordRequestSchema,
   type AdapterStatus,
   type GrantId,
+  type PayloadEnvelope,
   type PrincipalCredential,
+  type RuntimeGenerationRef,
+  type Session,
   type StoredEventPayload,
 } from "@patchbay/contracts";
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
-import { PatchbayCoreClient } from "../src/core_client.js";
+import {
+  PatchbayCoreClient,
+  PI_RPC_TARGET_SHAPE,
+} from "../src/core_client.js";
 import { openAdapterDiagnostics } from "../src/adapter_diagnostics.js";
 import { AdapterProcess, type PreprovisionedSession } from "../src/main.js";
 import { AgentSessionRuntimeFixture, type PiSession } from "../src/pi_session.js";
+import { PI_SPAWN_TARGET_SCHEMA_REF } from "../src/spawn_supervisor.js";
 import {
   createOfflineFixtureServices,
   createOfflineModelRuntime,
@@ -608,6 +634,341 @@ test("core → adapter → offline AgentSession fixture → observation loop, fe
   }
 });
 
+// This activation-gate test owns real core, Pi process, session-file, extension,
+// journal, cursor-store, reconnect, and process-group boundaries. The only
+// injected materialization input is an offline extension command that appends
+// the prebuilt current-v3 assistant shape without a model or credential lookup.
+test("real core + real Pi managed fresh/continuation/reload/reconnect lifecycle", { timeout: 180_000 }, async () => {
+  const freshCommandId = "real-pi-managed-fresh";
+  const continuationCommandId = "real-pi-managed-continuation";
+  const projectContextRef = "real-pi-project-context";
+  const managedDeploymentScope = "machine-real-pi";
+  const port = await freePort();
+  let adminPort = await freePort();
+  while (adminPort === port) adminPort = await freePort();
+  mkdirSync(join(repoRoot, "tmp"), { recursive: true });
+  const directory = mkdtempSync(join(repoRoot, "tmp", "pi-managed-lifecycle-e2e-"));
+  const databasePath = join(directory, "core.sqlite3");
+  const sessionDirectory = join(directory, "sessions");
+  const journalDirectory = join(directory, "journal");
+  const cursorDirectory = join(directory, "cursor");
+  mkdirSync(sessionDirectory, { recursive: true });
+  const materializationExtension = join(directory, "offline-materialization.mjs");
+  writeFileSync(materializationExtension, `
+export default function offlineMaterialization(pi) {
+  pi.registerCommand("patchbay-test-materialize", {
+    description: "Append a deterministic offline current-v3 assistant fixture",
+    handler: async (_args, ctx) => {
+      const timestamp = 1776124801000;
+      ctx.sessionManager.appendMessage({ role: "user", content: "offline fixture prompt", timestamp });
+      ctx.sessionManager.appendMessage({
+        role: "assistant",
+        content: [{ type: "text", text: "offline fixture response" }],
+        api: "offline-fixture",
+        provider: "offline-fixture",
+        model: "offline",
+        usage: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 2,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        },
+        stopReason: "stop",
+        timestamp: timestamp + 1,
+      });
+    },
+  });
+}
+`, { mode: 0o600 });
+
+  const piIndexPath = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
+  const cliPath = realpathSync(join(dirname(piIndexPath), "cli.js"));
+  const controlExtensionPath = realpathSync(fileURLToPath(
+    new URL("../extensions/patchbay-control.js", import.meta.url),
+  ));
+  const managedCwd = realpathSync(directory);
+  let core = startCore(port, adminPort, databasePath);
+  let adapter: AdapterProcess | undefined;
+  let adapterController: AbortController | undefined;
+  let adapterRun: Promise<void> | undefined;
+  let interrupterController: AbortController | undefined;
+  let interruptedStream: Promise<void> | undefined;
+
+  try {
+    const setupSecret = await waitForCore(port, core);
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const auth = await bootstrapAndLogin(
+      baseUrl,
+      `http://127.0.0.1:${adminPort}`,
+      setupSecret,
+    );
+    const control = makeControlClient(baseUrl, auth);
+    adapter = new AdapterProcess({
+      coreAddress: baseUrl,
+      adapterId,
+      authorityDomainId: domainId,
+      attachmentEvidence: adapterEvidence,
+      adapterGeneration: 1,
+      sessions: [],
+      managedTargets: [{
+        projectContextRef,
+        deploymentTarget: {
+          credentialPolicy: "credential-free",
+          adapterId,
+          deploymentScope: managedDeploymentScope,
+          logicalTargetId: freshCommandId,
+        },
+        cwd: managedCwd,
+        sessionRoot: realpathSync(sessionDirectory),
+        executable: realpathSync(process.execPath),
+        cliPath,
+        controlExtensionPath,
+        sessionDirectory: realpathSync(sessionDirectory),
+        environment: { PI_OFFLINE: "1" },
+        additionalArguments: ["--extension", realpathSync(materializationExtension)],
+      }],
+      spawnJournalDirectory: journalDirectory,
+      cursorStoreDirectory: cursorDirectory,
+    });
+    await adapter.start();
+    adapterController = new AbortController();
+    adapterRun = adapter.run(adapterController.signal);
+
+    const registrationPayload = (await readAfter(control, 0n))
+      .filter((payload) => payload.kind === StoredEventKind.OBSERVATION)
+      .map((payload) => fromBinary(ObservationSchema, payload.payload))
+      .find((observation) => observation.payload?.schemaRef === "patchbay.AdapterRegistration")
+      ?.payload;
+    assert.ok(registrationPayload, "the activated Pi manifest is durably registered");
+    const registration = fromBinary(AdapterRegistrationSchema, registrationPayload.payload);
+    const assurance = registration.capability?.assurance?.contract;
+    assert.equal(registration.capability?.supportedOperationKinds.includes(OperationKind.SPAWN), true);
+    assert.deepEqual(registration.capability?.supportedTargetSpecShapes, [PI_RPC_TARGET_SHAPE]);
+    assert.equal(registration.capability?.sessionReplacementSupport, true);
+    assert.equal(assurance?.case, "v1");
+    if (assurance?.case !== "v1") assert.fail("activated Pi assurance V1 is absent");
+    assert.equal(assurance.value.continuationProofSupport, true);
+    assert.equal(assurance.value.cursorSupport, true);
+    assert.equal(assurance.value.generationFenceSupport, true);
+    assert.equal(
+      assurance.value.reconciliationStrength,
+      AdapterReconciliationStrength.AUTHORITATIVE,
+    );
+
+    const fresh = await control.submit(create(SubmitRequestSchema, {
+      operation: managedSpawnOperation({
+        commandId: freshCommandId,
+        projectContextRef,
+      }),
+    }));
+    assert.equal(fresh.outcome, SubmissionOutcome.ACCEPTED);
+    await waitForSpawnPromotion(control, freshCommandId, 45_000);
+    const freshSession = await waitForManagedSession(
+      control,
+      managedDeploymentScope,
+      1n,
+    );
+    assert.equal(freshSession.state?.connectivity, SessionConnectivityState.LIVE);
+    assert.equal(freshSession.state?.activity, SessionActivityState.IDLE);
+
+    const materializeCommandId = "real-pi-materialize";
+    await control.submit(create(SubmitRequestSchema, {
+      operation: managedRuntimeOperation({
+        commandId: materializeCommandId,
+        kind: OperationKind.INSTRUCT,
+        deploymentScope: managedDeploymentScope,
+        runtimeSessionId: freshSession.runtimeSessionId!.value,
+        generation: 1n,
+        payload: create(PayloadEnvelopeSchema, {
+          contentType: PayloadContentType.TEXT_UTF8,
+          payload: new TextEncoder().encode("/patchbay-test-materialize"),
+        }),
+      }),
+    }));
+    await waitForCommandState(control, materializeCommandId, OperationState.COMPLETED, 30_000);
+    let materializedPath = "";
+    await waitFor(() => {
+      materializedPath = findSessionJsonl(sessionDirectory) ?? "";
+      return materializedPath.length > 0
+        && readFileSync(materializedPath, "utf8").includes("offline fixture response");
+    }, "the real Pi child to materialize its offline assistant fixture", 15_000);
+
+    const prior = create(RuntimeGenerationRefSchema, {
+      logicalTargetId: create(LogicalTargetIdSchema, { value: freshCommandId }),
+      externalRuntime: create(ExternalRuntimeRefSchema, {
+        adapterId: create(AdapterIdSchema, { value: adapterId }),
+        deploymentScope: managedDeploymentScope,
+        runtimeSessionId: freshSession.runtimeSessionId,
+        generation: create(GenerationSchema, { value: 1n }),
+      }),
+    });
+    const continuation = await control.submit(create(SubmitRequestSchema, {
+      operation: managedSpawnOperation({
+        commandId: continuationCommandId,
+        projectContextRef,
+        prior,
+      }),
+    }));
+    assert.equal(continuation.outcome, SubmissionOutcome.ACCEPTED);
+    await waitForSpawnPromotion(control, continuationCommandId, 60_000);
+    const resumed = await waitForManagedSession(
+      control,
+      managedDeploymentScope,
+      2n,
+    );
+    assert.equal(resumed.runtimeSessionId?.value, freshSession.runtimeSessionId?.value);
+    assert.equal(resumed.state?.connectivity, SessionConnectivityState.LIVE);
+    assert.equal(resumed.state?.activity, SessionActivityState.IDLE);
+
+    const afterContinuation = await readAfter(control, 0n);
+    const continuationPromotion = afterContinuation
+      .filter((payload) => payload.kind === StoredEventKind.SPAWN_PROMOTION_COMMITTED)
+      .map((payload) => fromBinary(SpawnPromotionCommittedSchema, payload.payload))
+      .find((promotion) =>
+        promotion.acceptedClaim?.claim?.claimOperationId?.value === continuationCommandId
+      );
+    assert.ok(continuationPromotion, "continuation has one authority-bearing promotion");
+    assert.equal(
+      continuationPromotion.stagedSuccessor?.staged?.continuationContextStatus,
+      ContinuationContextStatus.RESUMED,
+    );
+    assert.equal(
+      afterContinuation.filter((payload) => payload.kind === StoredEventKind.SPAWN_PROMOTION_COMMITTED)
+        .filter((payload) =>
+          fromBinary(SpawnPromotionCommittedSchema, payload.payload)
+            .acceptedClaim?.claim?.claimOperationId?.value === continuationCommandId
+        ).length,
+      1,
+    );
+    const promotions = afterContinuation
+      .filter((payload) => payload.kind === StoredEventKind.SPAWN_PROMOTION_COMMITTED)
+      .map((payload) => fromBinary(SpawnPromotionCommittedSchema, payload.payload));
+    for (const commandId of [freshCommandId, continuationCommandId]) {
+      const promotion = promotions.find((candidate) =>
+        candidate.acceptedClaim?.claim?.claimOperationId?.value === commandId
+      );
+      assert.equal(
+        promotion?.stagedSuccessor?.staged?.exactClaim?.claimOperationId?.value,
+        commandId,
+      );
+      assert.ok(
+        (promotion?.stagedSuccessor?.eventId?.lsn?.value ?? 0n)
+          < (promotion?.promotionEventId?.lsn?.value ?? 0n),
+        `${commandId} remains staged and non-current before its atomic promotion`,
+      );
+    }
+
+    const reloadCommandId = "real-pi-live-reload";
+    await control.submit(create(SubmitRequestSchema, {
+      operation: managedRuntimeOperation({
+        commandId: reloadCommandId,
+        kind: OperationKind.RECONFIGURE,
+        deploymentScope: managedDeploymentScope,
+        runtimeSessionId: resumed.runtimeSessionId!.value,
+        generation: 2n,
+        payload: create(PayloadEnvelopeSchema, {
+          contentType: PayloadContentType.PROTOBUF,
+          schemaRef: "patchbay.PiReconfigureRequest",
+          payload: toBinary(PiReconfigureRequestSchema, create(PiReconfigureRequestSchema, {
+            reloadResources: [PiReloadableResourceKind.EXTENSION_ENTRYPOINT],
+          })),
+        }),
+      }),
+    }));
+    await waitForCommandState(control, reloadCommandId, OperationState.COMPLETED, 30_000);
+    const persistedAfterReload = readFileSync(materializedPath, "utf8");
+    assert.ok(persistedAfterReload.includes("patchbay.control.reload-request.v1"));
+    assert.ok(persistedAfterReload.includes("patchbay.control.reload-completion.v1"));
+
+    const streamInterrupter = new PatchbayCoreClient({
+      coreAddress: baseUrl,
+      adapterId,
+      authorityDomainId: domainId,
+      attachmentEvidence: adapterEvidence,
+    });
+    await streamInterrupter.attach(1);
+    interrupterController = new AbortController();
+    interruptedStream = (async () => {
+      for await (const _delivery of streamInterrupter.receiveDeliveries(
+        0n,
+        interrupterController!.signal,
+      )) {
+        // Holding the replacement stream forces the production adapter to
+        // reattach and replay from its durable core cursor after this aborts.
+      }
+    })();
+    const reconnectCommandId = "real-pi-reconnect-query";
+    await control.submit(create(SubmitRequestSchema, {
+      operation: managedRuntimeOperation({
+        commandId: reconnectCommandId,
+        kind: OperationKind.QUERY,
+        deploymentScope: managedDeploymentScope,
+        runtimeSessionId: resumed.runtimeSessionId!.value,
+        generation: 2n,
+        payload: create(PayloadEnvelopeSchema, {
+          contentType: PayloadContentType.TEXT_UTF8,
+          payload: new TextEncoder().encode(JSON.stringify({ action: "state" })),
+        }),
+      }),
+    }));
+    interrupterController.abort();
+    await interruptedStream.catch((error: unknown) => {
+      assert.ok(error instanceof ConnectError && error.code === Code.Canceled);
+    });
+    interruptedStream = undefined;
+    interrupterController = undefined;
+    await waitForCommandState(control, reconnectCommandId, OperationState.COMPLETED, 30_000);
+    assert.deepEqual(
+      commandStates(await readAfter(control, 0n), reconnectCommandId),
+      [OperationState.DELIVERED, OperationState.RUNNING, OperationState.COMPLETED],
+      "reconnect converges without duplicate execution or lifecycle transitions",
+    );
+
+    const journalFiles = readdirSync(journalDirectory).filter((name) => name.endsWith(".json"));
+    assert.equal(journalFiles.length, 2, "fresh and continuation own exactly one journal each");
+    for (const journalFile of journalFiles) {
+      const journal = JSON.parse(readFileSync(join(journalDirectory, journalFile), "utf8")) as {
+        claim?: { claimOperationId?: string };
+        phases?: readonly { phase?: number }[];
+        promotionObserved?: boolean;
+        publicationCommitted?: boolean;
+        stagedPublication?: {
+          continuationContextStatus?: number;
+          entries?: readonly { mode?: string; restartStable?: boolean }[];
+        };
+      };
+      assert.equal(journal.promotionObserved, true, journalFile);
+      assert.equal(journal.publicationCommitted, true, journalFile);
+      assert.ok((journal.phases?.length ?? 0) >= 4, journalFile);
+      const stagedProjection = journal.stagedPublication?.entries?.[0];
+      if (journal.claim?.claimOperationId === freshCommandId) {
+        assert.equal(stagedProjection?.mode, "volatile-snapshot");
+        assert.equal(stagedProjection?.restartStable, false);
+      } else if (journal.claim?.claimOperationId === continuationCommandId) {
+        assert.equal(
+          journal.stagedPublication?.continuationContextStatus,
+          ContinuationContextStatus.RESUMED,
+        );
+        assert.equal(stagedProjection?.restartStable, true);
+      } else {
+        assert.fail(`unexpected managed spawn journal ${journalFile}`);
+      }
+    }
+    assert.ok(readdirSync(cursorDirectory).length > 0, "cursor state is durable after core acknowledgement");
+  } finally {
+    interrupterController?.abort();
+    await interruptedStream?.catch(() => undefined);
+    adapterController?.abort();
+    if (adapter) await adapter.dispose().catch(() => undefined);
+    await adapterRun?.catch(() => undefined);
+    core.kill("SIGTERM");
+    await waitForExit(core);
+    rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 10 });
+  }
+});
+
 function createSessionFixture(generation: number, seedSnapshot = false) {
   const provider = `patchbay-e2e-${generation}`;
   const faux = createFauxCore({ provider, api: provider, tokensPerSecond: 0 });
@@ -726,6 +1087,90 @@ function payloadEnvelope(kind: OperationKind, payload: string) {
     payload: toBinary(SpawnRequestSchema, request),
     contentType: PayloadContentType.PROTOBUF,
     schemaRef: "patchbay.SpawnRequest",
+  });
+}
+
+function managedSpawnOperation(options: {
+  readonly commandId: string;
+  readonly projectContextRef: string;
+  readonly prior?: RuntimeGenerationRef;
+}) {
+  const piTarget = create(PiSpawnTargetSpecSchema, {
+    projectContextRef: options.projectContextRef,
+    continuationMode: options.prior
+      ? PiContinuationMode.REQUIRE_RESUME
+      : PiContinuationMode.UNSPECIFIED,
+  });
+  const request = create(SpawnRequestSchema, {
+    intent: options.prior
+      ? {
+          case: "continuation",
+          value: create(SpawnContinuationSchema, { prior: options.prior }),
+        }
+      : { case: "fresh", value: create(FreshSpawnSchema, {}) },
+    targetSpec: create(SpawnTargetSpecSchema, {
+      shape: PI_RPC_TARGET_SHAPE,
+      adapterPayload: create(PayloadEnvelopeSchema, {
+        contentType: PayloadContentType.PROTOBUF,
+        schemaRef: PI_SPAWN_TARGET_SCHEMA_REF,
+        payload: toBinary(PiSpawnTargetSpecSchema, piTarget),
+      }),
+    }),
+  });
+  return create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: options.commandId }),
+    authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+    sender: create(ActorEndpointRefSchema, {
+      actorId: create(ActorIdSchema, { value: operatorId }),
+    }),
+    kind: OperationKind.SPAWN,
+    targetScope: create(TargetScopeSchema, {
+      kind: TargetScopeKind.ADAPTER,
+      adapterId: create(AdapterIdSchema, { value: adapterId }),
+    }),
+    validityWindow: create(TimeWindowSchema, {
+      startsAt: { seconds: 1n },
+      expiresAt: { seconds: 2_534_023_007_99n },
+    }),
+    submittedAt: { seconds: 1n },
+    idempotencyKey: `${options.commandId}-key`,
+    payload: create(PayloadEnvelopeSchema, {
+      contentType: PayloadContentType.PROTOBUF,
+      schemaRef: "patchbay.SpawnRequest",
+      payload: toBinary(SpawnRequestSchema, request),
+    }),
+  });
+}
+
+function managedRuntimeOperation(options: {
+  readonly commandId: string;
+  readonly kind: OperationKind;
+  readonly deploymentScope: string;
+  readonly runtimeSessionId: string;
+  readonly generation: bigint;
+  readonly payload: PayloadEnvelope;
+}) {
+  return create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: options.commandId }),
+    authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+    sender: create(ActorEndpointRefSchema, {
+      actorId: create(ActorIdSchema, { value: operatorId }),
+    }),
+    kind: options.kind,
+    targetScope: create(TargetScopeSchema, {
+      kind: TargetScopeKind.RUNTIME_SESSION,
+      adapterId: create(AdapterIdSchema, { value: adapterId }),
+      deploymentScope: options.deploymentScope,
+      runtimeSessionId: create(RuntimeSessionIdSchema, { value: options.runtimeSessionId }),
+      sessionGeneration: create(GenerationSchema, { value: options.generation }),
+    }),
+    validityWindow: create(TimeWindowSchema, {
+      startsAt: { seconds: 1n },
+      expiresAt: { seconds: 2_534_023_007_99n },
+    }),
+    submittedAt: { seconds: 1n },
+    idempotencyKey: `${options.commandId}-key`,
+    payload: options.payload,
   });
 }
 
@@ -933,11 +1378,96 @@ async function waitForCommandState(
   control: ReturnType<typeof makeControlClient>,
   commandId: string,
   expected: OperationState,
+  timeoutMs = 10_000,
 ): Promise<void> {
+  await waitForStoredEvent(
+    control,
+    (payload) => {
+      if (payload.kind !== StoredEventKind.COMMAND_TRANSITION) return false;
+      const transition = fromBinary(CommandTransitionSchema, payload.payload);
+      return transition.commandId?.value === commandId && transition.toState === expected;
+    },
+    `${commandId} to reach ${OperationState[expected] ?? expected}`,
+    timeoutMs,
+  );
+}
+
+async function waitForSpawnPromotion(
+  control: ReturnType<typeof makeControlClient>,
+  commandId: string,
+  timeoutMs: number,
+): Promise<void> {
+  await waitForStoredEvent(
+    control,
+    (payload) => payload.kind === StoredEventKind.SPAWN_PROMOTION_COMMITTED
+      && fromBinary(SpawnPromotionCommittedSchema, payload.payload)
+        .acceptedClaim?.claim?.claimOperationId?.value === commandId,
+    `${commandId} to reach atomic spawn promotion`,
+    timeoutMs,
+  );
+}
+
+async function waitForStoredEvent(
+  control: ReturnType<typeof makeControlClient>,
+  predicate: (payload: StoredEventPayload) => boolean,
+  message: string,
+  timeoutMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.max(1, deadline - Date.now()));
+    try {
+      for await (const event of control.subscribe(
+        create(SubscribeRequestSchema, {
+          authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+          cursor: create(LsnSchema, { value: 0n }),
+        }),
+        { signal: controller.signal },
+      )) {
+        if (event.payload && predicate(event.payload)) return;
+      }
+    } catch (error) {
+      if (!(error instanceof ConnectError && error.code === Code.Canceled && controller.signal.aborted)) {
+        throw error;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+  }
+  throw new Error(`timed out waiting for ${message}`);
+}
+
+async function waitForManagedSession(
+  control: ReturnType<typeof makeControlClient>,
+  expectedDeploymentScope: string,
+  expectedGeneration: bigint,
+): Promise<Session> {
+  let matched: Session | undefined;
   await waitFor(async () => {
-    const states = commandStates(await readAfter(control, 0n), commandId);
-    return states.at(-1) === expected;
-  }, `${commandId} to reach ${OperationState[expected] ?? expected}`);
+    const loaded = await control.loadSnapshot(create(LoadSnapshotRequestSchema, {
+      authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
+      viewKind: SnapshotViewKind.SESSION,
+    }));
+    if (!loaded.present) return false;
+    const snapshot = fromBinary(SessionSnapshotSchema, loaded.snapshotPayload);
+    matched = snapshot.sessions.find((session) =>
+      session.deploymentScope === expectedDeploymentScope
+      && session.sessionGeneration?.value === expectedGeneration
+      && !session.tombstoned
+      && session.state?.connectivity === SessionConnectivityState.LIVE
+    );
+    return matched !== undefined;
+  }, `managed generation ${expectedGeneration} to become current`, 30_000);
+  return matched!;
+}
+
+function findSessionJsonl(root: string): string | undefined {
+  for (const relative of readdirSync(root, { recursive: true, encoding: "utf8" })) {
+    if (relative.endsWith(".jsonl")) return join(root, relative);
+  }
+  return undefined;
 }
 
 async function waitForCommandFailure(
@@ -1123,7 +1653,7 @@ async function freePort(): Promise<number> {
 }
 
 async function waitForExit(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return;
+  if (child.exitCode !== null || child.signalCode !== null) return;
   await new Promise<void>((resolveExit) => child.once("exit", () => resolveExit()));
 }
 

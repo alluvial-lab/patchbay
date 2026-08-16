@@ -28,6 +28,7 @@ export type LifecycleObserver = (
 export type PersistedEntryObserver = (entry: RuntimeSessionEntry) => void;
 
 interface OwnedRuntimeSessionEntry extends RuntimeSessionEntry {
+  readonly promotionClaimOperationId?: string;
   readonly unsubscribeTranscript: () => void;
   readonly unsubscribeModelChange: () => void;
   readonly unsubscribeLifecycle: () => void;
@@ -44,7 +45,7 @@ interface CandidateEntry {
   readonly observePersistedEntry: PersistedEntryObserver;
 }
 
-/** Current/candidate registry with attachment-token fencing around every callback. */
+/** Current/candidate registry with attachment-token and replacement fencing around every callback. */
 export class SessionRegistry {
   readonly #entries = new Map<string, OwnedRuntimeSessionEntry>();
   readonly #byLogicalTarget = new Map<string, OwnedRuntimeSessionEntry>();
@@ -159,6 +160,7 @@ export class SessionRegistry {
       candidate.observeModelChange,
       candidate.observeLifecycle,
       candidate.observePersistedEntry,
+      claimOperationId,
     );
     this.#candidates.delete(claimOperationId);
     this.#installCurrent(promoted);
@@ -222,6 +224,7 @@ export class SessionRegistry {
     observeModelChange: ModelChangeObserver,
     observeLifecycle: LifecycleObserver,
     observePersistedEntry: PersistedEntryObserver,
+    promotionClaimOperationId?: string,
   ): OwnedRuntimeSessionEntry {
     if (!config.runtimeSessionId || session.runtimeSessionId !== config.runtimeSessionId) {
       throw new Error("registry key does not match Pi runtime identity");
@@ -231,6 +234,7 @@ export class SessionRegistry {
       ...config,
       session,
       attachmentToken,
+      ...(promotionClaimOperationId ? { promotionClaimOperationId } : {}),
       active: true,
       unsubscribeTranscript: () => undefined,
       unsubscribeModelChange: () => undefined,
@@ -281,8 +285,15 @@ export class SessionRegistry {
   }
 
   #callbackIsCurrent(entry: OwnedRuntimeSessionEntry, token: symbol): boolean {
-    return entry.active && entry.attachmentToken === token &&
-      this.#entries.get(entry.runtimeSessionId) === entry;
+    const gate = entry.logicalTargetId ? this.#gates.get(entry.logicalTargetId) : undefined;
+    const activeReplacementClaim = gate?.fencedClaimOperationId;
+    const promotionOwnsFence = activeReplacementClaim !== undefined
+      && activeReplacementClaim === entry.promotionClaimOperationId;
+    return (!activeReplacementClaim || promotionOwnsFence)
+      && !gate?.observationsFenced
+      && entry.active
+      && entry.attachmentToken === token
+      && this.#entries.get(entry.runtimeSessionId) === entry;
   }
 }
 

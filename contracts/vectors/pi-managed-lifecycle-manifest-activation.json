@@ -1,0 +1,43 @@
+{
+  "vector_id": "pi-managed-lifecycle-manifest-activation",
+  "property_id": "AdapterCapabilityAssuranceHonesty",
+  "promotion_status": "draft",
+  "implementation_checks": [
+    { "runner": "pi-adapter", "case": "pi_managed_lifecycle_manifest_activation" }
+  ],
+  "proto_fields_constrained": [
+    "patchbay.AdapterCapability.supported_operation_kinds",
+    "patchbay.AdapterCapability.supported_target_spec_shapes",
+    "patchbay.AdapterCapability.session_replacement_support",
+    "patchbay.AdapterCapability.adapter_profile",
+    "patchbay.AdapterAssuranceManifestV1.continuation_proof_support",
+    "patchbay.AdapterAssuranceManifestV1.cursor_support",
+    "patchbay.AdapterAssuranceManifestV1.generation_fence_support",
+    "patchbay.AdapterAssuranceManifestV1.reconciliation_strength",
+    "patchbay.AdapterAssuranceManifestV1.unproven_outcome_action"
+  ],
+  "description": "The Pi adapter activates managed spawn, continuation, replacement, cursor, and reload declarations only when the configured build carries every mechanism oracle and the exact lifecycle conformance version; deleting any evidence fails closed instead of emitting a partial or optimistic manifest.",
+  "input": {
+    "conformance_version": "pi-managed-lifecycle.v1",
+    "required_mechanisms": [
+      "supervisor",
+      "controlHandshake",
+      "strictSessionTreeValidation",
+      "authoritativeCursorReplacement",
+      "idleMaterializedReload"
+    ]
+  },
+  "expected_outcome": {
+    "spawn_supported": true,
+    "target_spec_shapes": ["pi-rpc"],
+    "session_replacement_supported": true,
+    "continuation_proof_supported": true,
+    "cursor_supported": true,
+    "generation_fence_supported": true,
+    "reconciliation_strength": "ADAPTER_RECONCILIATION_STRENGTH_AUTHORITATIVE",
+    "unproven_outcome_action": "RECONCILIATION_ACTION_MANUAL_REQUIRED",
+    "missing_mechanism_rejected": true,
+    "wrong_conformance_version_rejected": true
+  },
+  "invariant_check": "AdapterCapabilityAssuranceHonesty: the production Pi manifest is emitted only from the exact complete build-bound evidence set and declares the generated V1 assurance/profile values exercised by the integrated lifecycle; each missing mechanism and wrong version must reject activation."
+}

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { ContinuationContextStatus } from "@patchbay/contracts";
 
 import {
   AuthoritativeCursorReplacement,
@@ -14,6 +15,7 @@ import {
   type ExternalCursorValueContract,
   type ProjectionReplacement,
 } from "../src/reconciliation/external_cursor.js";
+import { continuationContextStatusName } from "../src/spawn.js";
 
 const RUNNER = "operator-domain" as const;
 
@@ -176,13 +178,42 @@ async function externalCursorAuthoritativeReplacement(vector: Vector): Promise<v
   assert.equal(expected.cursor_visible_before_exact_projection, false);
 }
 
+function continuationContextStatusPresentation(vector: Vector): void {
+  const input = object(vector.input, "input");
+  const expected = object(vector.expected_outcome, "expected outcome");
+  const statuses = textList(input.adapter_context_statuses, "adapter context statuses");
+  const values = statuses.map((status) => {
+    switch (status) {
+      case "CONTINUATION_CONTEXT_STATUS_RESUMED": return ContinuationContextStatus.RESUMED;
+      case "CONTINUATION_CONTEXT_STATUS_NEW_CONTEXT": return ContinuationContextStatus.NEW_CONTEXT;
+      case "CONTINUATION_CONTEXT_STATUS_UNKNOWN": return ContinuationContextStatus.UNKNOWN;
+      default: throw new Error(`unknown continuation-context status ${status}`);
+    }
+  });
+  assert.deepEqual(
+    values.map(continuationContextStatusName),
+    textList(expected.presentation_statuses, "presentation statuses"),
+  );
+  assert.throws(
+    () => continuationContextStatusName(ContinuationContextStatus.UNSPECIFIED),
+    /unspecified/,
+    "the shared presentation boundary fails closed on sentinel status",
+  );
+}
+
 async function execute(vector: Vector, caseName: string): Promise<void> {
   assert.ok(vector.property_id);
   assert.ok(vector.promotion_status === "draft" || vector.promotion_status === "promoted");
-  if (caseName !== "external_cursor_authoritative_replacement") {
-    throw new Error(`unhandled ${RUNNER} conformance case ${vector.vector_id}:${caseName}`);
+  switch (caseName) {
+    case "external_cursor_authoritative_replacement":
+      await externalCursorAuthoritativeReplacement(vector);
+      return;
+    case "continuation_context_status_presentation":
+      continuationContextStatusPresentation(vector);
+      return;
+    default:
+      throw new Error(`unhandled ${RUNNER} conformance case ${vector.vector_id}:${caseName}`);
   }
-  await externalCursorAuthoritativeReplacement(vector);
 }
 
 test("conformance vector runner", async () => {

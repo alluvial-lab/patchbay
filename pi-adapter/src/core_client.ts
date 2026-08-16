@@ -91,11 +91,18 @@ import {
 } from "./adapter_diagnostics.js";
 import type { TranscriptEvent } from "./transcript_event.js";
 import { PI_FORWARDED_DIAGNOSTIC_CODES } from "./core_diagnostics_forwarder.js";
+import {
+  PI_PROJECTION_REPLACEMENT_SCHEMA_REF,
+  PI_PROJECTION_SUFFIX_SCHEMA_REF,
+  PI_VOLATILE_PROJECTION_SCHEMA_REF,
+} from "./pi_projection.js";
 import type { SessionReportOrder } from "./session_report_sequencer.js";
 
 const encoder = new TextEncoder();
 const attachmentTokenHeader = "x-patchbay-adapter-attachment-token";
 export const PI_RUNTIME_PROFILE_SCHEMA_REF = "patchbay.PiRuntimeProfile.v1";
+export const PI_RPC_TARGET_SHAPE = "pi-rpc";
+export const PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION = "pi-managed-lifecycle.v1";
 
 type AdapterClient = Client<typeof AdapterControlService>;
 
@@ -343,7 +350,7 @@ export class PatchbayCoreClient {
       || !external.deploymentScope
       || !runtimeSessionId
       || !generation
-      || !/^patchbay\.PiPersistedProjection(?:Suffix|Replacement)\.v1$/u.test(schemaRef)
+      || !isPiProjectionSchemaRef(schemaRef)
       || payload.byteLength === 0
     ) {
       throw new Error("Pi projection Observation identity or envelope is invalid");
@@ -619,9 +626,26 @@ export interface PiCapabilityEvidence {
   readonly conformanceVersion?: string;
 }
 
-export function piCapabilityManifest(): AdapterCapability {
+/**
+ * Build-bound activation evidence. Each boolean is backed by a mutation-sensitive
+ * implementation oracle; the version changes whenever that complete gate changes.
+ */
+export const PI_CAPABILITY_EVIDENCE: Readonly<PiCapabilityEvidence> = Object.freeze({
+  supervisor: true,
+  controlHandshake: true,
+  strictSessionTreeValidation: true,
+  authoritativeCursorReplacement: true,
+  idleMaterializedReload: true,
+  conformanceVersion: PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION,
+});
+
+export function piCapabilityManifest(
+  evidence: PiCapabilityEvidence = PI_CAPABILITY_EVIDENCE,
+): AdapterCapability {
+  requireCompletePiCapabilityEvidence(evidence);
   return create(AdapterCapabilitySchema, {
     supportedOperationKinds: [
+      OperationKind.SPAWN,
       OperationKind.ATTACH,
       OperationKind.INSTRUCT,
       OperationKind.CANCEL,
@@ -630,23 +654,22 @@ export function piCapabilityManifest(): AdapterCapability {
       OperationKind.RECONFIGURE,
       OperationKind.SESSION_MANAGEMENT,
     ],
-    supportedTargetSpecShapes: [],
+    supportedTargetSpecShapes: [PI_RPC_TARGET_SHAPE],
     streamingSupport: true,
     sessionSnapshotSupport: AdapterSnapshotSupport.PARTIAL,
     cancellationSupport: true,
-    // The lifecycle-conformance checkpoint owns activation of managed spawn,
-    // continuation, replacement, cursor, and reload claims. A generated
-    // profile alone is not activation evidence.
-    sessionReplacementSupport: false,
+    sessionReplacementSupport: true,
     assurance: create(AdapterAssuranceManifestSchema, {
       contract: {
         case: "v1",
         value: create(AdapterAssuranceManifestV1Schema, {
+          // The integrated gate proves managed lifecycle fencing and exact
+          // reconciliation, not adapter-wide exactly-once external execution.
           deduplicationStrength: IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
-          continuationProofSupport: false,
-          cursorSupport: false,
-          generationFenceSupport: false,
-          reconciliationStrength: AdapterReconciliationStrength.NONE,
+          continuationProofSupport: true,
+          cursorSupport: true,
+          generationFenceSupport: true,
+          reconciliationStrength: AdapterReconciliationStrength.AUTHORITATIVE,
           unprovenOutcomeAction: ReconciliationAction.MANUAL_REQUIRED,
         }),
       },
@@ -674,10 +697,29 @@ export function piCapabilityManifest(): AdapterCapability {
   });
 }
 
+export function isPiProjectionSchemaRef(value: string): boolean {
+  return value === PI_PROJECTION_SUFFIX_SCHEMA_REF
+    || value === PI_PROJECTION_REPLACEMENT_SCHEMA_REF
+    || value === PI_VOLATILE_PROJECTION_SCHEMA_REF;
+}
+
 function requiredPiCapabilityManifest(): AdapterCapability {
-  const manifest = piCapabilityManifest();
+  const manifest = piCapabilityManifest(PI_CAPABILITY_EVIDENCE);
   decodePiRuntimeProfile(manifest);
   return manifest;
+}
+
+function requireCompletePiCapabilityEvidence(evidence: PiCapabilityEvidence): void {
+  if (
+    evidence.conformanceVersion !== PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION
+    || !evidence.supervisor
+    || !evidence.controlHandshake
+    || !evidence.strictSessionTreeValidation
+    || !evidence.authoritativeCursorReplacement
+    || !evidence.idleMaterializedReload
+  ) {
+    throw new Error("Pi managed capability activation lacks complete conformance evidence");
+  }
 }
 
 export function decodePiRuntimeProfile(manifest: AdapterCapability): PiRuntimeProfile {
