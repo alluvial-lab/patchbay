@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-lifecycle-conformance
 kind: story
-stage: review
+stage: done
 tags: [adapter, verification]
 parent: research-handoff-pi-adapter-capability
 depends_on: [research-handoff-pi-adapter-capability-manifest-profile, research-handoff-pi-adapter-capability-control-session-integrity, research-handoff-pi-adapter-capability-rpc-process-supervisor, research-handoff-pi-adapter-capability-cursor-replay-resync, research-handoff-pi-adapter-capability-resource-reload-rehydration, research-handoff-spawn-runtime-evidence-promotion-contract, research-handoff-spawn-stale-event-fencing, research-handoff-spawn-completion-promotion-driver, research-handoff-spawn-reconnect-cursor-reconcile]

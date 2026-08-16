@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability
 kind: feature
-stage: implementing
+stage: review
 tags: [adapter, v1]
 parent: epic-public-product-contract
 depends_on: [research-handoff-spawn, capability-manifest-durability-and-reconciliation-depth]
