@@ -10,21 +10,26 @@ import {
   InMemoryCredentialStore,
   InMemoryModelsStore,
 } from "@earendil-works/pi-ai";
-import type { AgentSessionRuntimeFixtureServices } from "../src/pi_session.js";
+import {
+  registerOfflineFixtureModelRuntime,
+  type AgentSessionRuntimeFixtureServices,
+  type OfflineFixtureModelRuntime,
+} from "../src/pi_session.js";
 
-export async function createOfflineModelRuntime(): Promise<ModelRuntime> {
-  return ModelRuntime.create({
+export async function createOfflineModelRuntime(): Promise<OfflineFixtureModelRuntime> {
+  const runtime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
     modelsStore: new InMemoryModelsStore(),
     modelsPath: null,
     refreshOnCreate: false,
     allowModelNetwork: false,
   });
+  return registerOfflineFixtureModelRuntime(runtime);
 }
 
 export async function createOfflineFixtureServices(
   cwd: string,
-  modelRuntime: ModelRuntime,
+  modelRuntime: OfflineFixtureModelRuntime,
   sessionManager = SessionManager.inMemory(cwd),
 ): Promise<AgentSessionRuntimeFixtureServices> {
   const settingsManager = SettingsManager.inMemory({

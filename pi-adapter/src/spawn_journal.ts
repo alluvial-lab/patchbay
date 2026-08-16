@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { mkdir, open, readFile, rename, stat } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
+  ContinuationContextStatus,
   ExternalEffectDisposition,
   SpawnExecutionPhase,
   type RuntimeGenerationRef,
@@ -10,7 +11,7 @@ import {
 } from "@patchbay/contracts";
 
 const JOURNAL_VERSION = 1;
-const MAX_JOURNAL_BYTES = 256 * 1_024;
+const MAX_JOURNAL_BYTES = 2 * 1_048_576;
 const PHASE_ORDER = new Map<SpawnExecutionPhase, number>([
   [SpawnExecutionPhase.OFFERED, 1],
   [SpawnExecutionPhase.QUIESCING_PRIOR, 2],
@@ -60,6 +61,16 @@ export interface PiExternalIdentityRecord {
   readonly recordedAt: string;
 }
 
+export interface PiStagedPublicationRecord {
+  readonly claimOperationId: string;
+  readonly runtime: RuntimeGenerationRef;
+  readonly readinessDigest: string;
+  readonly entryCount: number;
+  readonly continuationContextStatus: ContinuationContextStatus;
+  readonly entries: readonly unknown[];
+  readonly leafId: string | null;
+}
+
 interface StoredPhase {
   readonly phase: SpawnExecutionPhase;
   readonly externalEffectDisposition: ExternalEffectDisposition;
@@ -73,6 +84,15 @@ interface StoredExternalIdentity {
   readonly recordedAt: string;
 }
 
+interface StoredStagedPublication {
+  readonly runtime: JournalRuntime;
+  readonly readinessDigest: string;
+  readonly entryCount: number;
+  readonly continuationContextStatus: ContinuationContextStatus;
+  readonly entries: readonly unknown[];
+  readonly leafId: string | null;
+}
+
 interface StoredJournalState {
   readonly version: typeof JOURNAL_VERSION;
   readonly claim: JournalClaim;
@@ -81,8 +101,10 @@ interface StoredJournalState {
   readonly createdAt: string;
   readonly phases: readonly StoredPhase[];
   readonly externalIdentity?: StoredExternalIdentity;
+  readonly stagedPublication?: StoredStagedPublication;
   readonly poisoned: boolean;
-  readonly promoted: boolean;
+  readonly promotionObserved: boolean;
+  readonly publicationCommitted: boolean;
 }
 
 export interface PiSpawnJournalState {
@@ -91,7 +113,11 @@ export interface PiSpawnJournalState {
   readonly targetFingerprint: string;
   readonly phases: readonly StoredPhase[];
   readonly externalIdentity?: PiExternalIdentityRecord;
+  readonly stagedPublication?: PiStagedPublicationRecord;
   readonly poisoned: boolean;
+  readonly promotionObserved: boolean;
+  readonly publicationCommitted: boolean;
+  /** Compatibility projection: true only after local publication/cursor commit. */
   readonly promoted: boolean;
 }
 
@@ -99,8 +125,11 @@ export interface SpawnEffectJournal {
   beginClaim(record: PiSpawnClaimJournalRecord): Promise<void>;
   recordPhase(record: PiSpawnPhaseRecord): Promise<void>;
   recordExternalIdentity(record: PiExternalIdentityRecord): Promise<void>;
+  recordStagedPublication(record: PiStagedPublicationRecord): Promise<void>;
   reconcile(claimOperationId: string): Promise<PiSpawnJournalState | undefined>;
-  markPromoted(claimOperationId: string): Promise<void>;
+  reconcileAll(): Promise<readonly PiSpawnJournalState[]>;
+  markPromotionObserved(claimOperationId: string, runtime: RuntimeGenerationRef): Promise<void>;
+  markPublicationCommitted(claimOperationId: string): Promise<void>;
 }
 
 /** 0600 atomic evidence journal. It never chooses or increments a generation. */
@@ -130,7 +159,8 @@ export class FileSpawnEffectJournal implements SpawnEffectJournal {
         createdAt: record.createdAt,
         phases: Object.freeze([]),
         poisoned: false,
-        promoted: false,
+        promotionObserved: false,
+        publicationCommitted: false,
       });
       if (existing) {
         if (JSON.stringify(existing) !== JSON.stringify(next)) {
@@ -151,7 +181,7 @@ export class FileSpawnEffectJournal implements SpawnEffectJournal {
         throw new Error("spawn journal external-effect disposition is unspecified");
       }
       const state = await this.#requiredStored(record.claimOperationId);
-      if (state.promoted) throw new Error("spawn journal is already promoted");
+      if (state.publicationCommitted) throw new Error("spawn journal is already promoted");
       const previous = state.phases.at(-1);
       const previousOrder = previous ? PHASE_ORDER.get(previous.phase) : undefined;
       if (previousOrder !== undefined && order < previousOrder) {
@@ -214,39 +244,112 @@ export class FileSpawnEffectJournal implements SpawnEffectJournal {
     });
   }
 
-  async reconcile(claimOperationId: string): Promise<PiSpawnJournalState | undefined> {
-    return this.#serialized(async () => {
-      const state = await this.#readStored(claimOperationId);
-      if (!state) return undefined;
-      const exactClaim = journalToClaim(state.claim);
-      return Object.freeze({
-        exactClaim,
-        launchNonce: state.launchNonce,
-        targetFingerprint: state.targetFingerprint,
-        phases: state.phases,
-        ...(state.externalIdentity
-          ? {
-              externalIdentity: Object.freeze({
-                claimOperationId,
-                runtime: journalToRuntime(state.externalIdentity.runtime),
-                processToken: state.externalIdentity.processToken,
-                pid: state.externalIdentity.pid,
-                recordedAt: state.externalIdentity.recordedAt,
-              }),
-            }
-          : {}),
-        poisoned: state.poisoned,
-        promoted: state.promoted,
+  async recordStagedPublication(record: PiStagedPublicationRecord): Promise<void> {
+    await this.#serialized(async () => {
+      const state = await this.#requiredStored(record.claimOperationId);
+      if (!state.externalIdentity) {
+        throw new Error("cannot stage spawn publication before external identity");
+      }
+      const runtime = runtimeToJournal(record.runtime);
+      requireRuntimeMatchesClaim(runtime, state.claim);
+      if (JSON.stringify(runtime) !== JSON.stringify(state.externalIdentity.runtime)) {
+        throw new Error("staged spawn publication runtime mismatches external identity");
+      }
+      if (!/^[a-f0-9]{64}$/u.test(record.readinessDigest) ||
+          !Number.isSafeInteger(record.entryCount) || record.entryCount < 0 ||
+          record.continuationContextStatus === ContinuationContextStatus.UNSPECIFIED &&
+            state.claim.expectedPrior !== undefined) {
+        throw new Error("staged spawn publication evidence is invalid");
+      }
+      const entries = immutableJsonArray(record.entries);
+      if (entries.length !== record.entryCount ||
+          !(record.leafId === null || isBoundedText(record.leafId, 4_096))) {
+        throw new Error("staged spawn publication payload is invalid");
+      }
+      const stagedPublication: StoredStagedPublication = Object.freeze({
+        runtime,
+        readinessDigest: record.readinessDigest,
+        entryCount: record.entryCount,
+        continuationContextStatus: record.continuationContextStatus,
+        entries,
+        leafId: record.leafId,
       });
+      if (state.stagedPublication) {
+        if (JSON.stringify(state.stagedPublication) !== JSON.stringify(stagedPublication)) {
+          throw new Error("staged spawn publication conflicts with durable evidence");
+        }
+        return;
+      }
+      await this.#writeStored(record.claimOperationId, Object.freeze({
+        ...state,
+        stagedPublication,
+      }));
     });
   }
 
-  async markPromoted(claimOperationId: string): Promise<void> {
+  async reconcile(claimOperationId: string): Promise<PiSpawnJournalState | undefined> {
+    return this.#serialized(async () => {
+      const state = await this.#readStored(claimOperationId);
+      return state ? projectStoredState(state) : undefined;
+    });
+  }
+
+  async reconcileAll(): Promise<readonly PiSpawnJournalState[]> {
+    return this.#serialized(async () => {
+      let names: string[];
+      try {
+        names = await readdir(this.#directory);
+      } catch (error) {
+        const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+        if (code === "ENOENT") return [];
+        throw error;
+      }
+      const states: PiSpawnJournalState[] = [];
+      for (const name of names.sort()) {
+        if (!/^[a-f0-9]{64}\.json$/u.test(name)) continue;
+        const path = join(this.#directory, name);
+        const stored = await readStoredPath(path);
+        const claimOperationId = stored.claim.claimOperationId;
+        const expectedName = `${createHash("sha256").update(claimOperationId).digest("hex")}.json`;
+        if (name !== expectedName) throw new Error("spawn journal filename mismatches exact claim");
+        states.push(projectStoredState(stored));
+      }
+      return Object.freeze(states);
+    });
+  }
+
+  async markPromotionObserved(
+    claimOperationId: string,
+    runtime: RuntimeGenerationRef,
+  ): Promise<void> {
     await this.#serialized(async () => {
       const state = await this.#requiredStored(claimOperationId);
-      if (!state.externalIdentity) throw new Error("cannot promote a spawn journal without identity");
-      if (state.promoted) return;
-      await this.#writeStored(claimOperationId, Object.freeze({ ...state, promoted: true }));
+      if (!state.externalIdentity || !state.stagedPublication) {
+        throw new Error("cannot observe promotion without identity and staged publication");
+      }
+      const promotedRuntime = runtimeToJournal(runtime);
+      if (JSON.stringify(promotedRuntime) !== JSON.stringify(state.externalIdentity.runtime)) {
+        throw new Error("promoted runtime mismatches durable external identity");
+      }
+      if (state.promotionObserved) return;
+      await this.#writeStored(claimOperationId, Object.freeze({
+        ...state,
+        promotionObserved: true,
+      }));
+    });
+  }
+
+  async markPublicationCommitted(claimOperationId: string): Promise<void> {
+    await this.#serialized(async () => {
+      const state = await this.#requiredStored(claimOperationId);
+      if (!state.promotionObserved || !state.stagedPublication) {
+        throw new Error("cannot commit publication before exact promotion");
+      }
+      if (state.publicationCommitted) return;
+      await this.#writeStored(claimOperationId, Object.freeze({
+        ...state,
+        publicationCommitted: true,
+      }));
     });
   }
 
@@ -259,13 +362,7 @@ export class FileSpawnEffectJournal implements SpawnEffectJournal {
   async #readStored(claimOperationId: string): Promise<StoredJournalState | undefined> {
     const path = this.#pathFor(claimOperationId);
     try {
-      const metadata = await stat(path);
-      if (!metadata.isFile() || metadata.size <= 0 || metadata.size > MAX_JOURNAL_BYTES) {
-        throw new Error("spawn journal file is invalid");
-      }
-      if ((metadata.mode & 0o077) !== 0) throw new Error("spawn journal file permissions are unsafe");
-      const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-      return validateStoredState(parsed, claimOperationId);
+      return await readStoredPath(path, claimOperationId);
     } catch (error) {
       const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
       if (code === "ENOENT") return undefined;
@@ -414,7 +511,12 @@ function validateStoredState(value: unknown, claimOperationId: string): StoredJo
     }
     validateTimestamp(phase.recordedAt);
   }
-  if (typeof state.poisoned !== "boolean" || typeof state.promoted !== "boolean") {
+  if (
+    typeof state.poisoned !== "boolean" ||
+    typeof state.promotionObserved !== "boolean" ||
+    typeof state.publicationCommitted !== "boolean" ||
+    state.publicationCommitted && !state.promotionObserved
+  ) {
     throw new Error("spawn journal flags are malformed");
   }
   if (state.externalIdentity) {
@@ -424,7 +526,83 @@ function validateStoredState(value: unknown, claimOperationId: string): StoredJo
     }
     validateTimestamp(state.externalIdentity.recordedAt);
   }
+  if (state.stagedPublication) {
+    requireRuntimeMatchesClaim(state.stagedPublication.runtime, state.claim);
+    if (
+      !state.externalIdentity ||
+      JSON.stringify(state.stagedPublication.runtime) !== JSON.stringify(state.externalIdentity.runtime) ||
+      !/^[a-f0-9]{64}$/u.test(state.stagedPublication.readinessDigest) ||
+      !Number.isSafeInteger(state.stagedPublication.entryCount) ||
+      state.stagedPublication.entryCount < 0 ||
+      !Array.isArray(state.stagedPublication.entries) ||
+      state.stagedPublication.entries.length !== state.stagedPublication.entryCount ||
+      !(state.stagedPublication.leafId === null ||
+        isBoundedText(state.stagedPublication.leafId, 4_096)) ||
+      !Object.values(ContinuationContextStatus).includes(state.stagedPublication.continuationContextStatus)
+    ) {
+      throw new Error("spawn journal staged publication is malformed");
+    }
+  } else if (state.promotionObserved || state.publicationCommitted) {
+    throw new Error("spawn journal promotion has no staged publication");
+  }
   return state;
+}
+
+function projectStoredState(state: StoredJournalState): PiSpawnJournalState {
+  const claimOperationId = state.claim.claimOperationId;
+  return Object.freeze({
+    exactClaim: journalToClaim(state.claim),
+    launchNonce: state.launchNonce,
+    targetFingerprint: state.targetFingerprint,
+    phases: state.phases,
+    ...(state.externalIdentity
+      ? {
+          externalIdentity: Object.freeze({
+            claimOperationId,
+            runtime: journalToRuntime(state.externalIdentity.runtime),
+            processToken: state.externalIdentity.processToken,
+            pid: state.externalIdentity.pid,
+            recordedAt: state.externalIdentity.recordedAt,
+          }),
+        }
+      : {}),
+    ...(state.stagedPublication
+      ? {
+          stagedPublication: Object.freeze({
+            claimOperationId,
+            runtime: journalToRuntime(state.stagedPublication.runtime),
+            readinessDigest: state.stagedPublication.readinessDigest,
+            entryCount: state.stagedPublication.entryCount,
+            continuationContextStatus: state.stagedPublication.continuationContextStatus,
+            entries: state.stagedPublication.entries,
+            leafId: state.stagedPublication.leafId,
+          }),
+        }
+      : {}),
+    poisoned: state.poisoned,
+    promotionObserved: state.promotionObserved,
+    publicationCommitted: state.publicationCommitted,
+    promoted: state.publicationCommitted,
+  });
+}
+
+async function readStoredPath(
+  path: string,
+  claimOperationId?: string,
+): Promise<StoredJournalState> {
+  const metadata = await stat(path);
+  if (!metadata.isFile() || metadata.size <= 0 || metadata.size > MAX_JOURNAL_BYTES) {
+    throw new Error("spawn journal file is invalid");
+  }
+  if ((metadata.mode & 0o077) !== 0) {
+    throw new Error("spawn journal file permissions are unsafe");
+  }
+  const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+  const parsedClaimId = isRecord(parsed) && isRecord(parsed["claim"])
+    ? parsed["claim"]["claimOperationId"]
+    : undefined;
+  if (typeof parsedClaimId !== "string") throw new Error("spawn journal claim id is malformed");
+  return validateStoredState(parsed, claimOperationId ?? parsedClaimId);
 }
 
 function requireRuntimeMatchesClaim(runtime: JournalRuntime, claim: JournalClaim): void {
@@ -442,6 +620,19 @@ function validateTimestamp(value: string): void {
   if (Number.isNaN(parsed.valueOf()) || parsed.toISOString() !== value) {
     throw new Error("spawn journal timestamp is invalid");
   }
+}
+
+function immutableJsonArray(entries: readonly unknown[]): readonly unknown[] {
+  const serialized = JSON.stringify(entries);
+  if (serialized === undefined) throw new Error("staged spawn publication is not JSON");
+  const parsed: unknown = JSON.parse(serialized);
+  if (!Array.isArray(parsed)) throw new Error("staged spawn publication is not an array");
+  return Object.freeze(parsed);
+}
+
+function isBoundedText(value: unknown, maximum: number): value is string {
+  return typeof value === "string" && value.length > 0 &&
+    Buffer.byteLength(value) <= maximum && !value.includes("\0");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

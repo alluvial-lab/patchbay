@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-rpc-process-supervisor
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, security]
 parent: research-handoff-pi-adapter-capability
 depends_on: [research-handoff-pi-adapter-capability-control-session-integrity, research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-continuation-payload-authority-contract, research-handoff-spawn-claim-registry-contract, research-handoff-spawn-crash-external-effect-evidence-contract, research-handoff-spawn-runtime-evidence-promotion-contract, research-handoff-spawn-idempotency-duplicate-handling, research-handoff-spawn-restart-continuation-orchestration, deployment-authority-workspace-scoped-revocable-keys]
@@ -9,7 +9,7 @@ release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-16
 ---
 
 # Claim-aware Pi RPC process supervisor and effect journal
@@ -99,6 +99,22 @@ Production implements `ManagedPiRuntimePort` only with RPC. Tests may use `Agent
 - Generated contracts add the Pi-local redacted result/persistence vocabulary and an authority-bearing adapter promotion notification; the server routes promotion only to the promoted runtime's adapter.
 - The SDK substitute is explicitly named `AgentSessionRuntimeFixture` and requires injected offline model, auth/catalog marker, resource loader, session manager, and settings manager. The real-process E2E launches Pi offline and awaits process-group exit.
 - Verification (2026-08-12): `cargo fmt --all -- --check`; `cargo test --workspace`; `cargo clippy --workspace --all-targets -- -D warnings`; `cd pi-adapter && npm test` (80/80); `cd contracts/ts && npm run build && npm run check:vectors` (59 vectors, 29 implementation checks, 38 mutation witnesses); generated artifacts reproduced byte-for-byte with `npm run gen`; and `cd pi-adapter && npm run test:mutations` (6/6 killed).
+
+## Implementation notes — Pi Unit 3 r1 fix round
+
+- Execution capability: `openai-codex/gpt-5.6-sol` (caller-selected external-effect truth boundary); direct-read implementation with no subagent attempt because this is a delegated Pi-chain worker.
+- Review weight: `thorough` (caller-selected); this item returns to `review` for the required fresh independent re-review.
+- Structural continuation order: split the target replacement mutex from action-fence activation. The supervisor now acquires the target mutex before exact envelope/Grant/fence/effect validation, deployment authorization, journal reconciliation, and durable claim/nonce responsibility; only then does it activate the accepted local action fence. The complete canonical `prior_work_effects` list is consumed as authority: never-offered work remains the core's atomic `superseded` decision, while each delivered/running command is correlated and terminalized as `execution_outcome_unknown` before quiescence proceeds.
+- RPC ambiguity: `PiRpcTransportError` now carries per-request `proved_not_written` versus `possibly_written` provenance. Post-write timeout, framing/protocol loss, pipe/EOF, and unproved process exit map to `execution_outcome_unknown` plus stale/failed/offline connectivity and unknown activity as exact lifecycle evidence allows; only proved pre-write refusal or authoritative Pi command failure remains `execution_failed`. Core-facing diagnostics use bounded constants rather than exception text.
+- Journal-only restart: production preprovisioning structurally excludes managed logical targets. Startup folds every 0600 journal before ordinary session registration, poisons any unpromoted launch attempt, and never launches during recovery. Exact staged projection bytes/digest, promotion-observed, and publication-committed are separate durable markers; replayed promotion validates exact claim/runtime, idempotently republishes the staged projection through the production core port, commits the journal cursor, reports the promoted runtime stale/unknown, and performs no process launch.
+- Oracle hardening: a production `RpcPiSession` race proves replacement ownership blocks a second stdin action; a stubborn parent+child process group forces and records real SIGKILL escalation; and the SDK fixture requires a WeakSet-branded offline runtime created with injected in-memory credential/model stores and network disabled. The ambient factory options are directly observed by the test.
+- Files changed: `pi-adapter/src/{main,pi_session,rpc_client,runtime_action_gate,spawn_journal,spawn_supervisor}.ts`; `pi-adapter/tests/{delivery,pi_session,rpc_client,rpc_process_e2e,runtime_supervision_primitives,spawn_supervisor}.test.ts`; `pi-adapter/tests/offline_agent_fixture.ts`; `pi-adapter/scripts/mutation-cycle.mjs`; this story.
+- Tests added: one-dimension continuation authority/fence/effect rejection; exact prior-work disposition application; held-target-prefix serialization; request-loss provenance at pre-write/malformed/exit/EOF/timeout boundaries; delivery failure/session-axis mapping; managed startup rejection; unpromoted and promoted journal recovery; durable recovered projection replay; production action-gate race; stubborn group escalation; and ambient offline-runtime rejection/options inspection.
+- Mutation evidence: the original 6 Unit 3 mutants were re-confirmed and 9 new review-shaped mutants were registered. `npm run test:mutations` killed **15/15**, including target-mutex bypass, optional fence, ignored prior effects, false `execution_failed`, managed auto-launch, ignored replay publication, production action-gate bypass, SIGTERM-for-SIGKILL, and ambient model discovery. Every mutation was restored by the runner; no mutation was committed.
+- Full verification (2026-08-16): Rust group `cargo fmt --all -- --check && cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`; contracts group `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build && npm run check:presentation && npm run test:presentation`; operator-domain group `cd operator-domain && npm test` (28/28); Pi-adapter group `cd pi-adapter && npm test && npm run test:mutations` (92/92; 15/15 mutations); plus `cd web-cockpit && npm test` (144/144), `cd cli && npm test` (53/53 plus real-core resource projection), and `cd token-commune-adapter && npm test` (63/63). All passed; `git diff --check` passed.
+- Simplification: one gate now owns both replacement-target serialization and stdin/action fencing; one journal owns launch, staged-publication, promotion-observed, and publication-commit recovery evidence; raw transport messages no longer cross the command-result boundary.
+- Discrepancies from design: none. Rationale for the bounded staged-projection journal payload: Unit 3 must recover post-promotion publication without launching; the later cursor checkpoint can replace this local publisher behind the same reconciler port.
+- Adjacent issues parked: none.
 
 ## Ordering constraint
 

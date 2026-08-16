@@ -47,9 +47,81 @@ const mutations = [
   {
     name: "allow SDK fixture without offline catalog/auth injection marker",
     file: "src/pi_session.ts",
-    find: `if (options.services.modelCatalogAuthStub.kind !== "offline-injected")`,
+    find: `if (\n      options.services.modelCatalogAuthStub.kind !== "offline-injected" ||\n      !offlineFixtureModelRuntimes.has(options.services.modelRuntime)\n    )`,
     replace: `if (false)`,
     test: "offline fixture rejects a missing injected catalog",
+    testFile: "dist/tests/pi_session.test.js",
+  },
+  {
+    name: "perform continuation prefix before acquiring the target mutex",
+    file: "src/spawn_supervisor.ts",
+    find: `    const targetLock = await gate.acquireReplacementTarget(preliminaryClaimOperationId);`,
+    replace: `    const targetLock = {\n      activateFence: () => gate.acquireReplacement(preliminaryClaimOperationId),\n      release() {},\n    };`,
+    test: "target mutex structurally precedes",
+    testFile: "dist/tests/spawn_supervisor.test.js",
+  },
+  {
+    name: "treat continuation pending-replacement fence as optional",
+    file: "src/spawn_supervisor.ts",
+    find: `    validateAcceptedContinuationEnvelope(\n      acceptedSpawn,\n      continuationMode,\n      request.intent.case === "continuation" ? request.intent.value.prior : undefined,\n    );`,
+    replace: `    if (acceptedSpawn.pendingReplacement) {\n      validateAcceptedContinuationEnvelope(\n        acceptedSpawn,\n        continuationMode,\n        request.intent.case === "continuation" ? request.intent.value.prior : undefined,\n      );\n    }`,
+    test: "continuation rejects each omitted",
+    testFile: "dist/tests/spawn_supervisor.test.js",
+  },
+  {
+    name: "ignore accepted prior-work effects during continuation",
+    file: "src/spawn_supervisor.ts",
+    find: `    await this.#core.resolvePriorWorkEffects({\n      exactPrior: validated.claim.expectedPrior!,\n      effects: validated.acceptedSpawn.priorWorkEffects,\n    });`,
+    replace: `    // mutant: accepted prior-work effects ignored`,
+    test: "explicit allow_new_context",
+    testFile: "dist/tests/spawn_supervisor.test.js",
+  },
+  {
+    name: "classify possibly-written RPC response loss as execution_failed",
+    file: "src/main.ts",
+    find: `      failureCode: outcomeUnknown\n        ? FailureCode.EXECUTION_OUTCOME_UNKNOWN\n        : FailureCode.EXECUTION_FAILED,`,
+    replace: `      failureCode: FailureCode.EXECUTION_FAILED,`,
+    test: "delivery classification preserves post-write RPC ambiguity",
+    testFile: "dist/tests/delivery.test.js",
+  },
+  {
+    name: "auto-launch a managed preprovisioned target outside the journal",
+    file: "src/main.ts",
+    find: `    if (configured.logicalTargetId && !this.#options.createSession) {`,
+    replace: `    if (false) {`,
+    test: "never preprovisions a managed logical target",
+    testFile: "dist/tests/delivery.test.js",
+  },
+  {
+    name: "silently ignore a replayed promotion without an in-memory waiter",
+    file: "src/spawn_supervisor.ts",
+    find: `      await this.#reconciler.publishRecoveredAfterPromotion(\n        stagedProjection(state.stagedPublication),\n        state.externalIdentity.runtime,\n      );\n      await this.#journal.markPublicationCommitted(claimOperationId);`,
+    replace: `      // mutant: replayed promotion publication is silently ignored\n      await this.#journal.markPublicationCommitted(claimOperationId);`,
+    test: "replayed promotion recovers and commits",
+    testFile: "dist/tests/spawn_supervisor.test.js",
+  },
+  {
+    name: "bypass RpcPiSession action gate for ordinary requests",
+    file: "src/pi_session.ts",
+    find: `  return gate.runAction(kind, () => runtime.rpc.request<T>(command));`,
+    replace: `  return runtime.rpc.request<T>(command);`,
+    test: "RpcPiSession production requests cannot bypass",
+    testFile: "dist/tests/runtime_supervision_primitives.test.js",
+  },
+  {
+    name: "replace SIGKILL escalation with a second SIGTERM",
+    file: "src/pi_process.ts",
+    find: `    signalProcessGroup(runtime.pid, "SIGKILL");`,
+    replace: `    signalProcessGroup(runtime.pid, "SIGTERM");`,
+    test: "stubborn process group forces bounded SIGKILL",
+    testFile: "dist/tests/rpc_process_e2e.test.js",
+  },
+  {
+    name: "construct offline fixture runtime through ambient discovery",
+    file: "tests/offline_agent_fixture.ts",
+    find: `  const runtime = await ModelRuntime.create({\n    credentials: new InMemoryCredentialStore(),\n    modelsStore: new InMemoryModelsStore(),\n    modelsPath: null,\n    refreshOnCreate: false,\n    allowModelNetwork: false,\n  });`,
+    replace: `  const runtime = await ModelRuntime.create({ refreshOnCreate: false });`,
+    test: "offline model factory passes only in-memory stores",
     testFile: "dist/tests/pi_session.test.js",
   },
 ];
@@ -70,13 +142,13 @@ for (const mutation of mutations) {
     const result = spawnSync(
       process.execPath,
       ["--test", `--test-name-pattern=${mutation.test}`, mutation.testFile],
-      { cwd: root, encoding: "utf8" },
+      { cwd: root, encoding: "utf8", timeout: 60_000 },
     );
     if (result.status === 0) {
       throw new Error(`SURVIVED: ${mutation.name}`);
     }
     killed += 1;
-    console.log(`KILLED ${killed}/6: ${mutation.name}`);
+    console.log(`KILLED ${killed}/${mutations.length}: ${mutation.name}`);
   } finally {
     await writeFile(path, original);
   }

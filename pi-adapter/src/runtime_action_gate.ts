@@ -29,13 +29,16 @@ interface FenceState {
 
 /**
  * One stdin/action owner for a managed logical target. Ordinary actions fail
- * rather than queue behind a replacement fence: executing them after promotion
- * would target a different runtime. A replacement lease holds the mutex across
- * quiesce, termination, launch, verification, staging, and promotion.
+ * rather than queue behind an active replacement fence: executing them after
+ * promotion would target a different runtime. Replacement decisions have a
+ * separate target mutex so exact-envelope validation and journal ownership are
+ * serialized before the accepted fence is activated on the action mutex.
  */
 export class RuntimeActionGate {
-  #tail: Promise<void> = Promise.resolve();
+  #actionTail: Promise<void> = Promise.resolve();
+  #replacementTail: Promise<void> = Promise.resolve();
   #fence: FenceState | undefined;
+  #activeTargetLock: symbol | undefined;
   #activeLease: symbol | undefined;
 
   get fencedClaimOperationId(): string | undefined {
@@ -48,7 +51,7 @@ export class RuntimeActionGate {
 
   async runAction<T>(kind: RuntimeActionKind, action: () => Promise<T>): Promise<T> {
     if (this.#fence) throw new RuntimeActionFencedError();
-    const release = await this.#acquire();
+    const release = await this.#acquireAction();
     try {
       if (this.#fence) throw new RuntimeActionFencedError();
       if (!kind) throw new RuntimeActionGateError("runtime action kind must not be empty");
@@ -58,26 +61,93 @@ export class RuntimeActionGate {
     }
   }
 
-  async acquireReplacement(claimOperationId: string): Promise<RuntimeReplacementLease> {
+  /**
+   * Serialize replacement decisions before validation or journal work without
+   * prematurely fencing ordinary actions. The caller must either activate the
+   * accepted fence or release this target lock.
+   */
+  async acquireReplacementTarget(claimOperationId: string): Promise<RuntimeReplacementTargetLock> {
     if (!isBoundedId(claimOperationId)) {
       throw new RuntimeActionGateError("replacement claim operation id is invalid");
     }
     if (this.#fence && this.#fence.claimOperationId !== claimOperationId) {
       throw new RuntimeActionFencedError();
     }
-    const release = await this.#acquire();
+    const releaseTarget = await acquireTail(
+      () => this.#replacementTail,
+      (next) => { this.#replacementTail = next; },
+    );
     if (this.#fence && this.#fence.claimOperationId !== claimOperationId) {
-      release();
+      releaseTarget();
       throw new RuntimeActionFencedError();
     }
-    if (this.#activeLease) {
-      release();
-      throw new RuntimeActionGateError("replacement lease is already active");
+    if (this.#activeTargetLock) {
+      releaseTarget();
+      throw new RuntimeActionGateError("replacement target lock is already active");
     }
     const token = Symbol(claimOperationId);
-    this.#activeLease = token;
+    this.#activeTargetLock = token;
+    return new RuntimeReplacementTargetLock(this, token, claimOperationId, releaseTarget);
+  }
+
+  /** Convenience path for callers which have no validation/journal prefix. */
+  async acquireReplacement(claimOperationId: string): Promise<RuntimeReplacementLease> {
+    const target = await this.acquireReplacementTarget(claimOperationId);
+    try {
+      return await target.activateFence();
+    } catch (error) {
+      target.release();
+      throw error;
+    }
+  }
+
+  async activateReplacement(
+    targetToken: symbol,
+    claimOperationId: string,
+    releaseTarget: () => void,
+  ): Promise<RuntimeReplacementLease> {
+    this.assertTargetLock(targetToken, claimOperationId);
+    if (this.#fence && this.#fence.claimOperationId !== claimOperationId) {
+      throw new RuntimeActionFencedError();
+    }
+    // Consume the accepted fence before waiting for the current stdin owner.
+    // Actions arriving during that wait must reject, not queue past promotion.
     this.#fence = Object.freeze({ claimOperationId, poisoned: this.#fence?.poisoned ?? false });
-    return new RuntimeReplacementLease(this, token, claimOperationId, release);
+    const releaseAction = await this.#acquireAction();
+    try {
+      this.assertTargetLock(targetToken, claimOperationId);
+      if (this.#activeLease) {
+        throw new RuntimeActionGateError("replacement lease is already active");
+      }
+      const token = Symbol(claimOperationId);
+      this.#activeLease = token;
+      return new RuntimeReplacementLease(
+        this,
+        token,
+        targetToken,
+        claimOperationId,
+        releaseAction,
+        releaseTarget,
+      );
+    } catch (error) {
+      releaseAction();
+      throw error;
+    }
+  }
+
+  assertTargetLock(token: symbol, claimOperationId: string): void {
+    if (this.#activeTargetLock !== token || !isBoundedId(claimOperationId)) {
+      throw new RuntimeActionGateError("replacement target lock is stale");
+    }
+  }
+
+  releaseTargetLock(token: symbol, claimOperationId: string, release: () => void): void {
+    this.assertTargetLock(token, claimOperationId);
+    if (this.#activeLease) {
+      throw new RuntimeActionGateError("cannot release a target lock with an active replacement lease");
+    }
+    this.#activeTargetLock = undefined;
+    release();
   }
 
   assertLease(token: symbol, claimOperationId: string): void {
@@ -91,12 +161,16 @@ export class RuntimeActionGate {
 
   finishLease(
     token: symbol,
+    targetToken: symbol,
     claimOperationId: string,
-    release: () => void,
+    releaseAction: () => void,
+    releaseTarget: () => void,
     disposition: "promoted" | "released" | "retain" | "poison",
   ): void {
     this.assertLease(token, claimOperationId);
+    this.assertTargetLock(targetToken, claimOperationId);
     this.#activeLease = undefined;
+    this.#activeTargetLock = undefined;
     if (disposition === "promoted" || disposition === "released") {
       this.#fence = undefined;
     } else {
@@ -105,36 +179,69 @@ export class RuntimeActionGate {
         poisoned: disposition === "poison" || this.#fence?.poisoned === true,
       });
     }
-    release();
+    releaseAction();
+    releaseTarget();
   }
 
-  async #acquire(): Promise<() => void> {
-    const previous = this.#tail;
-    let release!: () => void;
-    this.#tail = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous;
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      release();
-    };
+  #acquireAction(): Promise<() => void> {
+    return acquireTail(
+      () => this.#actionTail,
+      (next) => { this.#actionTail = next; },
+    );
   }
 }
 
-export class RuntimeReplacementLease {
+export class RuntimeReplacementTargetLock {
   #closed = false;
-  readonly #release: () => void;
+  readonly #releaseTarget: () => void;
 
   constructor(
     readonly gate: RuntimeActionGate,
     readonly token: symbol,
     readonly claimOperationId: string,
-    release: () => void,
+    releaseTarget: () => void,
   ) {
-    this.#release = release;
+    this.#releaseTarget = releaseTarget;
+  }
+
+  async activateFence(): Promise<RuntimeReplacementLease> {
+    this.assertCurrent();
+    const lease = await this.gate.activateReplacement(
+      this.token,
+      this.claimOperationId,
+      this.#releaseTarget,
+    );
+    this.#closed = true;
+    return lease;
+  }
+
+  release(): void {
+    this.assertCurrent();
+    this.#closed = true;
+    this.gate.releaseTargetLock(this.token, this.claimOperationId, this.#releaseTarget);
+  }
+
+  private assertCurrent(): void {
+    if (this.#closed) throw new RuntimeActionGateError("replacement target lock is closed");
+    this.gate.assertTargetLock(this.token, this.claimOperationId);
+  }
+}
+
+export class RuntimeReplacementLease {
+  #closed = false;
+  readonly #releaseAction: () => void;
+  readonly #releaseTarget: () => void;
+
+  constructor(
+    readonly gate: RuntimeActionGate,
+    readonly token: symbol,
+    readonly targetToken: symbol,
+    readonly claimOperationId: string,
+    releaseAction: () => void,
+    releaseTarget: () => void,
+  ) {
+    this.#releaseAction = releaseAction;
+    this.#releaseTarget = releaseTarget;
   }
 
   assertCurrent(): void {
@@ -161,8 +268,31 @@ export class RuntimeReplacementLease {
   #finish(disposition: "promoted" | "released" | "retain" | "poison"): void {
     this.assertCurrent();
     this.#closed = true;
-    this.gate.finishLease(this.token, this.claimOperationId, this.#release, disposition);
+    this.gate.finishLease(
+      this.token,
+      this.targetToken,
+      this.claimOperationId,
+      this.#releaseAction,
+      this.#releaseTarget,
+      disposition,
+    );
   }
+}
+
+async function acquireTail(
+  current: () => Promise<void>,
+  replace: (next: Promise<void>) => void,
+): Promise<() => void> {
+  const previous = current();
+  let release!: () => void;
+  replace(new Promise<void>((resolve) => { release = resolve; }));
+  await previous;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    release();
+  };
 }
 
 function isBoundedId(value: string): boolean {

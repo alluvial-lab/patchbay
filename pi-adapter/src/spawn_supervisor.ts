@@ -11,6 +11,9 @@ import {
   GenerationSchema,
   LogicalTargetIdSchema,
   NoExternalEffectProofSchema,
+  OperationKind,
+  OperationSchema,
+  OperationState,
   PayloadContentType,
   PiContinuationMode,
   PiSpawnPersistence,
@@ -18,11 +21,13 @@ import {
   PiSpawnTargetSpecSchema,
   RuntimeGenerationRefSchema,
   SpawnExecutionPhase,
+  SpawnPriorWorkDisposition,
   SpawnRequestSchema,
   SupervisorPreLaunchFailureProofSchema,
   type SpawnClaimAccepted,
   type SpawnGenerationClaim,
   type SpawnPromotionCommitted,
+  type SpawnPriorWorkEffect,
   type RuntimeGenerationRef,
 } from "@patchbay/contracts";
 import type { ConfiguredDeploymentTarget } from "./deployment_authority.js";
@@ -46,6 +51,8 @@ import {
 import { SessionRegistry, type RuntimeSessionEntry } from "./session_registry.js";
 import {
   spawnTargetFingerprint,
+  type PiSpawnJournalState,
+  type PiStagedPublicationRecord,
   type SpawnEffectJournal,
 } from "./spawn_journal.js";
 import type { RuntimeReplacementLease } from "./runtime_action_gate.js";
@@ -93,6 +100,15 @@ export interface SpawnSupervisorCorePort {
     connectivity: "live" | "offline" | "stale" | "failed",
     activity: "idle" | "working" | "unknown",
   ): Promise<void>;
+  reportRecoveredSessionState(
+    runtime: RuntimeGenerationRef,
+    connectivity: "stale" | "failed",
+    activity: "unknown",
+  ): Promise<void>;
+  resolvePriorWorkEffects(input: {
+    readonly exactPrior: RuntimeGenerationRef;
+    readonly effects: readonly SpawnPriorWorkEffect[];
+  }): Promise<void>;
   stageSuccessor(input: {
     readonly acceptedSpawn: SpawnClaimAccepted;
     readonly runtime: RuntimeGenerationRef;
@@ -110,8 +126,11 @@ export interface SpawnSupervisorCorePort {
 }
 
 export interface StagedPiProjection {
+  readonly runtime: RuntimeGenerationRef;
   readonly readinessDigest: string;
   readonly entryCount: number;
+  readonly recoveryEntries: readonly unknown[];
+  readonly recoveryLeafId: string | null;
 }
 
 export interface PiAuthoritativeReconciler {
@@ -121,27 +140,73 @@ export interface PiAuthoritativeReconciler {
     leafId: string | null,
   ): Promise<StagedPiProjection>;
   publishAfterPromotion(staged: StagedPiProjection, session: PiSession): Promise<void>;
+  publishRecoveredAfterPromotion(
+    staged: StagedPiProjection,
+    runtime: RuntimeGenerationRef,
+  ): Promise<void>;
 }
 
 export class LocalStagedPiReconciler implements PiAuthoritativeReconciler {
+  readonly #publishDurableProjection: ((
+    runtime: RuntimeGenerationRef,
+    entries: readonly unknown[],
+    leafId: string | null,
+  ) => Promise<void>) | undefined;
+
+  constructor(
+    publishDurableProjection?: (
+      runtime: RuntimeGenerationRef,
+      entries: readonly unknown[],
+      leafId: string | null,
+    ) => Promise<void>,
+  ) {
+    this.#publishDurableProjection = publishDurableProjection;
+  }
+
   async stageClaimedSuccessor(
     runtime: RuntimeGenerationRef,
     entries: readonly unknown[],
     leafId: string | null,
   ): Promise<StagedPiProjection> {
-    const hash = createHash("sha256");
-    hash.update(runtime.logicalTargetId?.value ?? "");
-    hash.update("\0");
-    hash.update(runtime.externalRuntime?.runtimeSessionId?.value ?? "");
-    hash.update("\0");
-    hash.update(JSON.stringify(entries));
-    hash.update("\0");
-    hash.update(leafId ?? "");
-    return Object.freeze({ readinessDigest: hash.digest("hex"), entryCount: entries.length });
+    const recoveryEntries = immutableJsonArray(entries);
+    return Object.freeze({
+      runtime,
+      readinessDigest: projectionDigest(runtime, recoveryEntries, leafId),
+      entryCount: recoveryEntries.length,
+      recoveryEntries,
+      recoveryLeafId: leafId,
+    });
   }
 
-  async publishAfterPromotion(_staged: StagedPiProjection, session: PiSession): Promise<void> {
+  async publishAfterPromotion(staged: StagedPiProjection, session: PiSession): Promise<void> {
+    await this.#publish(staged, staged.runtime);
     session.publishStagedTranscript();
+  }
+
+  async publishRecoveredAfterPromotion(
+    staged: StagedPiProjection,
+    runtime: RuntimeGenerationRef,
+  ): Promise<void> {
+    await this.#publish(staged, runtime);
+  }
+
+  async #publish(staged: StagedPiProjection, runtime: RuntimeGenerationRef): Promise<void> {
+    if (!sameRuntime(staged.runtime, runtime) ||
+        staged.readinessDigest !== projectionDigest(
+          runtime,
+          staged.recoveryEntries,
+          staged.recoveryLeafId,
+        )) {
+      throw new Error("staged Pi projection recovery evidence is inconsistent");
+    }
+    if (!this.#publishDurableProjection) {
+      throw new Error("staged Pi projection has no durable publication port");
+    }
+    await this.#publishDurableProjection(
+      runtime,
+      staged.recoveryEntries,
+      staged.recoveryLeafId,
+    );
   }
 }
 
@@ -201,7 +266,7 @@ export class ClaimAwareSpawnSupervisor {
     readonly registry: SessionRegistry;
     readonly core: SpawnSupervisorCorePort;
     readonly targets: readonly ManagedPiTargetConfig[];
-    readonly reconciler?: PiAuthoritativeReconciler;
+    readonly reconciler: PiAuthoritativeReconciler;
     readonly observeTranscript?: Parameters<SessionRegistry["stageCandidate"]>[3];
     readonly observeModelChange?: Parameters<SessionRegistry["stageCandidate"]>[4];
     readonly observeLifecycle?: Parameters<SessionRegistry["stageCandidate"]>[5];
@@ -210,7 +275,7 @@ export class ClaimAwareSpawnSupervisor {
     this.#journal = options.journal;
     this.#registry = options.registry;
     this.#core = options.core;
-    this.#reconciler = options.reconciler ?? new LocalStagedPiReconciler();
+    this.#reconciler = options.reconciler;
     this.#observeTranscript = options.observeTranscript ?? (() => undefined);
     this.#observeModelChange = options.observeModelChange ?? (() => undefined);
     this.#observeLifecycle = options.observeLifecycle ?? (() => undefined);
@@ -225,44 +290,74 @@ export class ClaimAwareSpawnSupervisor {
   }
 
   async handleAcceptedSpawn(acceptedSpawn: SpawnClaimAccepted): Promise<StagedPiSuccessor> {
-    const validated = await this.#validate(acceptedSpawn);
-    const claimOperationId = validated.claim.claimOperationId!.value;
-    const existing = await this.#journal.reconcile(claimOperationId);
-    if (existing) {
-      if (!sameClaim(existing.exactClaim, validated.claim)) {
+    const preliminaryClaimOperationId = acceptedSpawn.claim?.claimOperationId?.value;
+    const preliminaryLogicalTargetId = acceptedSpawn.claim?.logicalTargetId?.value;
+    if (!preliminaryClaimOperationId || !preliminaryLogicalTargetId) {
+      throw new SpawnSupervisorError("accepted spawn envelope is incomplete", FailureCode.DELIVERY_REJECTED);
+    }
+    const gate = this.#registry.gateFor(preliminaryLogicalTargetId);
+    const targetLock = await gate.acquireReplacementTarget(preliminaryClaimOperationId);
+    let prefixConsumed = false;
+    let validated: ValidatedSpawn;
+    let existing: PiSpawnJournalState | undefined;
+    let launchNonce: string;
+    let lease: RuntimeReplacementLease;
+    try {
+      // Fixed prefix: the target mutex owns all validation, authority, and
+      // journal responsibility before the accepted action fence is consumed.
+      validated = await this.#validate(acceptedSpawn);
+      if (
+        validated.claim.claimOperationId!.value !== preliminaryClaimOperationId ||
+        validated.claim.logicalTargetId!.value !== preliminaryLogicalTargetId
+      ) {
+        throw new SpawnSupervisorError("accepted spawn target changed during validation", FailureCode.DELIVERY_REJECTED);
+      }
+      const claimOperationId = validated.claim.claimOperationId!.value;
+      existing = await this.#journal.reconcile(claimOperationId);
+      if (existing && !sameClaim(existing.exactClaim, validated.claim)) {
         throw new SpawnSupervisorError("spawn journal exact-claim correlation failed", FailureCode.DELIVERY_REJECTED);
       }
-      if (existing.promoted) {
+      if (existing?.promoted) {
         throw new SpawnSupervisorError("spawn claim is already promoted", FailureCode.STALE_EVENT);
       }
-      if (existing.phases.some((phase) => phase.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED)) {
-        throw new SpawnSupervisorError(
+
+      await this.#core.authorizeDeployment(acceptedSpawn, validated.target.deploymentTarget, new Date());
+      launchNonce = existing?.launchNonce ?? randomBytes(32).toString("base64url");
+      if (!existing) {
+        await this.#journal.beginClaim({
+          exactClaim: validated.claim,
+          launchNonce,
+          targetFingerprint: spawnTargetFingerprint([
+            validated.target.projectContextRef,
+            validated.target.deploymentTarget.adapterId,
+            validated.target.deploymentTarget.deploymentScope,
+            validated.target.deploymentTarget.logicalTargetId,
+            PI_RPC_TARGET_SHAPE,
+          ]),
+          createdAt: new Date().toISOString(),
+        });
+      }
+
+      lease = await targetLock.activateFence();
+      prefixConsumed = true;
+      if (existing?.phases.some((phase) => phase.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED)) {
+        lease.poison();
+        const recoveredError = new SpawnSupervisorError(
           "spawn generation has an ambiguous prior launch attempt and cannot auto-relaunch",
           FailureCode.EXECUTION_OUTCOME_UNKNOWN,
           true,
         );
+        await this.#reportRecoveredAmbiguity(validated, existing).catch(() => undefined);
+        recoveredError.terminalReported = await this.#core
+          .reportSpawnFailure(validated.operation, FailureCode.EXECUTION_OUTCOME_UNKNOWN)
+          .then(() => true, () => false);
+        throw recoveredError;
       }
+    } catch (error) {
+      if (!prefixConsumed) targetLock.release();
+      throw error;
     }
-
-    await this.#core.authorizeDeployment(acceptedSpawn, validated.target.deploymentTarget, new Date());
-    const launchNonce = existing?.launchNonce ?? randomBytes(32).toString("base64url");
-    if (!existing) {
-      await this.#journal.beginClaim({
-        exactClaim: validated.claim,
-        launchNonce,
-        targetFingerprint: spawnTargetFingerprint([
-          validated.target.projectContextRef,
-          validated.target.deploymentTarget.adapterId,
-          validated.target.deploymentTarget.deploymentScope,
-          validated.target.deploymentTarget.logicalTargetId,
-          PI_RPC_TARGET_SHAPE,
-        ]),
-        createdAt: new Date().toISOString(),
-      });
-    }
-
-    const gate = this.#registry.gateFor(validated.claim.logicalTargetId!.value);
-    const lease = await gate.acquireReplacement(claimOperationId);
+    const claimOperationId = validated.claim.claimOperationId!.value;
     let launchAttempted = false;
     let launched: PiRpcRuntime | undefined;
     let successor: RpcPiSession | undefined;
@@ -461,6 +556,15 @@ export class ClaimAwareSpawnSupervisor {
         : validated.continuationMode === "allow_new_context"
           ? ContinuationContextStatus.NEW_CONTEXT
           : ContinuationContextStatus.UNSPECIFIED;
+      await this.#journal.recordStagedPublication({
+        claimOperationId,
+        runtime: externalRuntime,
+        readinessDigest: projection.readinessDigest,
+        entryCount: projection.entryCount,
+        continuationContextStatus: status,
+        entries: projection.recoveryEntries,
+        leafId: projection.recoveryLeafId,
+      });
       const entry = this.#registry.stageCandidate(
         validated.claim,
         {
@@ -516,13 +620,14 @@ export class ClaimAwareSpawnSupervisor {
       }
       const promotion = promotionOutcome.promotion;
       requireExactPromotion(promotion, validated.claim, externalRuntime);
+      await this.#journal.markPromotionObserved(claimOperationId, externalRuntime);
       unsubscribeCandidateLifecycle();
       unsubscribeCandidateLifecycle = undefined;
       promotionCommitted = true;
       const promotedEntry = this.#registry.promoteCandidate(validated.claim, externalRuntime);
       try {
         await this.#reconciler.publishAfterPromotion(projection, successor);
-        await this.#journal.markPromoted(claimOperationId);
+        await this.#journal.markPublicationCommitted(claimOperationId);
         lease.promoted();
       } catch {
         if (gate.fencedClaimOperationId === claimOperationId) lease.poison();
@@ -597,25 +702,119 @@ export class ClaimAwareSpawnSupervisor {
     }
   }
 
-  acceptPromotion(promotion: SpawnPromotionCommitted): boolean {
+  /** Recover durable launch responsibility before ordinary startup can act. */
+  async recoverOnStart(): Promise<void> {
+    for (const state of await this.#journal.reconcileAll()) {
+      const launchAttempted = state.phases.some(
+        (phase) => phase.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED,
+      );
+      if (!launchAttempted) continue;
+      const claimOperationId = state.exactClaim.claimOperationId!.value;
+      const logicalTargetId = state.exactClaim.logicalTargetId!.value;
+      if (state.promotionObserved) {
+        if (!state.stagedPublication || !state.externalIdentity) {
+          throw new Error("promoted spawn journal is missing exact staged publication evidence");
+        }
+        if (!state.publicationCommitted) {
+          await this.#reconciler.publishRecoveredAfterPromotion(
+            stagedProjection(state.stagedPublication),
+            state.externalIdentity.runtime,
+          );
+          await this.#journal.markPublicationCommitted(claimOperationId);
+        }
+        const lease = await this.#registry.gateFor(logicalTargetId).acquireReplacement(claimOperationId);
+        lease.promoted();
+        await this.#core.reportRecoveredSessionState(
+          state.externalIdentity.runtime,
+          "stale",
+          "unknown",
+        );
+        continue;
+      }
+
+      const lease = await this.#registry.gateFor(logicalTargetId).acquireReplacement(claimOperationId);
+      lease.poison();
+      await this.#reportRecoveredAmbiguity(
+        recoveredSpawn(state.exactClaim),
+        state,
+      );
+      if (state.externalIdentity) {
+        await this.#core.reportRecoveredSessionState(
+          state.externalIdentity.runtime,
+          "stale",
+          "unknown",
+        );
+      }
+    }
+  }
+
+  async acceptPromotion(promotion: SpawnPromotionCommitted): Promise<boolean> {
     const claim = promotion.acceptedClaim?.claim;
     const claimOperationId = claim?.claimOperationId?.value;
     if (!claimOperationId) return false;
     const waiter = this.#waiters.get(claimOperationId);
-    if (!waiter) {
-      if (this.#promotionEligibleClaims.has(claimOperationId)) {
-        this.#earlyPromotions.set(claimOperationId, promotion);
+    if (waiter) {
+      try {
+        requireExactPromotion(promotion, waiter.exactClaim, waiter.runtime);
+        this.#waiters.delete(claimOperationId);
+        waiter.resolve(promotion);
+      } catch (error) {
+        waiter.reject(error instanceof Error ? error : new Error(String(error)));
       }
       return true;
     }
-    try {
-      requireExactPromotion(promotion, waiter.exactClaim, waiter.runtime);
-      this.#waiters.delete(claimOperationId);
-      waiter.resolve(promotion);
-    } catch (error) {
-      waiter.reject(error instanceof Error ? error : new Error(String(error)));
+    if (this.#promotionEligibleClaims.has(claimOperationId)) {
+      this.#earlyPromotions.set(claimOperationId, promotion);
+      return true;
     }
+
+    // Restart replay has no in-memory waiter. Durable journal identity and
+    // staged-publication state are the only admissible recovery authority.
+    const state = await this.#journal.reconcile(claimOperationId);
+    if (!state?.externalIdentity || !state.stagedPublication) return false;
+    requireExactPromotion(
+      promotion,
+      state.exactClaim,
+      state.externalIdentity.runtime,
+    );
+    await this.#journal.markPromotionObserved(
+      claimOperationId,
+      state.externalIdentity.runtime,
+    );
+    if (!state.publicationCommitted) {
+      await this.#reconciler.publishRecoveredAfterPromotion(
+        stagedProjection(state.stagedPublication),
+        state.externalIdentity.runtime,
+      );
+      await this.#journal.markPublicationCommitted(claimOperationId);
+    }
+    const lease = await this.#registry
+      .gateFor(state.exactClaim.logicalTargetId!.value)
+      .acquireReplacement(claimOperationId);
+    lease.promoted();
+    await this.#core.reportRecoveredSessionState(
+      state.externalIdentity.runtime,
+      "stale",
+      "unknown",
+    );
     return true;
+  }
+
+  async #reportRecoveredAmbiguity(
+    validated: Pick<ValidatedSpawn, "operation" | "claim">,
+    state: PiSpawnJournalState,
+  ): Promise<void> {
+    const externalRuntime = state.externalIdentity?.runtime;
+    await this.#core.reportSpawnEvidence({
+      operation: validated.operation,
+      exactClaim: validated.claim,
+      phase: state.phases.at(-1)?.phase ?? SpawnExecutionPhase.LAUNCH_ATTEMPTED,
+      disposition: externalRuntime
+        ? ExternalEffectDisposition.IDENTIFIED
+        : ExternalEffectDisposition.MAY_EXIST,
+      failureCode: FailureCode.EXECUTION_OUTCOME_UNKNOWN,
+      ...(externalRuntime ? { externalRuntime } : {}),
+    });
   }
 
   async #validate(acceptedSpawn: SpawnClaimAccepted): Promise<ValidatedSpawn> {
@@ -674,10 +873,18 @@ export class ClaimAwareSpawnSupervisor {
     }
     if (
       continuationMode === "fresh" && (claim.expectedPrior || claim.claimedGeneration.value !== 1n) ||
-      continuationMode !== "fresh" && (!claim.expectedPrior || claim.claimedGeneration.value !== claim.expectedPrior.externalRuntime!.generation!.value + 1n)
+      continuationMode !== "fresh" && (
+        !claim.expectedPrior?.externalRuntime?.generation?.value ||
+        claim.claimedGeneration.value !== claim.expectedPrior.externalRuntime.generation.value + 1n
+      )
     ) {
       throw new SpawnSupervisorError("Pi spawn generation is not the exact accepted claim", FailureCode.DELIVERY_REJECTED);
     }
+    validateAcceptedContinuationEnvelope(
+      acceptedSpawn,
+      continuationMode,
+      request.intent.case === "continuation" ? request.intent.value.prior : undefined,
+    );
     return Object.freeze({ acceptedSpawn, operation, claim, target, continuationMode });
   }
 
@@ -687,6 +894,10 @@ export class ClaimAwareSpawnSupervisor {
     prior: RpcPiSession,
     lease: RuntimeReplacementLease,
   ): Promise<void> {
+    await this.#core.resolvePriorWorkEffects({
+      exactPrior: validated.claim.expectedPrior!,
+      effects: validated.acceptedSpawn.priorWorkEffects,
+    });
     const state = await prior.refreshState(lease);
     const activity = prior.activitySnapshot();
     if (state.streaming || state.compacting || state.pendingMessageCount > 0) {
@@ -700,10 +911,6 @@ export class ClaimAwareSpawnSupervisor {
       throw new SpawnSupervisorError("prior runtime did not reach a settled state", FailureCode.EXECUTION_OUTCOME_UNKNOWN, true);
     }
     await this.#core.reportSessionState(entry, "live", "idle");
-    if (validated.acceptedSpawn.pendingReplacement?.exactPrior &&
-      !sameRuntime(validated.acceptedSpawn.pendingReplacement.exactPrior, validated.claim.expectedPrior!)) {
-      throw new SpawnSupervisorError("pending replacement fence does not match the exact prior", FailureCode.DELIVERY_REJECTED);
-    }
   }
 
   async #recordProgress(
@@ -808,6 +1015,142 @@ export function supervisorNoEffectProof(
       }),
     },
   });
+}
+
+function validateAcceptedContinuationEnvelope(
+  acceptedSpawn: SpawnClaimAccepted,
+  continuationMode: ValidatedSpawn["continuationMode"],
+  requestedPrior: RuntimeGenerationRef | undefined,
+): void {
+  const accepted = acceptedSpawn.acceptedOperation;
+  const operation = accepted?.operation;
+  const claim = acceptedSpawn.claim;
+  const spawnGrantId = accepted?.authorizingGrantId?.value;
+  if (
+    !operation || !claim || !spawnGrantId ||
+    operation.authorityDomainId?.value !== claim.authorityDomainId?.value
+  ) {
+    throw new SpawnSupervisorError(
+      "accepted spawn is missing its adapter-scoped Grant provenance",
+      FailureCode.DELIVERY_REJECTED,
+    );
+  }
+  if (continuationMode === "fresh") {
+    if (
+      acceptedSpawn.compoundAuthority ||
+      acceptedSpawn.pendingReplacement ||
+      acceptedSpawn.priorWorkEffects.length > 0
+    ) {
+      throw new SpawnSupervisorError(
+        "fresh spawn carries continuation-only authority or effects",
+        FailureCode.DELIVERY_REJECTED,
+      );
+    }
+    return;
+  }
+
+  const prior = claim.expectedPrior;
+  const authority = acceptedSpawn.compoundAuthority;
+  const fence = acceptedSpawn.pendingReplacement;
+  if (
+    !prior || !requestedPrior || !sameRuntime(prior, requestedPrior) ||
+    !authority?.replacementGrantId?.value ||
+    authority.replacementGrantId.value === spawnGrantId ||
+    authority.replacementAuthorityKind !== OperationKind.SESSION_MANAGEMENT ||
+    !sameRuntime(authority.exactPrior, prior) ||
+    !fence || !sameRuntime(fence.exactPrior, prior) ||
+    fence.failureCode !== FailureCode.SUPERSEDED ||
+    fence.reasonCode !== "replacement_pending"
+  ) {
+    throw new SpawnSupervisorError(
+      "continuation authority or pending-replacement fence is not canonical",
+      FailureCode.DELIVERY_REJECTED,
+    );
+  }
+
+  let previousCommandId = "";
+  const seen = new Set<string>();
+  for (const effect of acceptedSpawn.priorWorkEffects) {
+    const commandId = effect.commandId?.value;
+    const canonicalOrder = commandId !== undefined && (
+      previousCommandId === "" ||
+      Buffer.compare(Buffer.from(commandId), Buffer.from(previousCommandId)) > 0
+    );
+    if (
+      !commandId || commandId === claim.claimOperationId?.value ||
+      seen.has(commandId) || !canonicalOrder ||
+      effect.reasonCode !== "replacement_pending"
+    ) {
+      throw new SpawnSupervisorError(
+        "continuation prior-work effect identity is not canonical",
+        FailureCode.DELIVERY_REJECTED,
+      );
+    }
+    seen.add(commandId);
+    previousCommandId = commandId;
+    const superseded =
+      effect.disposition === SpawnPriorWorkDisposition.SUPERSEDED_BEFORE_OFFER &&
+      effect.priorState === OperationState.ACCEPTED &&
+      effect.failureCode === FailureCode.SUPERSEDED;
+    const reconcile =
+      effect.disposition === SpawnPriorWorkDisposition.QUIESCE_OUTCOME_RECONCILIATION &&
+      (effect.priorState === OperationState.DELIVERED ||
+        effect.priorState === OperationState.RUNNING) &&
+      effect.failureCode === FailureCode.UNSPECIFIED;
+    if (!superseded && !reconcile) {
+      throw new SpawnSupervisorError(
+        "continuation prior-work effect lifecycle is not canonical",
+        FailureCode.DELIVERY_REJECTED,
+      );
+    }
+  }
+}
+
+function stagedProjection(record: PiStagedPublicationRecord): StagedPiProjection {
+  return Object.freeze({
+    runtime: record.runtime,
+    readinessDigest: record.readinessDigest,
+    entryCount: record.entryCount,
+    recoveryEntries: record.entries,
+    recoveryLeafId: record.leafId,
+  });
+}
+
+function projectionDigest(
+  runtime: RuntimeGenerationRef,
+  entries: readonly unknown[],
+  leafId: string | null,
+): string {
+  const hash = createHash("sha256");
+  hash.update(runtime.logicalTargetId?.value ?? "");
+  hash.update("\0");
+  hash.update(runtime.externalRuntime?.runtimeSessionId?.value ?? "");
+  hash.update("\0");
+  hash.update(JSON.stringify(entries));
+  hash.update("\0");
+  hash.update(leafId ?? "");
+  return hash.digest("hex");
+}
+
+function immutableJsonArray(entries: readonly unknown[]): readonly unknown[] {
+  const serialized = JSON.stringify(entries);
+  if (serialized === undefined) throw new Error("staged Pi projection is not JSON");
+  const parsed: unknown = JSON.parse(serialized);
+  if (!Array.isArray(parsed)) throw new Error("staged Pi projection is not a JSON array");
+  return Object.freeze(parsed);
+}
+
+function recoveredSpawn(
+  claim: SpawnGenerationClaim,
+): Pick<ValidatedSpawn, "operation" | "claim"> {
+  return {
+    claim,
+    operation: create(OperationSchema, {
+      commandId: claim.claimOperationId,
+      authorityDomainId: claim.authorityDomainId,
+      kind: OperationKind.SPAWN,
+    }),
+  };
 }
 
 function runtimeRef(

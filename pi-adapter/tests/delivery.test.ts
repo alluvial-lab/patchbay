@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { create, toBinary } from "@bufbuild/protobuf";
 import {
   ApprovalDecision,
   ApprovalResponsePayloadSchema,
+  FailureCode,
   OperationKind,
   OperationSchema,
   type EventId,
@@ -18,7 +21,11 @@ import { PatchbayCoreClient, type SessionIdentity } from "../src/core_client.js"
 import type { SessionReportOrder } from "../src/session_report_sequencer.js";
 import type { AdapterDiagnosticInput } from "../src/adapter_diagnostics.js";
 import { DeliveryTranslator, UnsupportedCommandError } from "../src/delivery.js";
-import { AdapterProcess, type PreprovisionedSession } from "../src/main.js";
+import {
+  AdapterProcess,
+  classifyDeliveryFailure,
+  type PreprovisionedSession,
+} from "../src/main.js";
 import { AgentSessionRuntimeFixture, type PiSession } from "../src/pi_session.js";
 import {
   createOfflineFixtureServices,
@@ -106,6 +113,91 @@ test("DeliveryTranslator resolves committed approval decisions and rejects reser
     translator.deliver(operation(OperationKind.ELICITATION_RESPONSE), session),
     UnsupportedCommandError,
   );
+});
+
+test("delivery classification preserves post-write RPC ambiguity and session axes", () => {
+  const timeout = classifyDeliveryFailure(new PiRpcTransportError(
+    "timeout",
+    "secret raw timeout",
+    undefined,
+    "possibly_written",
+  ));
+  assert.equal(timeout.failureCode, FailureCode.EXECUTION_OUTCOME_UNKNOWN);
+  assert.equal(timeout.connectivity, SessionConnectivityState.STALE);
+  assert.equal(timeout.diagnostic, "rpc_execution_outcome_unknown");
+  assert.equal(timeout.diagnostic.includes("secret"), false);
+
+  const uncleanExit = classifyDeliveryFailure(new PiRpcTransportError(
+    "process_exit",
+    "secret raw exit",
+    { code: 9, signal: null, expected: false },
+    "possibly_written",
+  ));
+  assert.equal(uncleanExit.failureCode, FailureCode.EXECUTION_OUTCOME_UNKNOWN);
+  assert.equal(uncleanExit.connectivity, SessionConnectivityState.FAILED);
+
+  const bareEof = classifyDeliveryFailure(new PiRpcTransportError(
+    "eof",
+    "secret raw eof",
+    undefined,
+    "possibly_written",
+  ));
+  assert.equal(bareEof.failureCode, FailureCode.EXECUTION_OUTCOME_UNKNOWN);
+  assert.equal(bareEof.connectivity, SessionConnectivityState.STALE);
+
+  const preWrite = classifyDeliveryFailure(new PiRpcTransportError(
+    "pipe",
+    "secret raw prewrite",
+    undefined,
+    "proved_not_written",
+  ));
+  assert.equal(preWrite.failureCode, FailureCode.EXECUTION_FAILED);
+  assert.equal(preWrite.connectivity, SessionConnectivityState.STALE);
+  assert.equal(preWrite.diagnostic, "rpc_request_not_written");
+});
+
+test("AdapterProcess never preprovisions a managed logical target outside the journal", async () => {
+  const directory = await mkdtemp(join(process.cwd(), "tmp-managed-startup-"));
+  const originalAttach = PatchbayCoreClient.prototype.attach;
+  PatchbayCoreClient.prototype.attach = async () => ({}) as EventId;
+  let launchCalls = 0;
+  const adapter = new AdapterProcess({
+    coreAddress: "http://127.0.0.1:1",
+    adapterId: "pi",
+    authorityDomainId: "authority-test",
+    attachmentEvidence: "adapter-test-secret",
+    adapterGeneration: 1,
+    sessions: [{
+      cwd: process.cwd(),
+      runtimeSessionId: "managed-must-not-launch",
+      deploymentScope: "machine-a",
+      logicalTargetId: "logical-managed",
+    } as unknown as PreprovisionedSession],
+    spawnJournalDirectory: directory,
+    managedRuntimePort: {
+      async launch() {
+        launchCalls += 1;
+        throw new Error("managed auto-launch mutant crossed the process port");
+      },
+      async handshake() {
+        throw new Error("unexpected handshake");
+      },
+      async terminate() {
+        throw new Error("unexpected termination");
+      },
+    },
+  });
+  try {
+    await assert.rejects(
+      adapter.start(),
+      /managed logical targets recover only from the spawn journal/,
+    );
+    assert.equal(launchCalls, 0);
+  } finally {
+    PatchbayCoreClient.prototype.attach = originalAttach;
+    await adapter.dispose().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("AdapterProcess preserves real Pi model_change values, activity, and order", async () => {

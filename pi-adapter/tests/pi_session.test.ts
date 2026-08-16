@@ -4,10 +4,15 @@ import { create } from "@bufbuild/protobuf";
 import { OperationKind, OperationSchema, type Operation } from "@patchbay/contracts";
 import {
   AgentSession,
+  ModelRuntime,
   SessionManager,
   type AgentSessionEvent,
   type AgentSessionEventListener,
 } from "@earendil-works/pi-coding-agent";
+import {
+  InMemoryCredentialStore,
+  InMemoryModelsStore,
+} from "@earendil-works/pi-ai";
 import {
   createFauxCore,
   fauxAssistantMessage,
@@ -201,7 +206,48 @@ test("offline fixture rejects a missing injected catalog and auth boundary marke
       } as unknown as typeof services,
       noTools: "all",
     }),
-    /requires offline catalog\/auth stubs/,
+    /requires registered offline catalog\/auth services/,
+  );
+});
+
+test("offline model factory passes only in-memory stores with network disabled", async () => {
+  const originalCreate = ModelRuntime.create;
+  let observed: Record<string, unknown> | undefined;
+  (ModelRuntime as unknown as { create(options: Record<string, unknown>): Promise<ModelRuntime> }).create =
+    async (options) => {
+      observed = options;
+      return originalCreate.call(ModelRuntime, options);
+    };
+  try {
+    await createOfflineModelRuntime();
+    assert.ok(observed?.["credentials"] instanceof InMemoryCredentialStore);
+    assert.ok(observed?.["modelsStore"] instanceof InMemoryModelsStore);
+    assert.equal(observed?.["modelsPath"], null);
+    assert.equal(observed?.["refreshOnCreate"], false);
+    assert.equal(observed?.["allowModelNetwork"], false);
+  } finally {
+    (ModelRuntime as unknown as { create: typeof ModelRuntime.create }).create = originalCreate;
+  }
+});
+
+test("offline fixture rejects an ambient ModelRuntime even when its marker is forged", async () => {
+  const ambient = await ModelRuntime.create({ refreshOnCreate: false });
+  const registered = await createOfflineModelRuntime();
+  const services = await createOfflineFixtureServices(cwd, registered);
+  await assert.rejects(
+    AgentSessionRuntimeFixture.create({
+      cwd,
+      runtimeSessionId: "runtime-ambient-model-discovery-rejected",
+      generation: 1,
+      model: "ambient/missing",
+      services: {
+        ...services,
+        modelRuntime: ambient,
+        modelCatalogAuthStub: { kind: "offline-injected" },
+      } as unknown as typeof services,
+      noTools: "all",
+    }),
+    /requires registered offline catalog\/auth services/,
   );
 });
 

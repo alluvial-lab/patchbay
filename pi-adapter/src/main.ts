@@ -1,15 +1,24 @@
 import { Code, ConnectError } from "@connectrpc/connect";
+import { create } from "@bufbuild/protobuf";
 import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  CommandIdSchema,
   FailureCode,
+  GenerationSchema,
   OperationKind,
+  OperationSchema,
+  RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
+  SpawnPriorWorkDisposition,
+  TargetScopeKind,
+  TargetScopeSchema,
   type ContinuationContextStatus,
   type Delivery,
   type Operation,
+  type RuntimeGenerationRef,
   type SpawnClaimAccepted,
 } from "@patchbay/contracts";
 import { PatchbayCoreClient, type SessionIdentity } from "./core_client.js";
@@ -33,6 +42,7 @@ import {
 } from "./deployment_authority.js";
 import { composeAdapterDiagnostics, CoreDiagnosticsForwarder } from "./core_diagnostics_forwarder.js";
 import { RpcPiSession, type PiSession } from "./pi_session.js";
+import { PiRpcTransportError } from "./rpc_client.js";
 import {
   buildPiRpcArgv,
   RpcManagedPiRuntimePort,
@@ -41,6 +51,7 @@ import {
 import { FileSpawnEffectJournal } from "./spawn_journal.js";
 import {
   ClaimAwareSpawnSupervisor,
+  LocalStagedPiReconciler,
   type ManagedPiTargetConfig,
   type SpawnSupervisorCorePort,
 } from "./spawn_supervisor.js";
@@ -48,6 +59,7 @@ import {
   SessionRegistry,
   type RuntimeSessionEntry,
 } from "./session_registry.js";
+import { projectSessionEntries } from "./transcript_projection.js";
 import type { TranscriptEvent } from "./transcript_event.js";
 import {
   nextSessionReportSequence,
@@ -63,7 +75,8 @@ export interface PreprovisionedSession {
   readonly name?: string;
   readonly model?: string;
   readonly generation?: number;
-  readonly logicalTargetId?: string;
+  /** Managed logical targets are intentionally absent; they recover via accepted claims. */
+  readonly logicalTargetId?: never;
   readonly sessionPath?: string;
   readonly sessionRoot?: string;
   readonly sessionDirectory?: string;
@@ -100,7 +113,8 @@ export class AdapterProcess {
   readonly #core: PatchbayCoreClient;
   readonly #registry = new SessionRegistry();
   readonly #translator = new DeliveryTranslator();
-  readonly #activeCommands = new Map<string, string>();
+  readonly #activeCommands = new Map<string, { readonly commandId: string; readonly operation: Operation }>();
+  readonly #replacementResolvedCommands = new Set<string>();
   readonly #runtimePort: ManagedPiRuntimePort;
   readonly #spawnSupervisor: ClaimAwareSpawnSupervisor;
   readonly #pendingObservations = new Set<Promise<void>>();
@@ -157,6 +171,35 @@ export class AdapterProcess {
           sessionConnectivity(connectivity),
         );
       },
+      reportRecoveredSessionState: async (runtime, connectivity, activity) => {
+        await this.#queueRecoveredSessionReport(
+          runtime,
+          sessionActivity(activity),
+          sessionConnectivity(connectivity),
+        );
+      },
+      resolvePriorWorkEffects: async ({ exactPrior, effects }) => {
+        for (const effect of effects) {
+          if (effect.disposition === SpawnPriorWorkDisposition.SUPERSEDED_BEFORE_OFFER) {
+            // The accepted decision atomically terminalized never-offered work.
+            continue;
+          }
+          if (effect.disposition !== SpawnPriorWorkDisposition.QUIESCE_OUTCOME_RECONCILIATION) {
+            throw new Error("validated prior-work effect changed before reconciliation");
+          }
+          const commandId = effect.commandId!.value;
+          this.#replacementResolvedCommands.add(commandId);
+          const active = [...this.#activeCommands.values()]
+            .find((candidate) => candidate.commandId === commandId);
+          const operation = active?.operation ?? operationForPriorWork(commandId, exactPrior);
+          await this.#core.ingestFailure(
+            operation,
+            FailureCode.EXECUTION_OUTCOME_UNKNOWN,
+            "replacement_quiesce_outcome_unknown",
+          );
+          if (!active) this.#replacementResolvedCommands.delete(commandId);
+        }
+      },
       stageSuccessor: async ({ acceptedSpawn, entry, continuationContextStatus }) => {
         const claimOperationId = acceptedSpawn.claim?.claimOperationId?.value;
         if (!claimOperationId) throw new Error("staged successor has no exact claim operation id");
@@ -185,6 +228,9 @@ export class AdapterProcess {
       registry: this.#registry,
       core: corePort,
       targets: options.managedTargets ?? [],
+      reconciler: new LocalStagedPiReconciler(
+        (runtime, entries) => this.#publishRecoveredProjection(runtime, entries),
+      ),
       observeTranscript: (entry, event) => this.#observeTranscript(entry, event),
       observeModelChange: (entry, model) => this.#observeModelChange(entry, model),
       observeLifecycle: (entry, event) => this.#observeLifecycle(entry, event),
@@ -198,6 +244,7 @@ export class AdapterProcess {
     await this.#core.attach(this.#options.adapterGeneration);
     this.#started = true;
     try {
+      await this.#spawnSupervisor.recoverOnStart();
       for (const configured of this.#options.sessions) {
         await this.registerSession(configured);
       }
@@ -212,6 +259,9 @@ export class AdapterProcess {
   /** The same complete registration path used by pre-provisioning and future spawn. */
   async registerSession(configured: PreprovisionedSession): Promise<void> {
     if (!this.#started) throw new Error("adapter process has not started");
+    if (configured.logicalTargetId && !this.#options.createSession) {
+      throw new Error("managed logical targets recover only from the spawn journal and exact core promotion");
+    }
     const createSession = this.#options.createSession ?? ((options) => this.#createProductionSession(options));
     this.#record({ event: "session.register.started", level: "info" });
     let session: PiSession;
@@ -314,9 +364,7 @@ export class AdapterProcess {
         generation: configured.generation ?? 1,
         runtime,
         runtimePort: this.#runtimePort,
-        actionGate: this.#registry.gateFor(
-          configured.logicalTargetId ?? configured.runtimeSessionId,
-        ),
+        actionGate: this.#registry.gateFor(configured.runtimeSessionId),
         publication: "current",
       });
     } catch (error) {
@@ -461,7 +509,7 @@ export class AdapterProcess {
       for await (const delivery of this.#core.receiveDeliveries(this.#cursor, signal)) {
         this.#cursor = delivery.deliveryEventId?.lsn?.value ?? this.#cursor;
         if (delivery.promotionCommitted) {
-          if (!this.#spawnSupervisor.acceptPromotion(delivery.promotionCommitted)) {
+          if (!await this.#spawnSupervisor.acceptPromotion(delivery.promotionCommitted)) {
             throw new Error("spawn promotion delivery is not exactly correlated");
           }
           continue;
@@ -608,7 +656,9 @@ export class AdapterProcess {
       operationKind,
       session: this.#sessionRef(entry),
     });
-    if (commandId) this.#activeCommands.set(entry.runtimeSessionId, commandId);
+    if (commandId) {
+      this.#activeCommands.set(entry.runtimeSessionId, { commandId, operation });
+    }
     if (operation.kind === OperationKind.INSTRUCT) {
       await this.#queueSessionReport(entry, SessionActivityState.WORKING);
     }
@@ -625,6 +675,7 @@ export class AdapterProcess {
       if (operation.kind === OperationKind.INSTRUCT) {
         await this.#queueSessionReport(entry, SessionActivityState.IDLE);
       }
+      if (commandId && this.#replacementResolvedCommands.has(commandId)) return;
       await this.#core.reportResult(operation, outcome.value);
       this.#record({
         event: "delivery.completed",
@@ -635,28 +686,35 @@ export class AdapterProcess {
         outcome: "COMPLETED",
       });
     } catch (error) {
-      const failureCode =
-        error instanceof UnsupportedCommandError
-          ? FailureCode.UNSUPPORTED_COMMAND
-          : FailureCode.EXECUTION_FAILED;
-      const diagnostic = error instanceof Error ? error.message : String(error);
-      await this.#core.ingestFailure(operation, failureCode, diagnostic);
+      if (commandId && this.#replacementResolvedCommands.has(commandId)) return;
+      const classification = classifyDeliveryFailure(error);
+      await this.#core.ingestFailure(
+        operation,
+        classification.failureCode,
+        classification.diagnostic,
+      );
       this.#record({
-        event: error instanceof UnsupportedCommandError ? "delivery.rejected" : "delivery.failed",
-        level: error instanceof UnsupportedCommandError ? "warn" : "error",
+        event: classification.rejected ? "delivery.rejected" : "delivery.failed",
+        level: classification.rejected ? "warn" : "error",
         ...(commandId ? { commandId } : {}),
         operationKind,
-        failureCode,
+        failureCode: classification.failureCode,
         session: this.#sessionRef(entry),
         error: diagnosticError(error),
       });
-      if (operation.kind === OperationKind.INSTRUCT) {
-        await this.#queueSessionReport(entry, SessionActivityState.UNKNOWN);
+      if (operation.kind === OperationKind.INSTRUCT || classification.connectivity !== undefined) {
+        await this.#queueSessionReport(
+          entry,
+          SessionActivityState.UNKNOWN,
+          classification.connectivity ?? SessionConnectivityState.LIVE,
+        );
       }
     } finally {
-      if (commandId && this.#activeCommands.get(entry.runtimeSessionId) === commandId) {
+      const active = this.#activeCommands.get(entry.runtimeSessionId);
+      if (commandId && active?.commandId === commandId) {
         this.#activeCommands.delete(entry.runtimeSessionId);
       }
+      if (commandId) this.#replacementResolvedCommands.delete(commandId);
     }
   }
 
@@ -680,7 +738,7 @@ export class AdapterProcess {
 
   #observeTranscript(entry: RuntimeSessionEntry, event: TranscriptEvent): void {
     const identity = this.#identity(entry);
-    const activeCommand = this.#activeCommands.get(entry.runtimeSessionId);
+    const activeCommand = this.#activeCommands.get(entry.runtimeSessionId)?.commandId;
     const tail = this.#observationTails.get(entry.runtimeSessionId) ?? Promise.resolve();
     const next = tail
       .then(() => this.#core.ingestTranscript(identity, event, activeCommand))
@@ -791,6 +849,71 @@ export class AdapterProcess {
     return next;
   }
 
+  async #publishRecoveredProjection(
+    runtime: RuntimeGenerationRef,
+    entries: readonly unknown[],
+  ): Promise<void> {
+    const external = runtime.externalRuntime;
+    const runtimeSessionId = external?.runtimeSessionId?.value;
+    const generation = external?.generation?.value;
+    if (
+      !runtimeSessionId || !external?.deploymentScope || !generation ||
+      generation > BigInt(Number.MAX_SAFE_INTEGER)
+    ) {
+      throw new Error("recovered projection runtime identity is incomplete");
+    }
+    const numericGeneration = Number(generation);
+    const identity: SessionIdentity = {
+      runtimeSessionId,
+      deploymentScope: external.deploymentScope,
+      generation: numericGeneration,
+      project: "",
+      cwd: "",
+      name: runtimeSessionId,
+      model: "",
+    };
+    const projected = projectSessionEntries(
+      entries as Parameters<typeof projectSessionEntries>[0],
+      `${runtimeSessionId}:${numericGeneration}`,
+    );
+    for (const event of projected) {
+      await this.#core.ingestTranscript(identity, event);
+    }
+  }
+
+  #queueRecoveredSessionReport(
+    runtime: RuntimeGenerationRef,
+    activity: SessionActivityState,
+    connectivity: SessionConnectivityState,
+  ): Promise<void> {
+    const external = runtime.externalRuntime;
+    const runtimeSessionId = external?.runtimeSessionId?.value;
+    const generation = external?.generation?.value;
+    if (
+      !runtimeSessionId || !external?.deploymentScope || !generation ||
+      generation > BigInt(Number.MAX_SAFE_INTEGER)
+    ) {
+      return Promise.reject(new Error("recovered runtime identity is incomplete"));
+    }
+    const numericGeneration = Number(generation);
+    const identity: SessionIdentity = Object.freeze({
+      runtimeSessionId,
+      deploymentScope: external.deploymentScope,
+      generation: numericGeneration,
+      project: "",
+      cwd: "",
+      name: runtimeSessionId,
+      model: "",
+    });
+    const sourceOrder = this.#allocateSessionReportOrder(runtimeSessionId, numericGeneration);
+    const tail = this.#observationTails.get(runtimeSessionId) ?? Promise.resolve();
+    const next = tail
+      .then(() => this.#core.reportSession(identity, activity, connectivity, sourceOrder))
+      .then(() => undefined);
+    this.#observationTails.set(runtimeSessionId, next);
+    return next;
+  }
+
   #allocateSessionReportOrder(
     runtimeSessionId: string,
     sessionGeneration: number,
@@ -853,6 +976,73 @@ function deploymentAuthorityDiagnosticError(error: unknown): AdapterDiagnosticEr
 
 function normalizedModel(model: ReturnType<PiSession["getState"]>["model"]): string {
   return model ? `${model.provider}/${model.id}` : "";
+}
+
+interface DeliveryFailureClassification {
+  readonly failureCode: FailureCode;
+  readonly diagnostic: string;
+  readonly rejected: boolean;
+  readonly connectivity?: SessionConnectivityState;
+}
+
+export function classifyDeliveryFailure(error: unknown): DeliveryFailureClassification {
+  if (error instanceof UnsupportedCommandError) {
+    return {
+      failureCode: FailureCode.UNSUPPORTED_COMMAND,
+      diagnostic: "unsupported_command",
+      rejected: true,
+    };
+  }
+  if (error instanceof PiRpcTransportError) {
+    const connectivity = error.processExit
+      ? confirmedCleanProcessExit(error.processExit)
+        ? SessionConnectivityState.OFFLINE
+        : SessionConnectivityState.FAILED
+      : SessionConnectivityState.STALE;
+    const outcomeUnknown = error.requestEffect === "possibly_written";
+    return {
+      failureCode: outcomeUnknown
+        ? FailureCode.EXECUTION_OUTCOME_UNKNOWN
+        : FailureCode.EXECUTION_FAILED,
+      diagnostic: outcomeUnknown
+        ? "rpc_execution_outcome_unknown"
+        : "rpc_request_not_written",
+      rejected: false,
+      connectivity,
+    };
+  }
+  return {
+    failureCode: FailureCode.EXECUTION_FAILED,
+    diagnostic: "delivery_execution_failed",
+    rejected: false,
+  };
+}
+
+function operationForPriorWork(
+  commandId: string,
+  prior: RuntimeGenerationRef,
+): Operation {
+  const external = prior.externalRuntime;
+  if (
+    !external?.adapterId?.value || !external.deploymentScope ||
+    !external.runtimeSessionId?.value || !external.generation?.value
+  ) {
+    throw new Error("prior-work runtime identity is incomplete");
+  }
+  return create(OperationSchema, {
+    commandId: create(CommandIdSchema, { value: commandId }),
+    targetScope: create(TargetScopeSchema, {
+      kind: TargetScopeKind.RUNTIME_SESSION,
+      adapterId: external.adapterId,
+      deploymentScope: external.deploymentScope,
+      runtimeSessionId: create(RuntimeSessionIdSchema, {
+        value: external.runtimeSessionId.value,
+      }),
+      sessionGeneration: create(GenerationSchema, {
+        value: external.generation.value,
+      }),
+    }),
+  });
 }
 
 function requiredOperation(delivery: Delivery): Operation {

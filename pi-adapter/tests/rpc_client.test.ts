@@ -92,6 +92,46 @@ test("PiRpcClient tracks bounded extension errors, bounded stderr, EOF, and proc
   assert.deepEqual(error.processExit, { code: 9, signal: null, expected: false });
 });
 
+test("PiRpcClient proves pre-write rejection and marks every post-write response-loss boundary ambiguous", async () => {
+  const preWriteIo = streams();
+  preWriteIo.stdin.write = (() => {
+    throw new Error("injected synchronous pre-write refusal");
+  }) as typeof preWriteIo.stdin.write;
+  const preWrite = new PiRpcClient({
+    streams: preWriteIo,
+    requestPrefix: "prewrite-rpc",
+  });
+  await assert.rejects(
+    preWrite.request({ type: "prompt", message: "not written" }),
+    (error: unknown) => error instanceof PiRpcTransportError &&
+      error.kind === "pipe" && error.requestEffect === "proved_not_written",
+  );
+  preWrite.close();
+
+  const cases = ["malformed", "exit", "eof", "timeout"] as const;
+  for (const boundary of cases) {
+    const io = streams();
+    const client = new PiRpcClient({
+      streams: io,
+      requestPrefix: `${boundary}-loss-rpc`,
+      requestTimeoutMs: boundary === "timeout" ? 5 : 1_000,
+    });
+    const pending = client.request({ type: "prompt", message: boundary });
+    await nextWrittenLine(io.stdin);
+    if (boundary === "malformed") io.stdout.write("{malformed}\n");
+    if (boundary === "exit") client.markProcessExit({ code: 9, signal: null, expected: false });
+    if (boundary === "eof") io.stdout.end();
+    await assert.rejects(
+      pending,
+      (error: unknown) => error instanceof PiRpcTransportError &&
+        error.requestEffect === "possibly_written" &&
+        (boundary !== "timeout" || error.kind === "timeout"),
+      `${boundary} after write must preserve execution ambiguity`,
+    );
+    client.close();
+  }
+});
+
 test("PiRpcClient rejects EOF with an unterminated line", async () => {
   const io = streams();
   const client = new PiRpcClient({ streams: io, requestPrefix: "unterminated-rpc" });

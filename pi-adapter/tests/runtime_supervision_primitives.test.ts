@@ -16,7 +16,14 @@ import {
   SpawnExecutionPhase,
   SpawnGenerationClaimSchema,
 } from "@patchbay/contracts";
-import { buildPiRpcArgv, sanitizedEnvironment } from "../src/pi_process.js";
+import {
+  buildPiRpcArgv,
+  sanitizedEnvironment,
+  type ManagedPiRuntimePort,
+  type PiRpcRuntime,
+  type ProcessExit,
+} from "../src/pi_process.js";
+import { RpcPiSession } from "../src/pi_session.js";
 import {
   RuntimeActionFencedError,
   RuntimeActionGate,
@@ -52,6 +59,96 @@ test("RuntimeActionGate serializes actions and holds a replacement fence until p
   lease.promoted();
   await gate.runAction("query", async () => order.push("post-promotion"));
   assert.equal(order.at(-1), "post-promotion");
+});
+
+test("RpcPiSession production requests cannot bypass replacement ownership", async () => {
+  const gate = new RuntimeActionGate();
+  const requests: string[] = [];
+  let releaseFirst!: () => void;
+  let firstStarted!: () => void;
+  const started = new Promise<void>((resolve) => { firstStarted = resolve; });
+  const held = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  const rpc = {
+    async request<T>(command: Record<string, unknown> & { readonly type: string }): Promise<T> {
+      requests.push(command.type);
+      if (command.type === "get_state") {
+        return {
+          sessionId: "rpc-gate-runtime",
+          sessionFile: join(cwd, "rpc-gate-runtime.jsonl"),
+          isStreaming: false,
+          isCompacting: false,
+          pendingMessageCount: 0,
+          model: null,
+          thinkingLevel: "off",
+        } as T;
+      }
+      if (command.type === "set_thinking_level") {
+        firstStarted();
+        await held;
+        return {} as T;
+      }
+      if (command.type === "get_available_models") return { models: [] } as T;
+      return {} as T;
+    },
+    onEvent() { return () => undefined; },
+    onFailure() { return () => undefined; },
+    close() {},
+  };
+  const runtime = {
+    pid: 41,
+    processToken: "rpc-gate-process",
+    rpc,
+    exit: new Promise<ProcessExit>(() => undefined),
+    child: {},
+    markExpectedTermination() {},
+    onTransportFailure() { return () => undefined; },
+  } as unknown as PiRpcRuntime;
+  const runtimePort: ManagedPiRuntimePort = {
+    async launch() { return runtime; },
+    async handshake() { throw new Error("unused handshake"); },
+    async terminate(): Promise<ProcessExit> {
+      return {
+        pid: runtime.pid,
+        processToken: runtime.processToken,
+        code: 0,
+        signal: null,
+        expected: true,
+        terminatedBySupervisor: true,
+      };
+    },
+  };
+  const session = await RpcPiSession.bind({
+    runtimeSessionId: "rpc-gate-runtime",
+    generation: 1,
+    runtime,
+    runtimePort,
+    actionGate: gate,
+    publication: "current",
+  });
+  try {
+    const first = session.setThinkingLevel("high");
+    await started;
+    const replacement = gate.acquireReplacement("rpc-gate-replacement");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const forbidden = assert.rejects(
+      session.getAvailableModels(),
+      RuntimeActionFencedError,
+    );
+    assert.deepEqual(requests, ["get_state", "set_thinking_level"]);
+    releaseFirst();
+    await first;
+    const lease = await replacement;
+    await forbidden;
+    assert.deepEqual(
+      requests,
+      ["get_state", "set_thinking_level"],
+      "no second stdin action crosses after replacement ownership queues",
+    );
+    lease.promoted();
+  } finally {
+    releaseFirst();
+    await session.dispose();
+  }
 });
 
 test("RuntimeActionGate poison is sticky and forbids a different automatic replacement", async () => {

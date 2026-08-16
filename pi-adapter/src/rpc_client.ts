@@ -44,6 +44,8 @@ export interface PiRpcProcessExit {
 export type PiRpcEventListener = (event: PiRpcEvent) => void;
 export type PiRpcFailureListener = (error: PiRpcTransportError) => void;
 
+export type PiRpcRequestEffect = "proved_not_written" | "possibly_written";
+
 export class PiRpcTransportError extends Error {
   readonly kind:
     | "framing"
@@ -53,16 +55,28 @@ export class PiRpcTransportError extends Error {
     | "process_exit"
     | "timeout";
   readonly processExit?: PiRpcProcessExit;
+  readonly requestEffect: PiRpcRequestEffect;
 
   constructor(
     kind: PiRpcTransportError["kind"],
     message: string,
     processExit?: PiRpcProcessExit,
+    requestEffect: PiRpcRequestEffect = "proved_not_written",
   ) {
     super(message);
     this.name = "PiRpcTransportError";
     this.kind = kind;
+    this.requestEffect = requestEffect;
     if (processExit) this.processExit = processExit;
+  }
+
+  forRequest(possiblyWritten: boolean): PiRpcTransportError {
+    return new PiRpcTransportError(
+      this.kind,
+      this.message,
+      this.processExit,
+      possiblyWritten ? "possibly_written" : "proved_not_written",
+    );
   }
 }
 
@@ -81,6 +95,7 @@ interface PendingRequest {
   readonly resolve: (response: PiRpcResponse) => void;
   readonly reject: (error: Error) => void;
   readonly timer: NodeJS.Timeout;
+  possiblyWritten: boolean;
 }
 
 /** Strict bounded LF-JSONL client. Responses never enter the event stream. */
@@ -195,18 +210,51 @@ export class PiRpcClient {
 
     const response = await new Promise<PiRpcResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.#pending.delete(id);
-        reject(new PiRpcTransportError("timeout", `Pi RPC request timed out: ${command.type}`));
-      }, this.#requestTimeoutMs);
-      this.#pending.set(id, { command: command.type, resolve, reject, timer });
-      this.#streams.stdin.write(bytes, (error) => {
-        if (!error) return;
         const pending = this.#pending.get(id);
         if (!pending) return;
         this.#pending.delete(id);
-        clearTimeout(pending.timer);
-        pending.reject(new PiRpcTransportError("pipe", "Pi RPC stdin write failed"));
-      });
+        reject(new PiRpcTransportError(
+          "timeout",
+          `Pi RPC request timed out: ${command.type}`,
+          undefined,
+          pending.possiblyWritten ? "possibly_written" : "proved_not_written",
+        ));
+      }, this.#requestTimeoutMs);
+      const pending: PendingRequest = {
+        command: command.type,
+        resolve,
+        reject,
+        timer,
+        possiblyWritten: false,
+      };
+      this.#pending.set(id, pending);
+      try {
+        this.#streams.stdin.write(bytes, (error) => {
+          if (!error) return;
+          const current = this.#pending.get(id);
+          if (!current) return;
+          this.#pending.delete(id);
+          clearTimeout(current.timer);
+          current.reject(new PiRpcTransportError(
+            "pipe",
+            "Pi RPC stdin write failed",
+            undefined,
+            current.possiblyWritten ? "possibly_written" : "proved_not_written",
+          ));
+        });
+        // Once write() returns normally Node may have handed any prefix to the
+        // pipe. Its callback cannot prove that the child observed none of it.
+        pending.possiblyWritten = true;
+      } catch {
+        this.#pending.delete(id);
+        clearTimeout(timer);
+        reject(new PiRpcTransportError(
+          "pipe",
+          "Pi RPC stdin write failed before acceptance",
+          undefined,
+          "proved_not_written",
+        ));
+      }
     });
     if (!response.success) throw new PiRpcCommandError(response.command);
     return response.data as T;
@@ -363,7 +411,11 @@ export class PiRpcClient {
   #rejectPending(error: Error): void {
     for (const pending of this.#pending.values()) {
       clearTimeout(pending.timer);
-      pending.reject(error);
+      pending.reject(
+        error instanceof PiRpcTransportError
+          ? error.forRequest(pending.possiblyWritten)
+          : error,
+      );
     }
     this.#pending.clear();
   }

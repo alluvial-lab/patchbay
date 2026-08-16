@@ -539,8 +539,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+declare const offlineFixtureModelRuntimeBrand: unique symbol;
+export type OfflineFixtureModelRuntime = ModelRuntime & {
+  readonly [offlineFixtureModelRuntimeBrand]: true;
+};
+
+const offlineFixtureModelRuntimes = new WeakSet<ModelRuntime>();
+
+/** Test-boundary attestation; production never registers an SDK model runtime. */
+export function registerOfflineFixtureModelRuntime(
+  runtime: ModelRuntime,
+): OfflineFixtureModelRuntime {
+  offlineFixtureModelRuntimes.add(runtime);
+  return runtime as OfflineFixtureModelRuntime;
+}
+
 export interface AgentSessionRuntimeFixtureServices {
-  readonly modelRuntime: ModelRuntime;
+  readonly modelRuntime: OfflineFixtureModelRuntime;
   readonly resourceLoader: ResourceLoader;
   readonly sessionManager: SessionManager;
   readonly settingsManager: SettingsManager;
@@ -593,8 +608,11 @@ export class AgentSessionRuntimeFixture implements PiSession {
 
   static async create(options: AgentSessionRuntimeFixtureOptions): Promise<AgentSessionRuntimeFixture> {
     requireRuntimeIdentity(options.runtimeSessionId, options.generation);
-    if (options.services.modelCatalogAuthStub.kind !== "offline-injected") {
-      throw new Error("AgentSessionRuntimeFixture requires offline catalog/auth stubs");
+    if (
+      options.services.modelCatalogAuthStub.kind !== "offline-injected" ||
+      !offlineFixtureModelRuntimes.has(options.services.modelRuntime)
+    ) {
+      throw new Error("AgentSessionRuntimeFixture requires registered offline catalog/auth services");
     }
     const slash = options.model.indexOf("/");
     if (slash < 1) throw new Error("fixture model must be provider/model");
