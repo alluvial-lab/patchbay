@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { createServer } from "node:http2";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
-import { create } from "@bufbuild/protobuf";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import {
@@ -32,11 +32,13 @@ import {
   PiReloadAdmission,
   PiReloadMechanism,
   PiReloadableResourceKind,
+  PiRuntimeProfileSchema,
   PiSessionMaterializationPolicy,
   PiTransportMechanism,
   ReconciliationAction,
   SessionActivityState,
   SessionConnectivityState,
+  type PiRuntimeProfile,
   type SessionReport,
 } from "@patchbay/contracts";
 import {
@@ -123,7 +125,7 @@ test("Pi manifest declares one complete conservative assurance V1", () => {
   assert.equal(profile.projectContext?.cwdProof, PiCwdProofKind.CHALLENGED_CONTROL_EXTENSION);
 });
 
-test("Pi profile is required and semantic enum sentinels fail the adapter-owned decoder", () => {
+test("Pi profile is required and malformed framing fails the adapter-owned decoder", () => {
   const missing = structuredClone(piCapabilityManifest());
   missing.adapterProfile = undefined;
   assert.throws(() => decodePiRuntimeProfile(missing), /missing its runtime profile/);
@@ -133,10 +135,58 @@ test("Pi profile is required and semantic enum sentinels fail the adapter-owned 
   malformed.adapterProfile.payload = new Uint8Array([0]);
   assert.throws(() => decodePiRuntimeProfile(malformed), /malformed/);
 
-  const unspecified = structuredClone(piCapabilityManifest());
-  assert.ok(unspecified.adapterProfile);
-  unspecified.adapterProfile.payload = new Uint8Array();
-  assert.throws(() => decodePiRuntimeProfile(unspecified), /invalid runtime profile envelope/);
+  const empty = structuredClone(piCapabilityManifest());
+  assert.ok(empty.adapterProfile);
+  empty.adapterProfile.payload = new Uint8Array();
+  assert.throws(() => decodePiRuntimeProfile(empty), /invalid runtime profile envelope/);
+});
+
+test("semantically decodable invalid Pi profiles fail the adapter-owned validator", () => {
+  const invalidProfiles: ReadonlyArray<{
+    name: string;
+    mutate: (profile: PiRuntimeProfile) => void;
+  }> = [
+    {
+      name: "unspecified scalar",
+      mutate: (profile) => {
+        profile.transport = PiTransportMechanism.UNSPECIFIED;
+      },
+    },
+    {
+      name: "required nested message absent",
+      mutate: (profile) => {
+        profile.sessionDurability = undefined;
+      },
+    },
+    {
+      name: "repeated exact set contains a duplicate",
+      mutate: (profile) => {
+        profile.enumeratedResources.push(PiReloadableResourceKind.SKILL);
+      },
+    },
+    {
+      name: "repeated exact set omits a required member",
+      mutate: (profile) => {
+        profile.enumeratedResources = profile.enumeratedResources.filter(
+          (kind) => kind !== PiReloadableResourceKind.CONTEXT_FILE,
+        );
+      },
+    },
+  ];
+
+  for (const { name, mutate } of invalidProfiles) {
+    const manifest = piCapabilityManifest();
+    assert.ok(manifest.adapterProfile);
+    const profile = fromBinary(PiRuntimeProfileSchema, manifest.adapterProfile.payload);
+    mutate(profile);
+    manifest.adapterProfile.payload = toBinary(PiRuntimeProfileSchema, profile);
+
+    assert.throws(
+      () => decodePiRuntimeProfile(manifest),
+      /Pi runtime profile has (?:an unsupported|invalid)/,
+      name,
+    );
+  }
 });
 
 test("PatchbayCoreClient reattach retry reuses the exact immutable session report cursor", async () => {

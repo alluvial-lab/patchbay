@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-manifest-profile
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol]
 parent: research-handoff-pi-adapter-capability
 depends_on: [capability-manifest-durability-and-reconciliation-depth, research-handoff-spawn-continuation-payload-authority-contract]
@@ -106,3 +106,16 @@ Depends on `capability-manifest-durability-and-reconciliation-depth` so the Pi f
 - Full verification group 4 — `cd pi-adapter && npm test`: **PASS** (62/62, including the real-core loop).
 - Diagnostics consumers — `cd web-cockpit && npm test`: **PASS** (144/144); `cd cli && npm test`: **PASS** (53/53 plus real-core resource projection); `cd token-commune-adapter && npm test`: **PASS** (63/63, including both real-core flows).
 - Hygiene: `cargo fmt --all -- --check`, `git diff --check`, generated-contract drift, and post-mutation clean-tree checks passed. Adjacent issues parked: none.
+
+### Fix round — semantic-invalid profile oracle (Pi Unit 1 r1)
+
+- Fixed the thorough-review MATERIAL by separating malformed envelope/wire coverage from semantic-profile coverage and round-tripping generated `PiRuntimeProfile` fixtures through `fromBinary`/`toBinary`. The semantic cases are protobuf-decodable but violate adapter-owned validity rules: an `UNSPECIFIED` transport, an absent required nested durability message, a duplicate exact-set resource member, and an omitted required exact-set resource member.
+- Rationale: mutating the decoded generated type proves the fixtures reach `validatePiRuntimeProfile`; raw byte substitutions only prove envelope or protobuf decoding. The four representative cases cover scalar equality, required-message presence, exact-set uniqueness, and exact-set completeness without duplicating the validator in the test.
+- Mutation evidence: removing the complete `validatePiRuntimeProfile(profile)` call made the focused semantic test fail on the first `UNSPECIFIED` scalar witness (1 failed, 1 passed), killing the reviewer's bypass mutant. A fresh canonical-profile mutant setting `project_context.cwd_proof=UNSPECIFIED` also failed the focused manifest test with `invalid project context semantics`. Each production mutant was restored with `git restore`; neither was committed.
+- Focused clean-tree oracle — `cd pi-adapter && npm run build && node --test --test-name-pattern='Pi manifest|Pi profile|semantically decodable invalid Pi profiles' dist/tests/core_client.test.js`: **PASS** (3/3).
+- Full verification group 1 — `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS**.
+- Full verification group 2 — `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS** (59 vectors, 19 promoted, 29 implementation checks, 38 mutation witnesses).
+- Full verification group 3 — `cd operator-domain && npm run build && npm test`: **PASS** (28/28).
+- Full verification group 4 — `cd pi-adapter && npm test`: **PASS** (63/63, including the real-core loop).
+- Diagnostics consumers — `cd web-cockpit && npm test`: **PASS** (144/144); `cd cli && npm test`: **PASS** (53/53 plus real-core resource projection); `cd token-commune-adapter && npm test`: **PASS** (63/63, including both real-core flows). The first parallel consumer attempt raced shared `operator-domain/dist` rebuilds and failed with transient missing-module errors; the required commands were rerun sequentially and all passed.
+- Hygiene: no proto or generated-contract edits; `git diff --check` passed; only this story and the focused Pi test are committed. Review weight remains `thorough`; stage returns to `review` for convergence.
