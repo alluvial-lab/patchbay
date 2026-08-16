@@ -102,7 +102,7 @@ const encoder = new TextEncoder();
 const attachmentTokenHeader = "x-patchbay-adapter-attachment-token";
 export const PI_RUNTIME_PROFILE_SCHEMA_REF = "patchbay.PiRuntimeProfile.v1";
 export const PI_RPC_TARGET_SHAPE = "pi-rpc";
-export const PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION = "pi-managed-lifecycle.v1";
+export const PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION = "pi-managed-lifecycle.v2";
 
 type AdapterClient = Client<typeof AdapterControlService>;
 
@@ -623,6 +623,7 @@ export interface PiCapabilityEvidence {
   readonly strictSessionTreeValidation: boolean;
   readonly authoritativeCursorReplacement: boolean;
   readonly idleMaterializedReload: boolean;
+  readonly boundedJournalRetention: boolean;
   readonly conformanceVersion?: string;
 }
 
@@ -636,6 +637,7 @@ export const PI_CAPABILITY_EVIDENCE: Readonly<PiCapabilityEvidence> = Object.fre
   strictSessionTreeValidation: true,
   authoritativeCursorReplacement: true,
   idleMaterializedReload: true,
+  boundedJournalRetention: true,
   conformanceVersion: PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION,
 });
 
@@ -663,13 +665,13 @@ export function piCapabilityManifest(
       contract: {
         case: "v1",
         value: create(AdapterAssuranceManifestV1Schema, {
-          // The integrated gate proves managed lifecycle fencing and exact
-          // reconciliation, not adapter-wide exactly-once external execution.
+          // Exact transcript replacement is authoritative inside its cursor
+          // scope, but external Operation outcomes retain manual ambiguity.
           deduplicationStrength: IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
           continuationProofSupport: true,
           cursorSupport: true,
           generationFenceSupport: true,
-          reconciliationStrength: AdapterReconciliationStrength.AUTHORITATIVE,
+          reconciliationStrength: AdapterReconciliationStrength.BOUNDED,
           unprovenOutcomeAction: ReconciliationAction.MANUAL_REQUIRED,
         }),
       },
@@ -717,6 +719,7 @@ function requireCompletePiCapabilityEvidence(evidence: PiCapabilityEvidence): vo
     || !evidence.strictSessionTreeValidation
     || !evidence.authoritativeCursorReplacement
     || !evidence.idleMaterializedReload
+    || !evidence.boundedJournalRetention
   ) {
     throw new Error("Pi managed capability activation lacks complete conformance evidence");
   }

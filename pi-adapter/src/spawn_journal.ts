@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { mkdir, open, readFile, readdir, rename, stat } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, stat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   ContinuationContextStatus,
@@ -11,7 +11,15 @@ import {
 } from "@patchbay/contracts";
 
 const JOURNAL_VERSION = 1;
-const MAX_JOURNAL_BYTES = 2 * 1_048_576;
+/**
+ * Active recovery records may carry one complete staged projection. This bound
+ * matches the admitted 64 MiB session-file boundary and is four times the
+ * cursor-store record bound, so journal framing cannot become the post-launch
+ * size cliff for a projection the cursor path already admitted.
+ */
+export const PI_SPAWN_JOURNAL_MAX_BYTES = 64 * 1_048_576;
+export const PI_SPAWN_TERMINAL_RETENTION_MS = 24 * 60 * 60 * 1_000;
+export const PI_SPAWN_MAX_RETAINED_TERMINALS = 128;
 const PHASE_ORDER = new Map<SpawnExecutionPhase, number>([
   [SpawnExecutionPhase.OFFERED, 1],
   [SpawnExecutionPhase.QUIESCING_PRIOR, 2],
@@ -104,6 +112,14 @@ interface StoredStagedPublication {
   readonly leafId: string | null;
 }
 
+interface StoredCommittedPublication {
+  readonly readinessDigest: string;
+  readonly entryCount: number;
+  readonly continuationContextStatus: ContinuationContextStatus;
+  readonly leafId: string | null;
+  readonly committedAt: string;
+}
+
 interface StoredJournalState {
   readonly version: typeof JOURNAL_VERSION;
   readonly claim: JournalClaim;
@@ -113,6 +129,7 @@ interface StoredJournalState {
   readonly phases: readonly StoredPhase[];
   readonly externalIdentity?: StoredExternalIdentity;
   readonly stagedPublication?: StoredStagedPublication;
+  readonly committedPublication?: StoredCommittedPublication;
   readonly poisoned: boolean;
   readonly promotionObserved: boolean;
   readonly publicationCommitted: boolean;
@@ -141,6 +158,7 @@ export interface SpawnEffectJournal {
   reconcileAll(): Promise<readonly PiSpawnJournalState[]>;
   markPromotionObserved(claimOperationId: string, runtime: RuntimeGenerationRef): Promise<void>;
   markPublicationCommitted(claimOperationId: string): Promise<void>;
+  abandonClaim(claimOperationId: string): Promise<void>;
 }
 
 /** Promotion replay is authorized only by a complete, semantically ordered journal. */
@@ -159,14 +177,38 @@ export function assertPromotionReplayReady(
   }
 }
 
-/** 0600 atomic evidence journal. It never chooses or increments a generation. */
+export interface FileSpawnEffectJournalOptions {
+  readonly terminalRetentionMs?: number;
+  readonly maxRetainedTerminalRecords?: number;
+  readonly now?: () => Date;
+}
+
+/**
+ * 0600 atomic evidence journal. Active ambiguity is retained per exact claim;
+ * completed projection payloads compact to bounded terminal receipts.
+ */
 export class FileSpawnEffectJournal implements SpawnEffectJournal {
   readonly #directory: string;
+  readonly #terminalRetentionMs: number;
+  readonly #maxRetainedTerminalRecords: number;
+  readonly #now: () => Date;
   #tail: Promise<void> = Promise.resolve();
 
-  constructor(directory: string) {
+  constructor(directory: string, options: FileSpawnEffectJournalOptions = {}) {
     if (!directory) throw new Error("spawn journal directory must not be empty");
+    const terminalRetentionMs = options.terminalRetentionMs ?? PI_SPAWN_TERMINAL_RETENTION_MS;
+    const maxRetainedTerminalRecords = options.maxRetainedTerminalRecords
+      ?? PI_SPAWN_MAX_RETAINED_TERMINALS;
+    if (!Number.isSafeInteger(terminalRetentionMs) || terminalRetentionMs < 1) {
+      throw new Error("spawn journal terminal retention window is invalid");
+    }
+    if (!Number.isSafeInteger(maxRetainedTerminalRecords) || maxRetainedTerminalRecords < 1) {
+      throw new Error("spawn journal terminal retention count is invalid");
+    }
     this.#directory = directory;
+    this.#terminalRetentionMs = terminalRetentionMs;
+    this.#maxRetainedTerminalRecords = maxRetainedTerminalRecords;
+    this.#now = options.now ?? (() => new Date());
   }
 
   async beginClaim(record: PiSpawnClaimJournalRecord): Promise<void> {
@@ -337,25 +379,12 @@ export class FileSpawnEffectJournal implements SpawnEffectJournal {
 
   async reconcileAll(): Promise<readonly PiSpawnJournalState[]> {
     return this.#serialized(async () => {
-      let names: string[];
-      try {
-        names = await readdir(this.#directory);
-      } catch (error) {
-        const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
-        if (code === "ENOENT") return [];
-        throw error;
-      }
-      const states: PiSpawnJournalState[] = [];
-      for (const name of names.sort()) {
-        if (!/^[a-f0-9]{64}\.json$/u.test(name)) continue;
-        const path = join(this.#directory, name);
-        const stored = await readStoredPath(path);
-        const claimOperationId = stored.claim.claimOperationId;
-        const expectedName = `${createHash("sha256").update(claimOperationId).digest("hex")}.json`;
-        if (name !== expectedName) throw new Error("spawn journal filename mismatches exact claim");
-        states.push(projectStoredState(stored));
-      }
-      return Object.freeze(states);
+      await this.#pruneTerminalHistory();
+      return Object.freeze(
+        (await this.#readAllStored())
+          .filter(({ state }) => !state.publicationCommitted)
+          .map(({ state }) => projectStoredState(state)),
+      );
     });
   }
 
@@ -383,14 +412,33 @@ export class FileSpawnEffectJournal implements SpawnEffectJournal {
   async markPublicationCommitted(claimOperationId: string): Promise<void> {
     await this.#serialized(async () => {
       const state = await this.#requiredStored(claimOperationId);
+      if (state.publicationCommitted) {
+        await this.#pruneTerminalHistory();
+        return;
+      }
       if (!state.promotionObserved || !state.stagedPublication) {
         throw new Error("cannot commit publication before exact promotion");
       }
-      if (state.publicationCommitted) return;
-      await this.#writeStored(claimOperationId, Object.freeze({
-        ...state,
-        publicationCommitted: true,
-      }));
+      await this.#writeStored(
+        claimOperationId,
+        compactCommittedState(state, this.#now().toISOString()),
+      );
+      await this.#pruneTerminalHistory();
+    });
+  }
+
+  async abandonClaim(claimOperationId: string): Promise<void> {
+    await this.#serialized(async () => {
+      const state = await this.#requiredStored(claimOperationId);
+      if (
+        state.poisoned ||
+        state.promotionObserved ||
+        state.publicationCommitted ||
+        state.phases.some((phase) => phase.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED)
+      ) {
+        throw new Error("spawn journal cannot abandon a claim with possible external effect");
+      }
+      await this.#unlinkStored(claimOperationId);
     });
   }
 
@@ -421,7 +469,9 @@ export class FileSpawnEffectJournal implements SpawnEffectJournal {
     try {
       handle = await open(temporary, "wx", 0o600);
       const bytes = Buffer.from(`${JSON.stringify(state)}\n`, "utf8");
-      if (bytes.byteLength > MAX_JOURNAL_BYTES) throw new Error("spawn journal exceeds its bound");
+      if (bytes.byteLength > PI_SPAWN_JOURNAL_MAX_BYTES) {
+        throw new Error("spawn journal exceeds its documented 64 MiB active-record bound");
+      }
       await handle.writeFile(bytes);
       await handle.sync();
       await handle.close();
@@ -431,13 +481,88 @@ export class FileSpawnEffectJournal implements SpawnEffectJournal {
     } finally {
       await handle?.close();
       await directoryHandle.close();
-      try {
-        const temporaryHandle = await open(temporary, constants.O_RDONLY);
-        await temporaryHandle.close();
-      } catch {
-        // The successful rename removes the temporary name. Failed writes leave
-        // a bounded 0600 file which is ignored by reconciliation.
+      await unlink(temporary).catch((error: unknown) => {
+        if (errorCode(error) !== "ENOENT") throw error;
+      });
+    }
+  }
+
+  async #readAllStored(): Promise<readonly {
+    readonly name: string;
+    readonly state: StoredJournalState;
+  }[]> {
+    let names: string[];
+    try {
+      names = await readdir(this.#directory);
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return [];
+      throw error;
+    }
+    const records: { name: string; state: StoredJournalState }[] = [];
+    for (const name of names.sort()) {
+      if (!/^[a-f0-9]{64}\.json$/u.test(name)) continue;
+      const state = await readStoredPath(join(this.#directory, name));
+      const expectedName = `${createHash("sha256")
+        .update(state.claim.claimOperationId)
+        .digest("hex")}.json`;
+      if (name !== expectedName) throw new Error("spawn journal filename mismatches exact claim");
+      records.push({ name, state });
+    }
+    return records;
+  }
+
+  async #pruneTerminalHistory(): Promise<void> {
+    let records = await this.#readAllStored();
+    const retentionNow = this.#now();
+    const now = retentionNow.valueOf();
+    if (!Number.isFinite(now)) throw new Error("spawn journal retention clock is invalid");
+    const legacyTerminal = records.filter(
+      (record) => record.state.publicationCommitted && !record.state.committedPublication,
+    );
+    if (legacyTerminal.length > 0) {
+      const committedAt = retentionNow.toISOString();
+      for (const record of legacyTerminal) {
+        await this.#writeStored(
+          record.state.claim.claimOperationId,
+          compactCommittedState(record.state, committedAt),
+        );
       }
+      records = await this.#readAllStored();
+    }
+    const terminal = records
+      .filter((record) => record.state.publicationCommitted)
+      .sort((left, right) => {
+        const rightAt = new Date(right.state.committedPublication!.committedAt).valueOf();
+        const leftAt = new Date(left.state.committedPublication!.committedAt).valueOf();
+        return rightAt - leftAt || right.name.localeCompare(left.name);
+      });
+    const expiredOrExcess = terminal.filter((record, index) => {
+      const committedAt = new Date(record.state.committedPublication!.committedAt).valueOf();
+      return now - committedAt > this.#terminalRetentionMs
+        || index >= this.#maxRetainedTerminalRecords;
+    });
+    if (expiredOrExcess.length === 0) return;
+    const directoryHandle = await open(this.#directory, constants.O_RDONLY);
+    try {
+      for (const record of expiredOrExcess) {
+        await unlink(join(this.#directory, record.name)).catch((error: unknown) => {
+          if (errorCode(error) !== "ENOENT") throw error;
+        });
+      }
+      await directoryHandle.sync();
+    } finally {
+      await directoryHandle.close();
+    }
+  }
+
+  async #unlinkStored(claimOperationId: string): Promise<void> {
+    const path = this.#pathFor(claimOperationId);
+    const directoryHandle = await open(this.#directory, constants.O_RDONLY);
+    try {
+      await unlink(path);
+      await directoryHandle.sync();
+    } finally {
+      await directoryHandle.close();
     }
   }
 
@@ -462,6 +587,29 @@ export class FileSpawnEffectJournal implements SpawnEffectJournal {
       release();
     }
   }
+}
+
+function compactCommittedState(
+  state: StoredJournalState,
+  committedAt: string,
+): StoredJournalState {
+  const staged = state.stagedPublication;
+  if (!state.promotionObserved || !staged) {
+    throw new Error("cannot compact publication before exact promotion");
+  }
+  validateTimestamp(committedAt);
+  const { stagedPublication: _discarded, ...withoutStagedPublication } = state;
+  return Object.freeze({
+    ...withoutStagedPublication,
+    committedPublication: Object.freeze({
+      readinessDigest: staged.readinessDigest,
+      entryCount: staged.entryCount,
+      continuationContextStatus: staged.continuationContextStatus,
+      leafId: staged.leafId,
+      committedAt,
+    }),
+    publicationCommitted: true,
+  });
 }
 
 export function spawnTargetFingerprint(parts: readonly string[]): string {
@@ -668,12 +816,34 @@ function validateStoredState(value: unknown, claimOperationId: string): StoredJo
       throw new Error("spawn journal staged publication is malformed or precedes handshake");
     }
   }
-  if (semanticChain.successReported && !state.stagedPublication) {
+  if (state.committedPublication) {
+    const committed = state.committedPublication;
+    if (
+      !state.publicationCommitted ||
+      state.stagedPublication !== undefined ||
+      !/^[a-f0-9]{64}$/u.test(committed.readinessDigest) ||
+      !Number.isSafeInteger(committed.entryCount) ||
+      committed.entryCount < 0 ||
+      !(committed.leafId === null || isBoundedText(committed.leafId, 4_096)) ||
+      !Object.values(ContinuationContextStatus).includes(committed.continuationContextStatus)
+    ) {
+      throw new Error("spawn journal committed publication receipt is malformed");
+    }
+    validateTimestamp(committed.committedAt);
+  }
+  if (
+    (!state.publicationCommitted && state.committedPublication !== undefined) ||
+    (state.publicationCommitted && !state.committedPublication && !state.stagedPublication)
+  ) {
+    throw new Error("spawn journal publication state is not compacted consistently");
+  }
+  if (semanticChain.successReported && !state.stagedPublication && !state.committedPublication) {
     throw new Error("spawn journal success phase has no exact staged publication");
   }
   if (
-    (state.promotionObserved || state.publicationCommitted) &&
-    (!semanticChain.complete || !state.externalIdentity || !state.stagedPublication)
+    state.promotionObserved &&
+    (!semanticChain.complete || !state.externalIdentity ||
+      (!state.stagedPublication && !state.committedPublication))
   ) {
     throw new Error("spawn journal promotion precedes its complete semantic chain");
   }
@@ -723,7 +893,7 @@ async function readStoredPath(
   claimOperationId?: string,
 ): Promise<StoredJournalState> {
   const metadata = await stat(path);
-  if (!metadata.isFile() || metadata.size <= 0 || metadata.size > MAX_JOURNAL_BYTES) {
+  if (!metadata.isFile() || metadata.size <= 0 || metadata.size > PI_SPAWN_JOURNAL_MAX_BYTES) {
     throw new Error("spawn journal file is invalid");
   }
   if ((metadata.mode & 0o077) !== 0) {
@@ -765,6 +935,10 @@ function immutableJsonArray(entries: readonly unknown[]): readonly unknown[] {
 function isBoundedText(value: unknown, maximum: number): value is string {
   return typeof value === "string" && value.length > 0 &&
     Buffer.byteLength(value) <= maximum && !value.includes("\0");
+}
+
+function errorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

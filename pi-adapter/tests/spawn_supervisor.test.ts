@@ -396,6 +396,9 @@ class OrderedJournal implements SpawnEffectJournal {
     await this.inner.markPublicationCommitted(claimOperationId);
     this.events.push("journal-publication-committed");
   }
+  abandonClaim(claimOperationId: string) {
+    return this.inner.abandonClaim(claimOperationId);
+  }
 }
 
 async function journalFixture(events: string[] = []) {
@@ -1105,9 +1108,15 @@ test("continuation rejects each omitted or mutated authority, fence, and prior-w
   });
   try {
     for (const candidate of [omittedFence, mutatedFence, omittedAuthority, malformedEffect]) {
+      const authorizationCount = events.filter((event) => event === "authorized").length;
       await assert.rejects(
         supervisor.handleAcceptedSpawn(candidate),
         { failureCode: FailureCode.DELIVERY_REJECTED },
+      );
+      assert.equal(
+        events.filter((event) => event === "authorized").length,
+        authorizationCount,
+        "invalid continuation rejects before deployment authority or journal responsibility",
       );
       assert.equal(
         await fixture.journal.reconcile(candidate.claim!.claimOperationId!.value),
@@ -1355,6 +1364,11 @@ test("require_resume refuses a memory-only prior before termination or successor
     );
     assert.equal(runtimePort.launchCalls, 0);
     assert.equal(runtimePort.terminateCalls, 0, "the prior remains alive when resume proof is absent");
+    assert.equal(
+      await fixture.journal.reconcile("resume-memory-only"),
+      undefined,
+      "the terminal pre-launch refusal abandons its no-effect journal",
+    );
     assert.ok(events.includes("session:live:idle"));
   } finally {
     await registry.dispose();

@@ -79,7 +79,7 @@ test("Pi manifest activates only from one complete implementation-conformance ev
     continuationProofSupport: true,
     cursorSupport: true,
     generationFenceSupport: true,
-    reconciliationStrength: AdapterReconciliationStrength.AUTHORITATIVE,
+    reconciliationStrength: AdapterReconciliationStrength.BOUNDED,
     unprovenOutcomeAction: ReconciliationAction.MANUAL_REQUIRED,
   });
   assert.deepEqual(manifest.knownFailureModes, [
@@ -143,6 +143,7 @@ test("Pi activation fails when any claimed mechanism or the conformance version 
     "strictSessionTreeValidation",
     "authoritativeCursorReplacement",
     "idleMaterializedReload",
+    "boundedJournalRetention",
   ] as const satisfies readonly (keyof PiCapabilityEvidence)[];
   for (const mechanism of mechanismKeys) {
     assert.throws(

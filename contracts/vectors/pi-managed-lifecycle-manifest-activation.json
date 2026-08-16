@@ -16,15 +16,16 @@
     "patchbay.AdapterAssuranceManifestV1.reconciliation_strength",
     "patchbay.AdapterAssuranceManifestV1.unproven_outcome_action"
   ],
-  "description": "The Pi adapter activates managed spawn, continuation, replacement, cursor, and reload declarations only when the configured build carries every mechanism oracle and the exact lifecycle conformance version; deleting any evidence fails closed instead of emitting a partial or optimistic manifest.",
+  "description": "The Pi adapter activates managed spawn, continuation, replacement, cursor, and reload declarations only when the configured build carries every mechanism oracle and the exact lifecycle conformance version. Its adapter-wide reconciliation strength remains bounded because authoritative transcript replacement does not resolve every externally effecting Operation outcome; deleting evidence or declaring adapter-wide authority fails the implementation oracle.",
   "input": {
-    "conformance_version": "pi-managed-lifecycle.v1",
+    "conformance_version": "pi-managed-lifecycle.v2",
     "required_mechanisms": [
       "supervisor",
       "controlHandshake",
       "strictSessionTreeValidation",
       "authoritativeCursorReplacement",
-      "idleMaterializedReload"
+      "idleMaterializedReload",
+      "boundedJournalRetention"
     ]
   },
   "expected_outcome": {
@@ -34,10 +35,10 @@
     "continuation_proof_supported": true,
     "cursor_supported": true,
     "generation_fence_supported": true,
-    "reconciliation_strength": "ADAPTER_RECONCILIATION_STRENGTH_AUTHORITATIVE",
+    "reconciliation_strength": "ADAPTER_RECONCILIATION_STRENGTH_BOUNDED",
     "unproven_outcome_action": "RECONCILIATION_ACTION_MANUAL_REQUIRED",
     "missing_mechanism_rejected": true,
     "wrong_conformance_version_rejected": true
   },
-  "invariant_check": "AdapterCapabilityAssuranceHonesty: the production Pi manifest is emitted only from the exact complete build-bound evidence set and declares the generated V1 assurance/profile values exercised by the integrated lifecycle; each missing mechanism and wrong version must reject activation."
+  "invariant_check": "AdapterCapabilityAssuranceHonesty: the production Pi manifest is emitted only from the exact complete build-bound evidence set, declares bounded adapter-wide reconciliation plus manual-required external ambiguity, and never promotes authoritative transcript replacement into authoritative Operation-outcome reconciliation; each missing mechanism and wrong version must reject activation."
 }

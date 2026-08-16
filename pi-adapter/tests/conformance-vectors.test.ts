@@ -167,6 +167,7 @@ function executeManifestActivation(vector: Vector): void {
     "strictSessionTreeValidation",
     "authoritativeCursorReplacement",
     "idleMaterializedReload",
+    "boundedJournalRetention",
   ] as const satisfies readonly (keyof PiCapabilityEvidence)[];
   assert.deepEqual(stringList(vector.input.required_mechanisms), mechanisms);
   assert.equal(vector.input.conformance_version, PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION);
@@ -197,8 +198,13 @@ function executeManifestActivation(vector: Vector): void {
     vector.expected_outcome.generation_fence_supported,
   );
   assert.equal(
-    assurance.reconciliationStrength === AdapterReconciliationStrength.AUTHORITATIVE,
-    vector.expected_outcome.reconciliation_strength === "ADAPTER_RECONCILIATION_STRENGTH_AUTHORITATIVE",
+    vector.expected_outcome.reconciliation_strength,
+    "ADAPTER_RECONCILIATION_STRENGTH_BOUNDED",
+  );
+  assert.equal(
+    assurance.reconciliationStrength,
+    AdapterReconciliationStrength.BOUNDED,
+    "authoritative transcript replacement must not overclaim adapter-wide outcome authority",
   );
   assert.equal(
     assurance.unprovenOutcomeAction === ReconciliationAction.MANUAL_REQUIRED,

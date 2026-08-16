@@ -190,6 +190,34 @@ const mutations = [
     testFile: "dist/tests/core_client.test.js",
   },
   {
+    name: "overclaim authoritative adapter-wide reconciliation from transcript replacement",
+    file: "src/core_client.ts",
+    find: `          reconciliationStrength: AdapterReconciliationStrength.BOUNDED,`,
+    replace: `          reconciliationStrength: AdapterReconciliationStrength.AUTHORITATIVE,`,
+    test: "Pi manifest activates only",
+    testFile: "dist/tests/core_client.test.js",
+  },
+  {
+    name: "skip bounded completed-journal retention pruning",
+    file: "src/spawn_journal.ts",
+    find: `    const expiredOrExcess = terminal.filter((record, index) => {
+      const committedAt = new Date(record.state.committedPublication!.committedAt).valueOf();
+      return now - committedAt > this.#terminalRetentionMs
+        || index >= this.#maxRetainedTerminalRecords;
+    });`,
+    replace: `    const expiredOrExcess: typeof terminal = [];`,
+    test: "spawn journal bounds completed history",
+    testFile: "dist/tests/runtime_supervision_primitives.test.js",
+  },
+  {
+    name: "retain an abandoned no-effect spawn journal indefinitely",
+    file: "src/spawn_supervisor.ts",
+    find: `            await this.#journal.abandonClaim(claimOperationId);`,
+    replace: `            // mutant: abandoned no-effect journal retained`,
+    test: "require_resume refuses a memory-only prior",
+    testFile: "dist/tests/spawn_supervisor.test.js",
+  },
+  {
     name: "admit no-proof volatile projection as an unknown schema family",
     file: "src/core_client.ts",
     find: `    || value === PI_VOLATILE_PROJECTION_SCHEMA_REF;`,

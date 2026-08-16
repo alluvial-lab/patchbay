@@ -754,7 +754,7 @@ export default function offlineMaterialization(pi) {
     assert.equal(assurance.value.generationFenceSupport, true);
     assert.equal(
       assurance.value.reconciliationStrength,
-      AdapterReconciliationStrength.AUTHORITATIVE,
+      AdapterReconciliationStrength.BOUNDED,
     );
 
     const fresh = await control.submit(create(SubmitRequestSchema, {
@@ -927,31 +927,36 @@ export default function offlineMaterialization(pi) {
     );
 
     const journalFiles = readdirSync(journalDirectory).filter((name) => name.endsWith(".json"));
-    assert.equal(journalFiles.length, 2, "fresh and continuation own exactly one journal each");
+    assert.equal(journalFiles.length, 2, "the bounded duplicate-replay window retains two receipts");
     for (const journalFile of journalFiles) {
       const journal = JSON.parse(readFileSync(join(journalDirectory, journalFile), "utf8")) as {
         claim?: { claimOperationId?: string };
         phases?: readonly { phase?: number }[];
         promotionObserved?: boolean;
         publicationCommitted?: boolean;
-        stagedPublication?: {
+        stagedPublication?: unknown;
+        committedPublication?: {
           continuationContextStatus?: number;
-          entries?: readonly { mode?: string; restartStable?: boolean }[];
+          entryCount?: number;
+          committedAt?: string;
         };
       };
       assert.equal(journal.promotionObserved, true, journalFile);
       assert.equal(journal.publicationCommitted, true, journalFile);
+      assert.equal(journal.stagedPublication, undefined, journalFile);
+      assert.equal(journal.committedPublication?.entryCount, 1, journalFile);
+      assert.ok(journal.committedPublication?.committedAt, journalFile);
       assert.ok((journal.phases?.length ?? 0) >= 4, journalFile);
-      const stagedProjection = journal.stagedPublication?.entries?.[0];
       if (journal.claim?.claimOperationId === freshCommandId) {
-        assert.equal(stagedProjection?.mode, "volatile-snapshot");
-        assert.equal(stagedProjection?.restartStable, false);
+        assert.equal(
+          journal.committedPublication?.continuationContextStatus,
+          ContinuationContextStatus.UNSPECIFIED,
+        );
       } else if (journal.claim?.claimOperationId === continuationCommandId) {
         assert.equal(
-          journal.stagedPublication?.continuationContextStatus,
+          journal.committedPublication?.continuationContextStatus,
           ContinuationContextStatus.RESUMED,
         );
-        assert.equal(stagedProjection?.restartStable, true);
       } else {
         assert.fail(`unexpected managed spawn journal ${journalFile}`);
       }

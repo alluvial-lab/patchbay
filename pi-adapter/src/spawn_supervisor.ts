@@ -449,6 +449,7 @@ export class ClaimAwareSpawnSupervisor {
     let lastPhaseHasNoSuccessorProof = false;
     let seal: MaterializedSessionSeal | undefined;
     let promotionCommitted = false;
+    let abandonJournalAfterFailure = false;
 
     try {
       if (validated.continuationMode !== "fresh") {
@@ -810,10 +811,14 @@ export class ClaimAwareSpawnSupervisor {
               ).catch(() => undefined);
             }
             lease.release();
+            abandonJournalAfterFailure = true;
           }
           supervisorError.terminalReported = await this.#core
             .reportSpawnFailure(validated.operation, supervisorError.failureCode)
             .then(() => true, () => false);
+          if (abandonJournalAfterFailure && supervisorError.terminalReported) {
+            await this.#journal.abandonClaim(claimOperationId);
+          }
         }
       }
       throw supervisorError;
@@ -890,6 +895,13 @@ export class ClaimAwareSpawnSupervisor {
     // staged-publication state are the only admissible recovery authority.
     const state = await this.#journal.reconcile(claimOperationId);
     if (!state) return false;
+    if (state.publicationCommitted) {
+      if (!state.externalIdentity) {
+        throw new Error("committed spawn journal is missing exact external identity");
+      }
+      requireExactPromotion(promotion, state.exactClaim, state.externalIdentity.runtime);
+      return true;
+    }
     assertPromotionReplayReady(state);
     requireExactPromotion(
       promotion,

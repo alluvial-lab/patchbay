@@ -325,10 +325,12 @@ The promoted `adapter-assurance-complete-manifest` example executes the producti
 The Pi adapter's managed-lifecycle declaration is implementation-checked and
 fails closed unless one build-bound evidence set names the supervisor,
 challenged control handshake, strict session-tree validator, authoritative
-cursor replacement, idle materialized reload, and the exact lifecycle
-conformance version. Its generic V1 assurance declares Patchbay-boundary
-deduplication, continuation proof, cursor support, generation fencing,
-authoritative reconciliation, and manual action for unproven outcomes. Pi-only
+cursor replacement, idle materialized reload, bounded recovery-journal
+retention, and the exact lifecycle conformance version. Its generic V1 assurance declares Patchbay-boundary
+deduplication, continuation proof, cursor support, generation fencing, bounded
+reconciliation, and manual action for unproven outcomes. The bound is the
+verified exact-set transcript replacement scope; launch/reload Operation-outcome
+ambiguity remains manual rather than being mislabeled authoritative. Pi-only
 cwd, session-file, cursor, and reload vocabulary remains in the generated opaque
 `PiRuntimeProfile`; core capability vocabulary does not absorb it.
 
@@ -339,8 +341,10 @@ replacement, reload admission/markers/re-handshake/reconciliation, and fully
 injected offline SDK fixtures. The integrated harness uses a real core server and
 real supervised `pi --mode rpc` children to perform fresh spawn, offline
 materialization, exact continuation, same-process reload, forced adapter-stream
-reconnect/replay, durable journal/cursor acknowledgement, and process-group
-shutdown without ambient model credentials. Replacement and reload fences also
+reconnect/replay, durable journal/cursor acknowledgement, active recovery
+payloads above the former 2 MiB cliff, terminal journal compaction, completed-
+history count/time pruning, and process-group shutdown without ambient model
+credentials. Replacement and reload fences also
 suppress prior/current callbacks that would otherwise queue behind their owning
 action gate.
 
@@ -353,10 +357,12 @@ presentation. The draft
 [`spawn-reconnect-cursor-convergence`](../contracts/vectors/spawn-reconnect-cursor-convergence.json)
 example executes the shared authoritative-replacement owner and Pi cursor
 adapter, including omitted-entry deletion and cursor-after-publication ordering.
-Mutation witnesses remove individual activation evidence, external continuity,
-exact replacement publication, cursor persistence, pre-launch journal ordering,
-post-launch poison, resume materialization, promotion ordering, action fencing,
-and offline fixture injection; each is required to fail its focused oracle.
+Mutation witnesses remove individual activation evidence, reintroduce adapter-
+wide authoritative reconciliation, skip completed-journal pruning, remove
+external continuity, exact replacement publication, cursor persistence, pre-
+launch journal ordering, post-launch poison, resume materialization, promotion
+ordering, action fencing, and offline fixture injection; each is required to fail
+its focused oracle.
 
 This is implementation and draft-vector evidence only. It does not promote a
 formal property, does not make any of these draft vectors checked-normative, and
