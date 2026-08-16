@@ -15,6 +15,7 @@ import {
   CommandIdSchema,
   OperationKind,
   OperationSchema,
+  AcceptedOperationSchema,
   IdempotencyStrength,
   OperationState,
   ReconciliationAction,
@@ -172,7 +173,12 @@ test("cancel and interrupt recover the stable target from command records", asyn
         yield {
           payload: create(StoredEventPayloadSchema, {
             kind: StoredEventKind.OPERATION,
-            payload: toBinary(OperationSchema, original),
+            // Kind-1 events carry the AcceptedOperation envelope — the shape
+            // core durably stores and resolveCommandTarget must decode.
+            payload: toBinary(
+              AcceptedOperationSchema,
+              create(AcceptedOperationSchema, { operation: original }),
+            ),
           }),
         };
       },
