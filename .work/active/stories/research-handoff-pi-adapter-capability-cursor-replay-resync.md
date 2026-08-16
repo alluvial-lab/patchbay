@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-cursor-replay-resync
 kind: story
-stage: review
+stage: done
 tags: [adapter, protocol, verification]
 parent: research-handoff-pi-adapter-capability
 depends_on: [research-handoff-pi-adapter-capability-control-session-integrity, research-handoff-pi-adapter-capability-rpc-process-supervisor, research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-cursor-authoritative-replacement-contract, research-handoff-spawn-runtime-evidence-promotion-contract, research-handoff-spawn-reconnect-cursor-reconcile]
