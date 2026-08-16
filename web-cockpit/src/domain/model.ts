@@ -51,8 +51,11 @@ import {
 import {
   decodeTokenCommuneResourceObservation,
   foldPiPersistedProjectionObservation,
-  piPersistedProjectionContinuityId,
+  foldPiVolatileProjectionObservation,
+  piProjectionObservationScope,
+  type PiPersistedPresentationItem,
   type PiPersistedProjectionState,
+  type PiVolatileProjectionState,
 } from "@patchbay/operator-domain";
 
 import type { ReconcileProjection } from "./reconcile.js";
@@ -195,8 +198,12 @@ export interface ObservationView {
   commandId?: string;
   /** Plain-text preview of tool args/result; rendered as text, never markdown. */
   detail?: string;
-  /** Exact Pi-persisted projection membership; absent for transient/audit observations. */
-  piProjection?: { readonly continuityId: string; readonly membershipId: string };
+  /** Pi projection membership; absent for ordinary transient/audit observations. */
+  piProjection?: {
+    readonly scopeKey: string;
+    readonly continuityId: string;
+    readonly membershipId: string;
+  };
 }
 
 export interface AdapterDiagnosticView {
@@ -280,6 +287,8 @@ export interface PresentationModel {
   observations: ObservationView[];
   /** Authoritative exact-set state for known Pi continuity scopes. */
   piPersistedProjections: Map<string, PiPersistedProjectionState>;
+  /** Non-authoritative last-observation-wins memory-only presentation state. */
+  piVolatileProjections: Map<string, PiVolatileProjectionState>;
   resourceObservations: ResourceObservationView[];
   lockdown: LockdownView;
   security: SecurityInventoryView;
@@ -297,6 +306,7 @@ export function emptyPresentationModel(): PresentationModel {
     adapters: new Map(),
     observations: [],
     piPersistedProjections: new Map(),
+    piVolatileProjections: new Map(),
     resourceObservations: [],
     lockdown: { active: false, submitting: false },
     security: emptySecurityInventory(),
@@ -463,6 +473,7 @@ export function replaceFromSnapshots(
     adapters: new Map(),
     observations: [],
     piPersistedProjections: new Map(),
+    piVolatileProjections: new Map(),
     resourceObservations: [],
     lockdown: lockdownViewFromState(snapshots.session.lockdown),
     security: emptySecurityInventory(),
@@ -1048,42 +1059,49 @@ function foldObservation(model: PresentationModel, observation: Observation, lsn
     if (model.resourceObservations.length > 100) model.resourceObservations.splice(0, model.resourceObservations.length - 100);
     return;
   }
-  const piContinuityId = piPersistedProjectionContinuityId(observation);
-  if (piContinuityId) {
+  const piScope = piProjectionObservationScope(observation);
+  if (piScope) {
+    const target = runtimeSessionFromScope(observation.targetScope);
+    if (piScope.authority === "volatile") {
+      const projection = foldPiVolatileProjectionObservation(
+        model.piVolatileProjections.get(piScope.key),
+        observation,
+      );
+      if (!projection) throw new Error("Pi volatile projection scope decoded without a fold");
+      model.piVolatileProjections.set(piScope.key, projection.state);
+      applyPiProjectionFold(
+        model,
+        piScope.key,
+        piScope.externalContinuityId,
+        target,
+        projection.removedMembershipIds,
+        projection.addedItems,
+        lsn,
+      );
+      return;
+    }
+
     const projection = foldPiPersistedProjectionObservation(
-      model.piPersistedProjections.get(piContinuityId),
+      model.piPersistedProjections.get(piScope.key),
       observation,
     );
-    if (!projection) throw new Error("Pi projection continuity decoded without a fold");
-    model.piPersistedProjections.set(piContinuityId, projection.state);
-    const removed = new Set(projection.removedMembershipIds);
-    if (removed.size > 0) {
-      model.observations = model.observations.filter(
-        (item) => !item.piProjection || !removed.has(item.piProjection.membershipId),
-      );
-    }
-    const target = runtimeSessionFromScope(observation.targetScope);
-    const replacingMessageIds = new Set(
-      projection.addedItems
-        .map((item) => item.transcriptEvent.messageId)
-        .filter((messageId): messageId is string => Boolean(messageId)),
+    if (!projection) throw new Error("Pi persisted projection scope decoded without a fold");
+    model.piPersistedProjections.set(piScope.key, projection.state);
+    const volatile = model.piVolatileProjections.get(piScope.key);
+    model.piVolatileProjections.delete(piScope.key);
+    applyPiProjectionFold(
+      model,
+      piScope.key,
+      piScope.externalContinuityId,
+      target,
+      [
+        ...projection.removedMembershipIds,
+        ...(volatile ? volatile.exactEntries.flatMap((entry) =>
+          entry.presentationItems.map((item) => item.membershipId)) : []),
+      ],
+      projection.addedItems,
+      lsn,
     );
-    if (target && replacingMessageIds.size > 0) {
-      const targetKey = sessionKey(target);
-      model.observations = model.observations.filter((item) => !(
-        !item.piProjection &&
-        item.messageId &&
-        replacingMessageIds.has(item.messageId) &&
-        item.session &&
-        sessionKey(item.session) === targetKey
-      ));
-    }
-    for (const item of projection.addedItems) {
-      foldTranscriptObservation(model, item.transcriptEvent, target, lsn, undefined, {
-        continuityId: piContinuityId,
-        membershipId: item.membershipId,
-      });
-    }
     return;
   }
 
@@ -1107,6 +1125,51 @@ function foldObservation(model: PresentationModel, observation: Observation, lsn
   }
 
   foldTranscriptObservation(model, transcript, target, lsn, commandId);
+}
+
+function applyPiProjectionFold(
+  model: PresentationModel,
+  scopeKey: string,
+  continuityId: string,
+  target: SessionIdentity | undefined,
+  removedMembershipIds: readonly string[],
+  addedItems: readonly PiPersistedPresentationItem[],
+  lsn: bigint,
+): void {
+  const removed = new Set(removedMembershipIds);
+  if (removed.size > 0) {
+    model.observations = model.observations.filter((item) => !(
+      item.piProjection?.scopeKey === scopeKey
+      && removed.has(item.piProjection.membershipId)
+    ));
+  }
+  if (target) {
+    model.observations = model.observations.map((item) =>
+      item.piProjection?.scopeKey === scopeKey ? { ...item, session: target } : item,
+    );
+  }
+  const replacingMessageIds = new Set(
+    addedItems
+      .map((item) => item.transcriptEvent.messageId)
+      .filter((messageId): messageId is string => Boolean(messageId)),
+  );
+  if (target && replacingMessageIds.size > 0) {
+    const targetKey = sessionKey(target);
+    model.observations = model.observations.filter((item) => !(
+      !item.piProjection
+      && item.messageId
+      && replacingMessageIds.has(item.messageId)
+      && item.session
+      && sessionKey(item.session) === targetKey
+    ));
+  }
+  for (const item of addedItems) {
+    foldTranscriptObservation(model, item.transcriptEvent, target, lsn, undefined, {
+      scopeKey,
+      continuityId,
+      membershipId: item.membershipId,
+    });
+  }
 }
 
 function foldSecurityLockdown(
@@ -1853,9 +1916,11 @@ function foldTranscriptObservation(
   piProjection?: ObservationView["piProjection"],
 ): void {
   const messageId = typeof event.messageId === "string" ? event.messageId : undefined;
+  const projectionId = piProjection ? piProjectionMembershipKey(piProjection) : undefined;
   const matchingIndex = (): number => model.observations.findIndex((item) =>
     piProjection
-      ? item.piProjection?.membershipId === piProjection.membershipId
+      ? item.piProjection?.scopeKey === piProjection.scopeKey
+        && item.piProjection.membershipId === piProjection.membershipId
       : item.messageId === messageId,
   );
   if (event.kind === "assistant_delta" && messageId && typeof event.delta === "string") {
@@ -1871,7 +1936,7 @@ function foldTranscriptObservation(
       };
     } else {
       model.observations.push({
-        id: piProjection?.membershipId ?? messageId,
+        id: projectionId ?? messageId,
         messageId,
         session,
         role: "agent",
@@ -1887,7 +1952,7 @@ function foldTranscriptObservation(
   if (event.kind === "assistant_committed" && messageId && typeof event.text === "string") {
     const index = matchingIndex();
     const next: ObservationView = {
-      id: piProjection?.membershipId ?? messageId,
+      id: projectionId ?? messageId,
       messageId,
       session,
       role: "agent",
@@ -1903,7 +1968,7 @@ function foldTranscriptObservation(
   }
   if (event.kind === "user_confirmed" && messageId && typeof event.text === "string") {
     model.observations.push({
-      id: piProjection?.membershipId ?? messageId,
+      id: projectionId ?? messageId,
       messageId,
       session,
       role: "operator",
@@ -1917,7 +1982,7 @@ function foldTranscriptObservation(
   }
   if (event.kind === "tool_requested" || event.kind === "tool_finished") {
     const baseId = typeof event.toolCallId === "string" ? event.toolCallId : `tool-${lsn}`;
-    const id = piProjection?.membershipId
+    const id = projectionId
       ?? (event.kind === "tool_finished" ? `${baseId}:finished` : baseId);
     const tool = typeof event.tool === "string" ? event.tool : "tool";
     const body = event.kind === "tool_requested" ? `Running **${tool}**` : event.error ? `**${tool}** failed: ${event.error}` : `**${tool}** finished`;
@@ -2042,6 +2107,10 @@ function toolPreview(value: unknown): string | undefined {
   return text.length > TOOL_PREVIEW_LIMIT ? `${text.slice(0, TOOL_PREVIEW_LIMIT - 1)}…` : text;
 }
 
+function piProjectionMembershipKey(piProjection: NonNullable<ObservationView["piProjection"]>): string {
+  return JSON.stringify([piProjection.scopeKey, piProjection.membershipId]);
+}
+
 function cloneModel(model: PresentationModel): PresentationModel {
   return {
     ...model,
@@ -2053,6 +2122,7 @@ function cloneModel(model: PresentationModel): PresentationModel {
     adapters: new Map(model.adapters),
     observations: [...model.observations],
     piPersistedProjections: new Map(model.piPersistedProjections),
+    piVolatileProjections: new Map(model.piVolatileProjections),
     resourceObservations: [...model.resourceObservations],
   };
 }

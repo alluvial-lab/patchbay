@@ -4,8 +4,8 @@ package patchbay;
 
 import "patchbay/sessions.proto";
 
-// Opaque persisted-entry projection envelopes. The core durably carries these
-// as ordinary Observation payloads without interpreting Pi vocabulary. Raw
+// Opaque Pi projection envelopes. The core durably carries these as ordinary
+// Observation payloads without interpreting Pi vocabulary. Raw
 // session paths, roots, labels, and custom-entry data are intentionally absent.
 message PiPersistedProjectionEntry {
   string stable_entry_id = 1;
@@ -38,6 +38,19 @@ message PiPersistedProjectionReplacement {
   string cursor_entry_id = 5;
   string leaf_entry_id = 6;
   string tree_digest = 7;
+}
+
+// Non-authoritative, last-observation-wins presentation snapshot for a Pi
+// session that has not materialized. It deliberately carries no replacement
+// epoch or restart-stable cursor claim. Materialization always enters the
+// authoritative path through a complete persisted replacement.
+message PiVolatileProjectionSnapshot {
+  string external_continuity_id = 1;
+  string batch_id = 2;
+  repeated PiPersistedProjectionEntry exact_entries = 3;
+  string cursor_entry_id = 4;
+  string leaf_entry_id = 5;
+  string tree_digest = 6;
 }
 
 // Generated Pi-local runtime vocabulary carried inside the generic opaque

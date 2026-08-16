@@ -4,6 +4,7 @@ import {
   PayloadContentType,
   PiPersistedProjectionReplacementSchema,
   PiPersistedProjectionSuffixSchema,
+  PiVolatileProjectionSnapshotSchema,
   TargetScopeKind,
   type Observation,
   type PiPersistedProjectionEntry,
@@ -11,6 +12,15 @@ import {
 
 export const PI_PERSISTED_SUFFIX_SCHEMA_REF = "patchbay.PiPersistedProjectionSuffix.v1";
 export const PI_PERSISTED_REPLACEMENT_SCHEMA_REF = "patchbay.PiPersistedProjectionReplacement.v1";
+export const PI_VOLATILE_PROJECTION_SCHEMA_REF = "patchbay.PiVolatileProjectionSnapshot.v1";
+
+export interface PiProjectionObservationScope {
+  readonly key: string;
+  readonly adapterId: string;
+  readonly deploymentScope: string;
+  readonly externalContinuityId: string;
+  readonly authority: "persisted" | "volatile";
+}
 
 export interface PiPersistedPresentationItem {
   readonly membershipId: string;
@@ -25,6 +35,9 @@ export interface PiPersistedProjectionEntryView {
 }
 
 export interface PiPersistedProjectionState {
+  readonly scopeKey: string;
+  readonly adapterId: string;
+  readonly deploymentScope: string;
   readonly externalContinuityId: string;
   readonly replacementEpoch: bigint;
   readonly exactEntries: readonly PiPersistedProjectionEntryView[];
@@ -41,20 +54,57 @@ export interface PiPersistedProjectionFold {
   readonly addedItems: readonly PiPersistedPresentationItem[];
 }
 
-export function piPersistedProjectionContinuityId(observation: Observation): string | undefined {
+export interface PiVolatileProjectionState {
+  readonly scopeKey: string;
+  readonly adapterId: string;
+  readonly deploymentScope: string;
+  readonly externalContinuityId: string;
+  readonly exactEntries: readonly PiPersistedProjectionEntryView[];
+  readonly cursorEntryId: string | null;
+  readonly leafEntryId: string | null;
+  readonly treeDigest: string;
+  readonly lastBatchId: string;
+}
+
+export interface PiVolatileProjectionFold {
+  readonly kind: "snapshot" | "idempotent";
+  readonly state: PiVolatileProjectionState;
+  readonly removedMembershipIds: readonly string[];
+  readonly addedItems: readonly PiPersistedPresentationItem[];
+}
+
+export function piProjectionObservationScope(
+  observation: Observation,
+): PiProjectionObservationScope | undefined {
   const envelope = observation.payload;
   if (!envelope || envelope.contentType !== PayloadContentType.PROTOBUF) return undefined;
+  let externalContinuityId: string;
+  let authority: PiProjectionObservationScope["authority"];
   if (envelope.schemaRef === PI_PERSISTED_REPLACEMENT_SCHEMA_REF) {
-    return boundedContinuity(
+    externalContinuityId = boundedContinuity(
       fromBinary(PiPersistedProjectionReplacementSchema, envelope.payload).externalContinuityId,
     );
-  }
-  if (envelope.schemaRef === PI_PERSISTED_SUFFIX_SCHEMA_REF) {
-    return boundedContinuity(
+    authority = "persisted";
+  } else if (envelope.schemaRef === PI_PERSISTED_SUFFIX_SCHEMA_REF) {
+    externalContinuityId = boundedContinuity(
       fromBinary(PiPersistedProjectionSuffixSchema, envelope.payload).externalContinuityId,
     );
+    authority = "persisted";
+  } else if (envelope.schemaRef === PI_VOLATILE_PROJECTION_SCHEMA_REF) {
+    externalContinuityId = boundedContinuity(
+      fromBinary(PiVolatileProjectionSnapshotSchema, envelope.payload).externalContinuityId,
+    );
+    authority = "volatile";
+  } else {
+    return undefined;
   }
-  return undefined;
+  const source = validateObservationSource(observation);
+  return Object.freeze({
+    key: lengthFramedKey([source.adapterId, source.deploymentScope, externalContinuityId]),
+    ...source,
+    externalContinuityId,
+    authority,
+  });
 }
 
 /** Decode and fold the two known Pi envelopes; unrelated Observations return undefined. */
@@ -70,13 +120,19 @@ export function foldPiPersistedProjectionObservation(
     || (envelope.schemaRef !== PI_PERSISTED_SUFFIX_SCHEMA_REF
       && envelope.schemaRef !== PI_PERSISTED_REPLACEMENT_SCHEMA_REF)
   ) return undefined;
-  validateObservationSource(observation);
+  const scope = piProjectionObservationScope(observation);
+  if (!scope || scope.authority !== "persisted") {
+    throw new Error("Pi persisted projection has no persisted observation scope");
+  }
 
   if (envelope.schemaRef === PI_PERSISTED_REPLACEMENT_SCHEMA_REF) {
     const replacement = fromBinary(PiPersistedProjectionReplacementSchema, envelope.payload);
     const entries = decodeEntries(replacement.exactEntries);
     const state = validatedState({
-      externalContinuityId: boundedContinuity(replacement.externalContinuityId),
+      scopeKey: scope.key,
+      adapterId: scope.adapterId,
+      deploymentScope: scope.deploymentScope,
+      externalContinuityId: scope.externalContinuityId,
       replacementEpoch: positiveEpoch(replacement.replacementEpoch),
       exactEntries: entries,
       cursorEntryId: optionalId(replacement.cursorEntryId),
@@ -95,8 +151,8 @@ export function foldPiPersistedProjectionObservation(
     ]);
     if (expectedBatch !== state.lastBatchId) throw new Error("Pi replacement batch id is invalid");
     if (current) {
-      if (current.externalContinuityId !== state.externalContinuityId) {
-        throw new Error("Pi replacement continuity differs from its selected state");
+      if (current.scopeKey !== state.scopeKey) {
+        throw new Error("Pi replacement scope differs from its selected state");
       }
       if (state.replacementEpoch === current.replacementEpoch) {
         if (!statesEqual(current, state)) throw new Error("Pi same-epoch replacement content conflicts");
@@ -115,12 +171,12 @@ export function foldPiPersistedProjectionObservation(
   }
 
   const suffix = fromBinary(PiPersistedProjectionSuffixSchema, envelope.payload);
-  const continuityId = boundedContinuity(suffix.externalContinuityId);
+  const continuityId = scope.externalContinuityId;
   const epoch = positiveEpoch(suffix.replacementEpoch);
   const batchId = digest(suffix.batchId, "batch id");
   if (!current) throw new Error("Pi known suffix has no current exact projection");
-  if (current.externalContinuityId !== continuityId || current.replacementEpoch !== epoch) {
-    throw new Error("Pi known suffix continuity or epoch is stale");
+  if (current.scopeKey !== scope.key || current.replacementEpoch !== epoch) {
+    throw new Error("Pi known suffix scope or epoch is stale");
   }
   if (current.lastBatchId === batchId) {
     return { kind: "idempotent", state: current, removedMembershipIds: [], addedItems: [] };
@@ -130,6 +186,9 @@ export function foldPiPersistedProjectionObservation(
   const suffixEntries = decodeEntries(suffix.entries);
   const exactEntries = mergeSuffix(current.exactEntries, suffixEntries);
   const state = validatedState({
+    scopeKey: scope.key,
+    adapterId: scope.adapterId,
+    deploymentScope: scope.deploymentScope,
     externalContinuityId: continuityId,
     replacementEpoch: epoch,
     exactEntries,
@@ -158,7 +217,63 @@ export function foldPiPersistedProjectionObservation(
   };
 }
 
-function validateObservationSource(observation: Observation): void {
+/** Fold a non-authoritative memory-only snapshot without an epoch claim. */
+export function foldPiVolatileProjectionObservation(
+  current: PiVolatileProjectionState | undefined,
+  observation: Observation,
+): PiVolatileProjectionFold | undefined {
+  const envelope = observation.payload;
+  if (
+    observation.kind !== ObservationKind.EVENT
+    || !envelope
+    || envelope.contentType !== PayloadContentType.PROTOBUF
+    || envelope.schemaRef !== PI_VOLATILE_PROJECTION_SCHEMA_REF
+  ) return undefined;
+  const scope = piProjectionObservationScope(observation);
+  if (!scope || scope.authority !== "volatile") {
+    throw new Error("Pi volatile projection has no volatile observation scope");
+  }
+  const snapshot = fromBinary(PiVolatileProjectionSnapshotSchema, envelope.payload);
+  const entries = decodeEntries(snapshot.exactEntries);
+  const state = validatedVolatileState({
+    scopeKey: scope.key,
+    adapterId: scope.adapterId,
+    deploymentScope: scope.deploymentScope,
+    externalContinuityId: scope.externalContinuityId,
+    exactEntries: entries,
+    cursorEntryId: optionalId(snapshot.cursorEntryId),
+    leafEntryId: optionalId(snapshot.leafEntryId),
+    treeDigest: digest(snapshot.treeDigest, "tree digest"),
+    lastBatchId: digest(snapshot.batchId, "batch id"),
+  });
+  const expectedBatch = batchDigest([
+    "volatile",
+    state.externalContinuityId,
+    canonicalJson(entriesForBatch(state.exactEntries)),
+    state.cursorEntryId ?? "",
+    state.leafEntryId ?? "",
+    state.treeDigest,
+  ]);
+  if (expectedBatch !== state.lastBatchId) throw new Error("Pi volatile snapshot batch id is invalid");
+  if (current) {
+    if (current.scopeKey !== state.scopeKey) {
+      throw new Error("Pi volatile snapshot scope differs from its selected state");
+    }
+    if (volatileStatesEqual(current, state)) {
+      return { kind: "idempotent", state: current, removedMembershipIds: [], addedItems: [] };
+    }
+  }
+  return {
+    kind: "snapshot",
+    state,
+    removedMembershipIds: current ? memberships(current.exactEntries) : [],
+    addedItems: items(state.exactEntries),
+  };
+}
+
+function validateObservationSource(
+  observation: Observation,
+): { readonly adapterId: string; readonly deploymentScope: string } {
   const target = observation.targetScope;
   const adapterId = target?.adapterId?.value;
   if (
@@ -175,6 +290,7 @@ function validateObservationSource(observation: Observation): void {
   ) {
     throw new Error("Pi projection Observation source or runtime target is invalid");
   }
+  return Object.freeze({ adapterId, deploymentScope: target.deploymentScope });
 }
 
 function decodeEntries(entries: readonly PiPersistedProjectionEntry[]): readonly PiPersistedProjectionEntryView[] {
@@ -225,6 +341,21 @@ function mergeSuffix(
 }
 
 function validatedState(state: PiPersistedProjectionState): PiPersistedProjectionState {
+  validateExactState(state);
+  return Object.freeze({ ...state, exactEntries: Object.freeze([...state.exactEntries]) });
+}
+
+function validatedVolatileState(state: PiVolatileProjectionState): PiVolatileProjectionState {
+  validateExactState(state);
+  return Object.freeze({ ...state, exactEntries: Object.freeze([...state.exactEntries]) });
+}
+
+function validateExactState(state: {
+  readonly exactEntries: readonly PiPersistedProjectionEntryView[];
+  readonly cursorEntryId: string | null;
+  readonly leafEntryId: string | null;
+  readonly treeDigest: string;
+}): void {
   const seen = new Set<string>();
   const seenMemberships = new Set<string>();
   let roots = 0;
@@ -257,12 +388,27 @@ function validatedState(state: PiPersistedProjectionState): PiPersistedProjectio
   if (piTreeDigest(state.exactEntries) !== state.treeDigest) {
     throw new Error("Pi projection tree digest disagrees with exact membership");
   }
-  return Object.freeze({ ...state, exactEntries: Object.freeze([...state.exactEntries]) });
 }
 
 function statesEqual(left: PiPersistedProjectionState, right: PiPersistedProjectionState): boolean {
-  return left.externalContinuityId === right.externalContinuityId
+  return left.scopeKey === right.scopeKey
+    && left.adapterId === right.adapterId
+    && left.deploymentScope === right.deploymentScope
+    && left.externalContinuityId === right.externalContinuityId
     && left.replacementEpoch === right.replacementEpoch
+    && left.cursorEntryId === right.cursorEntryId
+    && left.leafEntryId === right.leafEntryId
+    && left.treeDigest === right.treeDigest
+    && left.lastBatchId === right.lastBatchId
+    && left.exactEntries.length === right.exactEntries.length
+    && left.exactEntries.every((entry, index) => entriesEqual(entry, right.exactEntries[index]!));
+}
+
+function volatileStatesEqual(left: PiVolatileProjectionState, right: PiVolatileProjectionState): boolean {
+  return left.scopeKey === right.scopeKey
+    && left.adapterId === right.adapterId
+    && left.deploymentScope === right.deploymentScope
+    && left.externalContinuityId === right.externalContinuityId
     && left.cursorEntryId === right.cursorEntryId
     && left.leafEntryId === right.leafEntryId
     && left.treeDigest === right.treeDigest
@@ -305,6 +451,11 @@ function memberships(entries: readonly PiPersistedProjectionEntryView[]): readon
 
 function piTreeDigest(entries: readonly PiPersistedProjectionEntryView[]): string {
   return sha256Hex(JSON.stringify(entries.map((entry) => [entry.stableEntryId, entry.parentEntryId])));
+}
+
+function lengthFramedKey(parts: readonly string[]): string {
+  const encoder = new TextEncoder();
+  return parts.map((part) => `${encoder.encode(part).byteLength}:${part}\0`).join("");
 }
 
 function batchDigest(parts: readonly string[]): string {

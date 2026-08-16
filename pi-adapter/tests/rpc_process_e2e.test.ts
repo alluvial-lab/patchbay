@@ -98,6 +98,7 @@ test("real offline pi --mode rpc child handshakes and exits as one supervised pr
     const handshake = await runtimePort.handshake(runtime, {
       expectedProjectCwd: cwd,
       expectedExtensionPath: extensionPath,
+      rpcTimeoutMs: 10_000,
     });
     assert.equal(handshake.cwd, cwd);
     assert.ok(handshake.sessionId);

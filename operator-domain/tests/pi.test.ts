@@ -15,6 +15,7 @@ import {
   PiPersistedProjectionEntrySchema,
   PiPersistedProjectionReplacementSchema,
   PiPersistedProjectionSuffixSchema,
+  PiVolatileProjectionSnapshotSchema,
   RuntimeSessionIdSchema,
   TargetScopeKind,
   TargetScopeSchema,
@@ -22,12 +23,14 @@ import {
 import {
   PI_PERSISTED_REPLACEMENT_SCHEMA_REF,
   PI_PERSISTED_SUFFIX_SCHEMA_REF,
+  PI_VOLATILE_PROJECTION_SCHEMA_REF,
   foldPiPersistedProjectionObservation,
+  foldPiVolatileProjectionObservation,
+  piProjectionObservationScope,
   type PiPersistedProjectionEntryView,
 } from "../src/pi.js";
 
 const continuityId = `pi1:${"a".repeat(43)}`;
-const adapterId = create(AdapterIdSchema, { value: "pi" });
 const encoder = new TextEncoder();
 
 function entry(
@@ -54,7 +57,12 @@ function entry(
   };
 }
 
-function replacement(epoch: bigint, entries: readonly PiPersistedProjectionEntryView[], leaf: string) {
+function replacement(
+  epoch: bigint,
+  entries: readonly PiPersistedProjectionEntryView[],
+  leaf: string,
+  target: { readonly adapterId?: string; readonly deploymentScope?: string } = {},
+) {
   const treeDigest = tree(entries);
   const cursor = entries.at(-1)?.stableEntryId ?? "";
   const batchId = batch([
@@ -71,6 +79,7 @@ function replacement(epoch: bigint, entries: readonly PiPersistedProjectionEntry
       leafEntryId: leaf,
       treeDigest,
     })),
+    target,
   );
 }
 
@@ -101,6 +110,30 @@ function suffix(
   );
 }
 
+function volatile(
+  entries: readonly PiPersistedProjectionEntryView[],
+  leaf: string,
+  target: { readonly adapterId?: string; readonly deploymentScope?: string } = {},
+) {
+  const treeDigest = tree(entries);
+  const cursor = entries.at(-1)?.stableEntryId ?? "";
+  const batchId = batch([
+    "volatile", continuityId, canonical(entriesForBatch(entries)), cursor, leaf, treeDigest,
+  ]);
+  return observation(
+    PI_VOLATILE_PROJECTION_SCHEMA_REF,
+    toBinary(PiVolatileProjectionSnapshotSchema, create(PiVolatileProjectionSnapshotSchema, {
+      externalContinuityId: continuityId,
+      batchId,
+      exactEntries: entries.map(wireEntry),
+      cursorEntryId: cursor,
+      leafEntryId: leaf,
+      treeDigest,
+    })),
+    target,
+  );
+}
+
 test("Pi compositor exact replacement removes omitted membership while retry is inert", () => {
   const oldEntries = [entry("root", null), entry("old", "root", "membership-old", "stale")];
   const first = foldPiPersistedProjectionObservation(undefined, replacement(1n, oldEntries, "old"));
@@ -120,6 +153,55 @@ test("Pi compositor exact replacement removes omitted membership while retry is 
   assert.deepEqual(retry?.addedItems, []);
 });
 
+test("consumer scope key separates forced digest collisions by adapter and deployment", () => {
+  const observations = [
+    replacement(1n, [entry("root-a", null), entry("a", "root-a", "member-a")], "a"),
+    replacement(
+      1n,
+      [entry("root-b", null), entry("b", "root-b", "member-b")],
+      "b",
+      { adapterId: "other-pi" },
+    ),
+    replacement(
+      1n,
+      [entry("root-c", null), entry("c", "root-c", "member-c")],
+      "c",
+      { deploymentScope: "machine-b" },
+    ),
+  ];
+  const states = new Map<string, NonNullable<ReturnType<typeof foldPiPersistedProjectionObservation>>["state"]>();
+  for (const candidate of observations) {
+    const scope = piProjectionObservationScope(candidate)!;
+    const folded = foldPiPersistedProjectionObservation(states.get(scope.key), candidate)!;
+    states.set(scope.key, folded.state);
+  }
+  assert.equal(states.size, 3);
+  assert.deepEqual(
+    [...states.values()].map((state) => [state.adapterId, state.deploymentScope]),
+    [["pi", "machine-a"], ["other-pi", "machine-a"], ["pi", "machine-b"]],
+  );
+});
+
+test("volatile replay is last-observation-wins and later materialization starts authoritative epoch one", () => {
+  const first = foldPiVolatileProjectionObservation(undefined, volatile([
+    entry("root", null),
+    entry("old", "root", "membership-old"),
+  ], "old"))!;
+  const second = foldPiVolatileProjectionObservation(first.state, volatile([
+    entry("root", null),
+    entry("new", "root", "membership-new"),
+  ], "new"))!;
+  assert.equal(second.kind, "snapshot");
+  assert.deepEqual(second.removedMembershipIds, ["membership-old"]);
+  assert.deepEqual(second.addedItems.map((item) => item.membershipId), ["membership-new"]);
+
+  const materialized = foldPiPersistedProjectionObservation(undefined, replacement(1n, [
+    entry("root", null),
+    entry("new", "root", "membership-new"),
+  ], "new"))!;
+  assert.equal(materialized.state.replacementEpoch, 1n);
+});
+
 test("Pi compositor known suffix is stable-id idempotent and same-epoch conflicts fail closed", () => {
   const root = entry("root", null);
   const current = foldPiPersistedProjectionObservation(undefined, replacement(4n, [root], "root"))!;
@@ -137,14 +219,19 @@ test("Pi compositor known suffix is stable-id idempotent and same-epoch conflict
   );
 });
 
-function observation(schemaRef: string, payload: Uint8Array) {
+function observation(
+  schemaRef: string,
+  payload: Uint8Array,
+  target: { readonly adapterId?: string; readonly deploymentScope?: string } = {},
+) {
+  const targetAdapterId = target.adapterId ?? "pi";
   return create(ObservationSchema, {
-    sender: create(ActorEndpointRefSchema, { actorId: create(ActorIdSchema, { value: "pi" }) }),
+    sender: create(ActorEndpointRefSchema, { actorId: create(ActorIdSchema, { value: targetAdapterId }) }),
     kind: ObservationKind.EVENT,
     targetScope: create(TargetScopeSchema, {
       kind: TargetScopeKind.RUNTIME_SESSION,
-      adapterId,
-      deploymentScope: "machine-a",
+      adapterId: create(AdapterIdSchema, { value: targetAdapterId }),
+      deploymentScope: target.deploymentScope ?? "machine-a",
       runtimeSessionId: create(RuntimeSessionIdSchema, { value: "pi-session" }),
       sessionGeneration: create(GenerationSchema, { value: 2n }),
     }),

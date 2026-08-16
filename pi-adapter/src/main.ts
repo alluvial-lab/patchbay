@@ -218,13 +218,19 @@ export class AdapterProcess {
           if (!active) this.#replacementResolvedCommands.delete(commandId);
         }
       },
-      stageSuccessor: async ({ acceptedSpawn, entry, continuationContextStatus }) => {
+      stageSuccessor: async ({
+        acceptedSpawn,
+        entry,
+        continuationContextStatus,
+        presentationConnectivity,
+        presentationActivity,
+      }) => {
         const claimOperationId = acceptedSpawn.claim?.claimOperationId?.value;
         if (!claimOperationId) throw new Error("staged successor has no exact claim operation id");
         await this.#queueSessionReport(
           entry,
-          SessionActivityState.UNKNOWN,
-          SessionConnectivityState.LIVE,
+          sessionActivity(presentationActivity),
+          sessionConnectivity(presentationConnectivity),
           undefined,
           { claimOperationId, continuationContextStatus },
         );

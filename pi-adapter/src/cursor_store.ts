@@ -28,7 +28,8 @@ export interface PiSessionContinuityKey {
   readonly adapterId: string;
   readonly deploymentScope: string;
   readonly piSessionId: string;
-  readonly sessionRootId: string;
+  /** Stable opaque identity of the configured root, never the Pi tree-root entry id. */
+  readonly configuredSessionRootId: string;
   /** Adapter-local only. This field must never enter a generated envelope. */
   readonly rootRelativePath: string;
 }
@@ -104,7 +105,6 @@ export async function derivePiSessionContinuityKey(input: {
   readonly adapterId: string;
   readonly deploymentScope: string;
   readonly piSessionId: string;
-  readonly sessionRootId: string;
   readonly configuredSessionRoot: string;
   readonly canonicalSessionPath: string;
 }): Promise<{ readonly key: PiSessionContinuityKey; readonly scope: PiExternalCursorScope }> {
@@ -112,7 +112,6 @@ export async function derivePiSessionContinuityKey(input: {
     adapterId: input.adapterId,
     deploymentScope: input.deploymentScope,
     piSessionId: input.piSessionId,
-    sessionRootId: input.sessionRootId,
   })) {
     if (!ID_PATTERN.test(value)) throw new Error(`Pi continuity ${name} is invalid`);
   }
@@ -134,16 +133,22 @@ export async function derivePiSessionContinuityKey(input: {
   ) {
     throw new Error("Pi continuity session path is outside its configured root");
   }
+  const configuredSessionRootId = `root1:${lengthFramedDigest([
+    "configured-session-root",
+    canonicalRoot,
+  ])}`;
   const key = Object.freeze({
     adapterId: input.adapterId,
     deploymentScope: input.deploymentScope,
     piSessionId: input.piSessionId,
-    sessionRootId: input.sessionRootId,
+    configuredSessionRootId,
     rootRelativePath,
   });
   const externalContinuityId = `pi1:${lengthFramedDigest([
+    input.adapterId,
+    input.deploymentScope,
     input.piSessionId,
-    input.sessionRootId,
+    configuredSessionRootId,
     rootRelativePath,
   ])}`;
   return Object.freeze({

@@ -7,8 +7,8 @@ const mutations = [
   {
     name: "collapse distinct Pi session continuity into one cursor scope",
     file: "src/cursor_store.ts",
-    find: `  const externalContinuityId = \`pi1:\${lengthFramedDigest([\n    input.piSessionId,\n    input.sessionRootId,\n    rootRelativePath,\n  ])}\`;`,
-    replace: `  const externalContinuityId = \`pi1:\${lengthFramedDigest([\n    "collapsed-pi-session",\n    input.sessionRootId,\n    rootRelativePath,\n  ])}\`;`,
+    find: `  const externalContinuityId = \`pi1:\${lengthFramedDigest([\n    input.adapterId,\n    input.deploymentScope,\n    input.piSessionId,\n    configuredSessionRootId,\n    rootRelativePath,\n  ])}\`;`,
+    replace: `  const externalContinuityId = \`pi1:\${lengthFramedDigest([\n    input.adapterId,\n    input.deploymentScope,\n    "collapsed-pi-session",\n    configuredSessionRootId,\n    rootRelativePath,\n  ])}\`;`,
     test: "different Pi continuity does not load",
     testFile: "dist/tests/entry_reconciler.test.js",
   },

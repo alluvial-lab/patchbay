@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-cursor-replay-resync
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: research-handoff-pi-adapter-capability
 depends_on: [research-handoff-pi-adapter-capability-control-session-integrity, research-handoff-pi-adapter-capability-rpc-process-supervisor, research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-cursor-authoritative-replacement-contract, research-handoff-spawn-runtime-evidence-promotion-contract, research-handoff-spawn-reconnect-cursor-reconcile]
@@ -40,7 +40,7 @@ export interface PiSessionContinuityKey {
   readonly adapterId: string;
   readonly deploymentScope: string;
   readonly piSessionId: string;
-  readonly sessionRootId: string;
+  readonly configuredSessionRootId: string;
   readonly rootRelativePath: string;
 }
 
@@ -63,7 +63,7 @@ export interface PiEntryCursorStore {
 }
 ```
 
-`ExternalCursorScope.externalContinuityId` is a bounded digest of length-framed Pi session id + configured session-root id + canonical root-relative path, under adapter/deployment scope. The raw path remains local. Patchbay generation is not an input. A second logical target binding for the same continuity id rejects before projection/report.
+`ExternalCursorScope.externalContinuityId` is a bounded digest of length-framed adapter id + deployment scope + verified Pi session id + stable configured-session-root id + canonical root-relative path. The configured-root id is derived from the canonical configured root, never from Pi's tree-root entry id; raw paths remain local. Patchbay generation is not an input. Consumers additionally key state by the authenticated adapter/deployment target plus the digest so a forced digest collision cannot merge scopes. A second logical target binding for the same continuity id rejects before projection/report.
 
 Known cursor:
 
@@ -87,7 +87,7 @@ Retrying identical `(scope,epoch)` is a no-op. Conflicting content for the same 
 
 Live `entry_appended` only wakes reconciliation. Parallel tool updates remain transient partial-order notifications; finalized persisted entries repair them. Control-extension custom entries participate in tree/cursor identity but do not become transcript presentation members.
 
-For `memory_only` sessions, the reconciler may hold a volatile exact set for current process presentation but stores no restart-stable current cursor claim. When the first assistant materializes the file, it performs a full authoritative replacement before enabling restart-stable cursor capability.
+For `memory_only` sessions, the reconciler publishes a distinct non-authoritative, last-observation-wins volatile presentation snapshot with no replacement epoch or restart-stable cursor claim. When the first assistant materializes the file, it performs a full authoritative replacement from epoch one before enabling restart-stable cursor capability.
 
 ## Acceptance evidence
 
@@ -125,3 +125,20 @@ Consumes the logical identity, authoritative cursor replacement, runtime evidenc
 - `web-cockpit: npm test` — passed (145/145).
 - `cli: npm test` — passed (53/53 plus real-core resource projection).
 - `token-commune-adapter: npm test` — passed (63/63).
+
+### Fix round r1 — 2026-08-16
+
+- Execution capability: `openai-codex/gpt-5.6-sol`, inline cohesive fix ownership across the generated Pi envelope, adapter reconciler, operator-domain compositor, and cockpit projection. Direct-read only; no subagent was needed or invoked.
+- Review weight: `thorough`, supplied by the active autopilot caller; a fresh independent re-review follows this transition.
+- Known-suffix rebinding: the cockpit now keys each Pi membership by the full consuming scope and atomically rebinds every retained membership in that scope to the suffix Observation's verified runtime target before adding the suffix. The production fold + `renderSessionDetail` oracle proves replacement at N followed by a known suffix at N+1 renders the complete old+new transcript only under N+1.
+- Canonical scope digest: the producer digest now length-frames adapter id, deployment scope, verified Pi session id, an opaque stable identity derived from the canonical configured session root, and canonical root-relative path. Pi's tree-root entry id is no longer a continuity input. The consumer key independently length-frames authenticated adapter/deployment target plus opaque digest, so forced cross-target digest collisions stay separate. One-dimension tests cover adapter, deployment, Pi session, configured root, and relative path, including copied session/tree ids under two roots.
+- Volatile-path separation: added generated `PiVolatileProjectionSnapshot`, a non-authoritative last-observation-wins envelope with no epoch. Removed the in-memory epoch map, durable replacement encoding, and empty-memory special mode; even empty volatile snapshots can clear stale volatile presentation. The staged journal records `replacementEpoch: null`, and first materialization forces a complete authoritative epoch-one replacement. Adapter-restart → changed volatile snapshot → materialization is replayed through the production operator consumer and cursor store.
+- Publication-before-live: successor staging carries literal `stale/unknown` presentation evidence; readiness remains the separate staged digest. Only the report after projection acknowledgement, local cursor CAS, and publication-journal commit may say `live`. Crash-window tests at pre-envelope and post-envelope/pre-CAS prove no live report, while cockpit promotion remains stale through projection until the later live state event.
+- NIT applied: the real-process handshake test alone supplies a 10-second RPC response timeout while retaining its 30-second test bound; production defaults remain unchanged.
+- Files changed: `contracts/proto/patchbay/pi_adapter.proto` plus generated Rust/TypeScript bindings; `operator-domain/src/pi.ts` and Pi tests; `pi-adapter/src/{cursor_store,entry_reconciler,main,pi_process,pi_projection,spawn_supervisor}.ts`, mutation registry, and focused cursor/reconciler/supervisor/real-process tests; `web-cockpit/src/domain/model.ts` and model/session-detail tests; this story.
+- Tests added/strengthened: suffix N→N+1 session-detail ownership; derivation and consuming-fold scope collisions; adapter-process volatile restart and later materialization replay; volatile-to-persisted cockpit replacement; promotion-before-envelope and promotion-before-CAS windows; successful cursor→journal→live order.
+- Mutation evidence: manually re-injected and killed (1) retained-membership non-rebinding, (2a) omitted producer digest dimensions/configured root, (2b) digest-only consumer keying, (3) volatile state encoded as epoch-one persisted replacement, and (4) live successor staging. Each focused oracle failed, and `git restore --worktree` restored the staged implementation after every probe. The registered mutation cycle remained **18/18 killed** and rebuilt the clean sources.
+- Full verification: Rust group `cargo fmt --all -- --check && cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings` — passed. Contracts group `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build && npm run check:presentation && npm run test:presentation` — passed (59 vectors, 19 promoted, 31 implementation checks, 38 mutation witnesses). Operator-domain group `cd operator-domain && npm test` — passed (32/32). Pi-adapter group `cd pi-adapter && npm test && npm run test:mutations` — passed (109/109, 18/18 mutations). `web-cockpit: npm test` — passed (148/148). `cli: npm test` — passed (53/53 plus real-core resource projection). `token-commune-adapter: npm test` — passed (63/63).
+- Simplification: one scope object now owns target dimensions and opaque continuity at the consumer; volatile state no longer impersonates the durable replacement state machine or carries a recoverable-epoch fiction.
+- Discrepancies from design: the original memory-only paragraph permitted a process-local volatile exact set but did not define its wire semantics; r1 resolves the review-discovered ambiguity with a generated non-authoritative snapshot rather than persisting an epoch-only anchor. Configured-root identity is derived from canonical configured-root realpath because no separate configured root id exists in current target configuration; this is restart-stable, distinguishes copied roots, remains path-opaque, and avoids widening target configuration.
+- Adjacent issues parked: none.

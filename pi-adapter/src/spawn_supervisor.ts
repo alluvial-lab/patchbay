@@ -124,6 +124,8 @@ export interface SpawnSupervisorCorePort {
     readonly runtime: RuntimeGenerationRef;
     readonly entry: RuntimeSessionEntry;
     readonly continuationContextStatus: ContinuationContextStatus;
+    readonly presentationConnectivity: "stale";
+    readonly presentationActivity: "unknown";
   }): Promise<void>;
   reportSpawnResult(
     operation: NonNullable<SpawnClaimAccepted["acceptedOperation"]>["operation"],
@@ -673,6 +675,8 @@ export class ClaimAwareSpawnSupervisor {
         runtime: externalRuntime,
         entry,
         continuationContextStatus: status,
+        presentationConnectivity: "stale",
+        presentationActivity: "unknown",
       });
       const result = create(PiSpawnResultSchema, {
         continuationContextStatus: status,

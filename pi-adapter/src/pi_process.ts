@@ -71,6 +71,8 @@ export interface PiHandshakeChallenge {
   readonly expectedExtensionPath: string;
   readonly requiredExtensionEpoch?: string;
   readonly previousExtensionEpoch?: string;
+  /** Test/startup override for unusually slow real-process handshakes. */
+  readonly rpcTimeoutMs?: number;
 }
 
 export interface ManagedPiRuntimePort {

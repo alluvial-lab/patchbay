@@ -33,6 +33,8 @@ import {
   PiPersistedPresentationItemSchema,
   PiPersistedProjectionEntrySchema,
   PiPersistedProjectionReplacementSchema,
+  PiPersistedProjectionSuffixSchema,
+  PiVolatileProjectionSnapshotSchema,
   QuestionContractSchema,
   ResponseContractKind,
   ResponseContractSchema,
@@ -54,6 +56,7 @@ import {
   RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
+  SessionConnectivityChangedSchema,
   SessionConnectivityState,
   SessionGenerationBumpedSchema,
   SessionModelChangedSchema,
@@ -84,6 +87,7 @@ import {
   type SubscribeEvent,
 } from "@patchbay/contracts";
 import fc from "fast-check";
+import { JSDOM } from "jsdom";
 
 import {
   PresentationProjection,
@@ -99,6 +103,8 @@ import {
   resourceKey,
   sessionKey,
 } from "../src/domain/model.js";
+import { createMarkdownRenderer } from "../src/ui/markdown.js";
+import { renderSessionDetail } from "../src/ui/session-detail.js";
 
 const DOMAIN = create(AuthorityDomainIdSchema, { value: "operator-domain" });
 const adapterId = create(AdapterIdSchema, { value: "pi" });
@@ -107,7 +113,7 @@ const deploymentScope = "laptop";
 const CORE_GENERATION = create(GenerationSchema, { value: 7n });
 const encoder = new TextEncoder();
 
-test("spawn promotion folds the generated continuation context outcome", () => {
+test("spawn promotion folds context but stays stale until the post-projection live report", () => {
   const prior = create(RuntimeGenerationRefSchema, {
     logicalTargetId: create(LogicalTargetIdSchema, { value: "logical-1" }),
     externalRuntime: create(ExternalRuntimeRefSchema, {
@@ -145,8 +151,8 @@ test("spawn promotion folds the generated continuation context outcome", () => {
     deploymentScope,
     runtimeSessionId: promoted.externalRuntime?.runtimeSessionId,
     sessionGeneration: promoted.externalRuntime?.generation,
-    connectivity: SessionConnectivityState.LIVE,
-    activity: SessionActivityState.IDLE,
+    connectivity: SessionConnectivityState.STALE,
+    activity: SessionActivityState.UNKNOWN,
     continuationContextStatus: ContinuationContextStatus.NEW_CONTEXT,
   });
   const accepted = create(SpawnClaimAcceptedSchema, {
@@ -182,12 +188,23 @@ test("spawn promotion folds the generated continuation context outcome", () => {
       promotion,
     ),
   ];
-  const model = events.reduce(fold, emptyPresentationModel());
+  let model = events.reduce(fold, emptyPresentationModel());
   const command = model.commands.get(commandId.value)!;
   assert.equal(command.continuationContextStatus, ContinuationContextStatus.NEW_CONTEXT);
   assert.equal(command.state, OperationState.COMPLETED);
   assert.equal(command.spawnClaimDisposition, SpawnClaimDisposition.PROMOTED);
   assert.equal(command.failureCode, undefined);
+  const promotedKey = sessionKey({
+    adapterId: "pi", deploymentScope, runtimeSessionId: "session-2", generation: 2n,
+  });
+  assert.equal(rendersLive(model.sessions.get(promotedKey)!), false);
+  model = fold(model, piReplacementEvent(5n, 1n, [piProjectionEntry("root", null)], "root", {
+    runtimeSessionId: "session-2",
+    generation: 2n,
+  }));
+  assert.equal(rendersLive(model.sessions.get(promotedKey)!), false, "projection alone is not live evidence");
+  model = fold(model, connectivityChange(6n, "session-2", 2n, SessionConnectivityState.STALE, SessionConnectivityState.LIVE));
+  assert.equal(rendersLive(model.sessions.get(promotedKey)!), true);
 });
 
 test("fold is pure and registration exposes the stable identity tuple", () => {
@@ -410,6 +427,78 @@ test("Pi authoritative replacement removes omitted transcript membership in one 
   ], "current"));
   assert.deepEqual(model.observations.map((item) => item.markdown), ["fresh text"]);
   assert.equal(auditPrefix.length, 2, "presentation replacement does not erase immutable source events");
+});
+
+test("known Pi suffix rebinds the complete transcript to N+1 session detail", () => {
+  const root = piProjectionEntry("root", null);
+  const oldMessage = piProjectionEntry("user-1", "root", "membership-user", "old turn");
+  const newMessage = piProjectionEntry("assistant-1", "user-1", "membership-assistant", "new turn");
+  let model = fold(emptyPresentationModel(), registration(1n, 1n));
+  model = fold(model, piReplacementEvent(2n, 1n, [root, oldMessage], "user-1", { generation: 1n }));
+  model = fold(model, generationBump(3n, 1n, 2n));
+  model = fold(model, piSuffixEvent(
+    4n,
+    1n,
+    "user-1",
+    [newMessage],
+    [root, oldMessage, newMessage],
+    "assistant-1",
+    { generation: 2n },
+  ));
+
+  const oldSession = model.sessions.get(sessionKey({
+    adapterId: "pi", deploymentScope, runtimeSessionId: runtimeSessionId.value, generation: 1n,
+  }))!;
+  const currentSession = model.sessions.get(sessionKey({
+    adapterId: "pi", deploymentScope, runtimeSessionId: runtimeSessionId.value, generation: 2n,
+  }))!;
+  assert.deepEqual(
+    model.observations.map((item) => [item.markdown, item.session?.generation]),
+    [["old turn", 2n], ["new turn", 2n]],
+  );
+
+  const dom = new JSDOM();
+  const options = { markdown: createMarkdownRenderer(dom.window as unknown as Window) };
+  const currentDetail = renderSessionDetail(dom.window.document, model, currentSession, options);
+  const oldDetail = renderSessionDetail(dom.window.document, model, oldSession, options);
+  assert.match(currentDetail.element.textContent!, /old turn/u);
+  assert.match(currentDetail.element.textContent!, /new turn/u);
+  assert.doesNotMatch(oldDetail.element.textContent!, /old turn|new turn/u);
+});
+
+test("cockpit consuming fold separates forced continuity-digest target collisions", () => {
+  let model = emptyPresentationModel();
+  model = fold(model, piReplacementEvent(1n, 1n, [
+    piProjectionEntry("root-a", null), piProjectionEntry("entry-a", "root-a", "membership-a"),
+  ], "entry-a"));
+  model = fold(model, piReplacementEvent(2n, 1n, [
+    piProjectionEntry("root-b", null), piProjectionEntry("entry-b", "root-b", "membership-b"),
+  ], "entry-b", { adapterId: "other-pi" }));
+  model = fold(model, piReplacementEvent(3n, 1n, [
+    piProjectionEntry("root-c", null), piProjectionEntry("entry-c", "root-c", "membership-c"),
+  ], "entry-c", { deploymentScope: "other-machine" }));
+  assert.equal(model.piPersistedProjections.size, 3);
+  assert.deepEqual(model.observations.map((item) => item.messageId), ["entry-a", "entry-b", "entry-c"]);
+});
+
+test("volatile adapter restarts replay without epochs and materialization replaces presentation authoritatively", () => {
+  let model = emptyPresentationModel();
+  model = fold(model, piVolatileEvent(1n, [
+    piProjectionEntry("root", null), piProjectionEntry("old", "root", "volatile-old", "before restart"),
+  ], "old", { generation: 1n }));
+  model = fold(model, piVolatileEvent(2n, [
+    piProjectionEntry("root", null), piProjectionEntry("current", "root", "volatile-current", "after restart"),
+  ], "current", { generation: 2n }));
+  assert.deepEqual(model.observations.map((item) => item.markdown), ["after restart"]);
+  assert.equal(model.piPersistedProjections.size, 0);
+  assert.equal(model.piVolatileProjections.size, 1);
+
+  model = fold(model, piReplacementEvent(3n, 1n, [
+    piProjectionEntry("root", null), piProjectionEntry("current", "root", "volatile-current", "after restart"),
+  ], "current", { generation: 2n }));
+  assert.deepEqual(model.observations.map((item) => item.markdown), ["after restart"]);
+  assert.equal(model.piVolatileProjections.size, 0);
+  assert.equal([...model.piPersistedProjections.values()][0]?.replacementEpoch, 1n);
 });
 
 test("bounded safe token-commune resource observations reach the presentation model", () => {
@@ -977,6 +1066,34 @@ function generationBump(lsn: bigint, from: bigint, to: bigint): SubscribeEvent {
     create(SessionStateEventSchema, {
       authorityDomainId: DOMAIN,
       mutation: { case: "generationBumped", value: mutation },
+    }),
+  );
+}
+
+function connectivityChange(
+  lsn: bigint,
+  runtimeId: string,
+  generation: bigint,
+  from: SessionConnectivityState,
+  to: SessionConnectivityState,
+): SubscribeEvent {
+  return stored(
+    lsn,
+    StoredEventKind.SESSION_STATE,
+    SessionStateEventSchema,
+    create(SessionStateEventSchema, {
+      authorityDomainId: DOMAIN,
+      mutation: {
+        case: "connectivityChanged",
+        value: create(SessionConnectivityChangedSchema, {
+          adapterId,
+          deploymentScope,
+          runtimeSessionId: create(RuntimeSessionIdSchema, { value: runtimeId }),
+          sessionGeneration: create(GenerationSchema, { value: generation }),
+          from,
+          to,
+        }),
+      },
     }),
   );
 }
@@ -1702,54 +1819,157 @@ function piProjectionEntry(
   };
 }
 
+interface PiProjectionTarget {
+  readonly adapterId?: string;
+  readonly deploymentScope?: string;
+  readonly runtimeSessionId?: string;
+  readonly generation?: bigint;
+}
+
+type PiProjectionEntryFixture = ReturnType<typeof piProjectionEntry>;
+
 function piReplacementEvent(
   lsn: bigint,
   epoch: bigint,
-  entries: readonly ReturnType<typeof piProjectionEntry>[],
+  entries: readonly PiProjectionEntryFixture[],
   leaf: string,
+  target: PiProjectionTarget = {},
 ): SubscribeEvent {
-  const treeDigest = createHash("sha256")
-    .update(JSON.stringify(entries.map((entry) => [entry.stableEntryId, entry.parentEntryId])))
-    .digest("hex");
+  const treeDigest = piFixtureTree(entries);
   const cursor = entries.at(-1)?.stableEntryId ?? "";
-  const batchParts = [
+  const batchId = piFixtureBatch([
     "replacement", PI_CONTINUITY, epoch.toString(), canonicalPi(entries), cursor, leaf, treeDigest,
-  ];
-  const hash = createHash("sha256");
-  for (const part of batchParts) hash.update(`${Buffer.byteLength(part)}:${part}\0`);
-  const replacement = create(PiPersistedProjectionReplacementSchema, {
-    externalContinuityId: PI_CONTINUITY,
-    replacementEpoch: epoch,
-    batchId: hash.digest("hex"),
-    exactEntries: entries.map((entry) => create(PiPersistedProjectionEntrySchema, {
-      stableEntryId: entry.stableEntryId,
-      parentEntryId: entry.parentEntryId ?? "",
-      contentDigest: entry.contentDigest,
-      presentationItems: entry.presentationItems.map((item) => create(PiPersistedPresentationItemSchema, {
-        membershipId: item.membershipId,
-        transcriptEventJson: encoder.encode(item.transcriptEventJson),
-      })),
+  ]);
+  return piProjectionEvent(
+    lsn,
+    target,
+    "patchbay.PiPersistedProjectionReplacement.v1",
+    toBinary(PiPersistedProjectionReplacementSchema, create(PiPersistedProjectionReplacementSchema, {
+      externalContinuityId: PI_CONTINUITY,
+      replacementEpoch: epoch,
+      batchId,
+      exactEntries: entries.map(piWireEntry),
+      cursorEntryId: cursor,
+      leafEntryId: leaf,
+      treeDigest,
     })),
-    cursorEntryId: cursor,
-    leafEntryId: leaf,
-    treeDigest,
-  });
+  );
+}
+
+function piSuffixEvent(
+  lsn: bigint,
+  epoch: bigint,
+  baseCursor: string,
+  suffixEntries: readonly PiProjectionEntryFixture[],
+  combined: readonly PiProjectionEntryFixture[],
+  leaf: string,
+  target: PiProjectionTarget = {},
+): SubscribeEvent {
+  const treeDigest = piFixtureTree(combined);
+  const cursor = combined.at(-1)?.stableEntryId ?? "";
+  const batchId = piFixtureBatch([
+    "suffix", PI_CONTINUITY, epoch.toString(), baseCursor, canonicalPi(suffixEntries), cursor, leaf, treeDigest,
+  ]);
+  return piProjectionEvent(
+    lsn,
+    target,
+    "patchbay.PiPersistedProjectionSuffix.v1",
+    toBinary(PiPersistedProjectionSuffixSchema, create(PiPersistedProjectionSuffixSchema, {
+      externalContinuityId: PI_CONTINUITY,
+      replacementEpoch: epoch,
+      batchId,
+      baseCursorEntryId: baseCursor,
+      entries: suffixEntries.map(piWireEntry),
+      cursorEntryId: cursor,
+      leafEntryId: leaf,
+      treeDigest,
+    })),
+  );
+}
+
+function piVolatileEvent(
+  lsn: bigint,
+  entries: readonly PiProjectionEntryFixture[],
+  leaf: string,
+  target: PiProjectionTarget = {},
+): SubscribeEvent {
+  const treeDigest = piFixtureTree(entries);
+  const cursor = entries.at(-1)?.stableEntryId ?? "";
+  const batchId = piFixtureBatch([
+    "volatile", PI_CONTINUITY, canonicalPi(entries), cursor, leaf, treeDigest,
+  ]);
+  return piProjectionEvent(
+    lsn,
+    target,
+    "patchbay.PiVolatileProjectionSnapshot.v1",
+    toBinary(PiVolatileProjectionSnapshotSchema, create(PiVolatileProjectionSnapshotSchema, {
+      externalContinuityId: PI_CONTINUITY,
+      batchId,
+      exactEntries: entries.map(piWireEntry),
+      cursorEntryId: cursor,
+      leafEntryId: leaf,
+      treeDigest,
+    })),
+  );
+}
+
+function piProjectionEvent(
+  lsn: bigint,
+  target: PiProjectionTarget,
+  schemaRef: string,
+  payload: Uint8Array,
+): SubscribeEvent {
+  const sourceAdapter = target.adapterId ?? adapterId.value;
   return stored(
     lsn,
     StoredEventKind.OBSERVATION,
     ObservationSchema,
     create(ObservationSchema, {
       authorityDomainId: DOMAIN,
-      sender: create(ActorEndpointRefSchema, { actorId: create(ActorIdSchema, { value: adapterId.value }) }),
+      sender: create(ActorEndpointRefSchema, {
+        actorId: create(ActorIdSchema, { value: sourceAdapter }),
+      }),
       kind: ObservationKind.EVENT,
-      targetScope: sessionTarget(1n),
+      targetScope: create(TargetScopeSchema, {
+        kind: TargetScopeKind.RUNTIME_SESSION,
+        adapterId: create(AdapterIdSchema, { value: sourceAdapter }),
+        deploymentScope: target.deploymentScope ?? deploymentScope,
+        runtimeSessionId: create(RuntimeSessionIdSchema, {
+          value: target.runtimeSessionId ?? runtimeSessionId.value,
+        }),
+        sessionGeneration: create(GenerationSchema, { value: target.generation ?? 1n }),
+      }),
       payload: create(PayloadEnvelopeSchema, {
         contentType: PayloadContentType.PROTOBUF,
-        schemaRef: "patchbay.PiPersistedProjectionReplacement.v1",
-        payload: toBinary(PiPersistedProjectionReplacementSchema, replacement),
+        schemaRef,
+        payload,
       }),
     }),
   );
+}
+
+function piWireEntry(entry: PiProjectionEntryFixture) {
+  return create(PiPersistedProjectionEntrySchema, {
+    stableEntryId: entry.stableEntryId,
+    parentEntryId: entry.parentEntryId ?? "",
+    contentDigest: entry.contentDigest,
+    presentationItems: entry.presentationItems.map((item) => create(PiPersistedPresentationItemSchema, {
+      membershipId: item.membershipId,
+      transcriptEventJson: encoder.encode(item.transcriptEventJson),
+    })),
+  });
+}
+
+function piFixtureTree(entries: readonly PiProjectionEntryFixture[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify(entries.map((entry) => [entry.stableEntryId, entry.parentEntryId])))
+    .digest("hex");
+}
+
+function piFixtureBatch(parts: readonly string[]): string {
+  const hash = createHash("sha256");
+  for (const part of parts) hash.update(`${Buffer.byteLength(part)}:${part}\0`);
+  return hash.digest("hex");
 }
 
 function canonicalPi(value: unknown): string {

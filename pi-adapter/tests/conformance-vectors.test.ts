@@ -61,7 +61,6 @@ async function execute(vector: Vector): Promise<void> {
       adapterId: String(vector.input.adapter_id),
       deploymentScope: String(vector.input.deployment_scope),
       piSessionId: "pi-native-session-a",
-      sessionRootId: oldIds[0]!,
       configuredSessionRoot: sessionRoot,
       canonicalSessionPath: sessionPath,
     })).scope;

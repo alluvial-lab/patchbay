@@ -53,41 +53,50 @@ function nextRecord(): PiCursorProjectionRecord {
   };
 }
 
-test("verified Pi continuity ignores Patchbay generation and never exposes the raw path", async () => {
+test("Pi continuity digest separates every canonical scope dimension without exposing paths", async () => {
   const root = await mkdtemp(join(tmpdir(), "patchbay-pi-continuity-"));
+  const firstRoot = join(root, "configured-a");
+  const copiedRoot = join(root, "configured-b");
   try {
-    await mkdir(join(root, "nested"));
-    const first = await derivePiSessionContinuityKey({
-      adapterId: "pi",
-      deploymentScope: "machine-a",
-      piSessionId: "pi-session-1",
-      sessionRootId: "root-entry-1",
-      configuredSessionRoot: root,
-      canonicalSessionPath: join(root, "nested", "session.jsonl"),
-    });
-    const second = await derivePiSessionContinuityKey({
-      adapterId: "pi",
-      deploymentScope: "machine-a",
-      piSessionId: "pi-session-1",
-      sessionRootId: "root-entry-1",
-      configuredSessionRoot: root,
-      canonicalSessionPath: join(root, "nested", "session.jsonl"),
-      // A caller may carry generation elsewhere; it is not accepted by or fed
-      // into the continuity derivation.
-    });
-    assert.equal(first.scope.externalContinuityId, second.scope.externalContinuityId);
-    assert.equal(first.key.rootRelativePath, join("nested", "session.jsonl"));
-    assert.doesNotMatch(first.scope.externalContinuityId, /nested|session\.jsonl|pi-session-1/);
+    await mkdir(join(firstRoot, "nested"), { recursive: true });
+    await mkdir(join(copiedRoot, "nested"), { recursive: true });
+    const derive = (overrides: Partial<Parameters<typeof derivePiSessionContinuityKey>[0]> = {}) =>
+      derivePiSessionContinuityKey({
+        adapterId: "pi",
+        deploymentScope: "machine-a",
+        piSessionId: "pi-session-1",
+        configuredSessionRoot: firstRoot,
+        canonicalSessionPath: join(firstRoot, "nested", "session.jsonl"),
+        ...overrides,
+      });
+    const baseline = await derive();
+    const repeated = await derive();
+    assert.equal(baseline.scope.externalContinuityId, repeated.scope.externalContinuityId);
+    assert.equal(baseline.key.rootRelativePath, join("nested", "session.jsonl"));
+    assert.match(baseline.key.configuredSessionRootId, /^root1:/u);
+    assert.doesNotMatch(
+      baseline.scope.externalContinuityId,
+      /configured-a|nested|session\.jsonl|pi-session-1|machine-a/u,
+    );
 
-    const different = await derivePiSessionContinuityKey({
-      adapterId: "pi",
-      deploymentScope: "machine-a",
-      piSessionId: "pi-session-2",
-      sessionRootId: "root-entry-1",
-      configuredSessionRoot: root,
-      canonicalSessionPath: join(root, "nested", "session.jsonl"),
-    });
-    assert.notEqual(different.scope.externalContinuityId, first.scope.externalContinuityId);
+    const oneDimensionVariants = [
+      await derive({ adapterId: "other-adapter" }),
+      await derive({ deploymentScope: "machine-b" }),
+      await derive({ piSessionId: "pi-session-2" }),
+      await derive({
+        configuredSessionRoot: copiedRoot,
+        canonicalSessionPath: join(copiedRoot, "nested", "session.jsonl"),
+      }),
+      await derive({ canonicalSessionPath: join(firstRoot, "nested", "copied-session.jsonl") }),
+    ];
+    for (const variant of oneDimensionVariants) {
+      assert.notEqual(variant.scope.externalContinuityId, baseline.scope.externalContinuityId);
+    }
+    assert.notEqual(
+      oneDimensionVariants[3]!.key.configuredSessionRootId,
+      baseline.key.configuredSessionRootId,
+      "copied Pi session/root ids under distinct configured roots remain independent",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

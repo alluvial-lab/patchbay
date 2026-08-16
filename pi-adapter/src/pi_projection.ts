@@ -5,12 +5,14 @@ import {
   PiPersistedProjectionEntrySchema,
   PiPersistedProjectionReplacementSchema,
   PiPersistedProjectionSuffixSchema,
+  PiVolatileProjectionSnapshotSchema,
 } from "@patchbay/contracts";
 import { projectSessionEntries } from "./transcript_projection.js";
 import type { TranscriptEvent } from "./transcript_event.js";
 
 export const PI_PROJECTION_SUFFIX_SCHEMA_REF = "patchbay.PiPersistedProjectionSuffix.v1";
 export const PI_PROJECTION_REPLACEMENT_SCHEMA_REF = "patchbay.PiPersistedProjectionReplacement.v1";
+export const PI_VOLATILE_PROJECTION_SCHEMA_REF = "patchbay.PiVolatileProjectionSnapshot.v1";
 
 const MAX_ENTRY_ID_BYTES = 1_024;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/u;
@@ -45,7 +47,8 @@ export interface ExactPiProjection {
 export interface EncodedPiProjectionEnvelope {
   readonly schemaRef:
     | typeof PI_PROJECTION_SUFFIX_SCHEMA_REF
-    | typeof PI_PROJECTION_REPLACEMENT_SCHEMA_REF;
+    | typeof PI_PROJECTION_REPLACEMENT_SCHEMA_REF
+    | typeof PI_VOLATILE_PROJECTION_SCHEMA_REF;
   readonly payload: Uint8Array;
   readonly batchId: string;
 }
@@ -180,6 +183,47 @@ export function encodePiProjectionReplacement(input: {
   return Object.freeze({
     schemaRef: PI_PROJECTION_REPLACEMENT_SCHEMA_REF,
     payload: toBinary(PiPersistedProjectionReplacementSchema, message),
+    batchId,
+  });
+}
+
+export function encodePiVolatileProjectionSnapshot(input: {
+  readonly externalContinuityId: string;
+  readonly exactEntries: readonly PiProjectedEntry[];
+  readonly cursor: PiProjectionCursor;
+  readonly leaf: PiProjectionLeaf;
+}): EncodedPiProjectionEnvelope {
+  boundedText(input.externalContinuityId, "external continuity id", 512);
+  const exactEntries = validateProjectedEntries(input.exactEntries);
+  validateCompleteTree(exactEntries, input.leaf.entryId);
+  const computedTreeDigest = piTreeDigest(exactEntries);
+  if (computedTreeDigest !== input.leaf.treeDigest) {
+    throw new Error("Pi volatile snapshot tree digest disagrees with exact membership");
+  }
+  const expectedCursor = exactEntries.at(-1)?.stableEntryId ?? null;
+  if (expectedCursor !== input.cursor) {
+    throw new Error("Pi volatile snapshot cursor is not the append-order tail");
+  }
+  const batchId = batchDigest([
+    "volatile",
+    input.externalContinuityId,
+    canonicalJson(exactEntries),
+    input.cursor ?? "",
+    input.leaf.entryId ?? "",
+    input.leaf.treeDigest,
+  ]);
+  const message = {
+    $typeName: "patchbay.PiVolatileProjectionSnapshot" as const,
+    externalContinuityId: input.externalContinuityId,
+    batchId,
+    exactEntries: exactEntries.map(projectedEntryToWire),
+    cursorEntryId: input.cursor ?? "",
+    leafEntryId: input.leaf.entryId ?? "",
+    treeDigest: input.leaf.treeDigest,
+  };
+  return Object.freeze({
+    schemaRef: PI_VOLATILE_PROJECTION_SCHEMA_REF,
+    payload: toBinary(PiVolatileProjectionSnapshotSchema, message),
     batchId,
   });
 }

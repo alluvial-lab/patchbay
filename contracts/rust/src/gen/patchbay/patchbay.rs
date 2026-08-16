@@ -4393,8 +4393,8 @@ impl SnapshotViewKind {
         }
     }
 }
-/// Opaque persisted-entry projection envelopes. The core durably carries these
-/// as ordinary Observation payloads without interpreting Pi vocabulary. Raw
+/// Opaque Pi projection envelopes. The core durably carries these as ordinary
+/// Observation payloads without interpreting Pi vocabulary. Raw
 /// session paths, roots, labels, and custom-entry data are intentionally absent.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct PiPersistedProjectionEntry {
@@ -4448,6 +4448,25 @@ pub struct PiPersistedProjectionReplacement {
     #[prost(string, tag="6")]
     pub leaf_entry_id: ::prost::alloc::string::String,
     #[prost(string, tag="7")]
+    pub tree_digest: ::prost::alloc::string::String,
+}
+/// Non-authoritative, last-observation-wins presentation snapshot for a Pi
+/// session that has not materialized. It deliberately carries no replacement
+/// epoch or restart-stable cursor claim. Materialization always enters the
+/// authoritative path through a complete persisted replacement.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PiVolatileProjectionSnapshot {
+    #[prost(string, tag="1")]
+    pub external_continuity_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub batch_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="3")]
+    pub exact_entries: ::prost::alloc::vec::Vec<PiPersistedProjectionEntry>,
+    #[prost(string, tag="4")]
+    pub cursor_entry_id: ::prost::alloc::string::String,
+    #[prost(string, tag="5")]
+    pub leaf_entry_id: ::prost::alloc::string::String,
+    #[prost(string, tag="6")]
     pub tree_digest: ::prost::alloc::string::String,
 }
 /// Generated Pi-local runtime vocabulary carried inside the generic opaque

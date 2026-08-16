@@ -5,15 +5,33 @@ import { join } from "node:path";
 import test from "node:test";
 import { create, fromBinary } from "@bufbuild/protobuf";
 import {
+  ActorEndpointRefSchema,
+  ActorIdSchema,
   AdapterIdSchema,
   ExternalRuntimeRefSchema,
   GenerationSchema,
   LogicalTargetIdSchema,
+  ObservationKind,
+  ObservationSchema,
+  PayloadContentType,
+  PayloadEnvelopeSchema,
   PiPersistedProjectionReplacementSchema,
+  PiVolatileProjectionSnapshotSchema,
   RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
+  TargetScopeKind,
+  TargetScopeSchema,
+  type Observation,
   type RuntimeGenerationRef,
 } from "@patchbay/contracts";
+import {
+  foldPiPersistedProjectionObservation,
+  foldPiVolatileProjectionObservation,
+  PI_PERSISTED_REPLACEMENT_SCHEMA_REF,
+  PI_VOLATILE_PROJECTION_SCHEMA_REF,
+  type PiPersistedProjectionState,
+  type PiVolatileProjectionState,
+} from "@patchbay/operator-domain";
 import {
   FilePiCursorStore,
   derivePiSessionContinuityKey,
@@ -69,6 +87,30 @@ function runtime(generation: bigint): RuntimeGenerationRef {
       deploymentScope,
       runtimeSessionId: create(RuntimeSessionIdSchema, { value: "pi-session" }),
       generation: create(GenerationSchema, { value: generation }),
+    }),
+  });
+}
+
+function projectionObservation(
+  publication: RecordingPublisher["publications"][number],
+): Observation {
+  const external = publication.runtime.externalRuntime!;
+  return create(ObservationSchema, {
+    sender: create(ActorEndpointRefSchema, {
+      actorId: create(ActorIdSchema, { value: external.adapterId!.value }),
+    }),
+    kind: ObservationKind.EVENT,
+    targetScope: create(TargetScopeSchema, {
+      kind: TargetScopeKind.RUNTIME_SESSION,
+      adapterId: external.adapterId,
+      deploymentScope: external.deploymentScope,
+      runtimeSessionId: external.runtimeSessionId,
+      sessionGeneration: external.generation,
+    }),
+    payload: create(PayloadEnvelopeSchema, {
+      contentType: PayloadContentType.PROTOBUF,
+      schemaRef: publication.schemaRef,
+      payload: publication.payload,
     }),
   });
 }
@@ -153,7 +195,6 @@ async function scopeFor(sessionDirectory: string, sessionPath: string) {
     adapterId,
     deploymentScope,
     piSessionId: "pi-session",
-    sessionRootId: "root",
     configuredSessionRoot: sessionDirectory,
     canonicalSessionPath: sessionPath,
   })).scope;
@@ -270,42 +311,94 @@ test("core ack followed by local-CAS crash resends the same replacement and comm
   }
 });
 
-test("memory-only exact state may publish after promotion but never claims restart-stable cursor state", async () => {
+test("adapter restart replays volatile snapshots non-authoritatively then materializes through epoch one", async () => {
   const f = await fixture();
   try {
-    const raw = [sessionRoot(), user("current", "volatile")];
-    const staged = await f.reconciler.stageClaimedSuccessor(runtime(1n), {
+    const firstRaw = [sessionRoot(), user("first", "volatile before restart")];
+    const secondRaw = [sessionRoot(), user("second", "volatile after restart")];
+    const memoryEvidence = (raw: readonly unknown[], leafId: string): PiCursorReconciliationEvidence => ({
       logicalTargetId,
       configuredSessionRoot: f.sessionDirectory,
       piSessionId: "pi-session",
       declaredSessionPath: f.sessionPath,
       materialization: { kind: "memory_only", sessionId: "pi-session", declaredPath: f.sessionPath },
       completeEntries: raw,
-      leafId: "current",
+      leafId,
       fetchKnown: async () => { throw new Error("memory-only state must not claim a durable cursor"); },
     });
-    assert.equal(staged.mode, "volatile-replacement");
-    assert.equal(staged.restartStable, false);
-    await assert.rejects(stat(f.cursorDirectory), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT");
-    assert.equal(f.publisher.publications.length, 0);
-    await f.reconciler.publishAfterPromotion(staged);
-    assert.equal(f.publisher.publications.length, 1);
-    await assert.rejects(stat(f.cursorDirectory), (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT");
 
-    const materialized = await f.reconciler.stageClaimedSuccessor(runtime(1n), evidence(
+    const beforeRestart = await f.reconciler.stageClaimedSuccessor(
+      runtime(1n),
+      memoryEvidence(firstRaw, "first"),
+    );
+    assert.equal(beforeRestart.mode, "volatile-snapshot");
+    assert.equal(beforeRestart.replacementEpoch, null);
+    assert.equal(beforeRestart.restartStable, false);
+    await f.reconciler.publishAfterPromotion(beforeRestart);
+
+    // A new reconciler is a new adapter process: it has no recoverable volatile
+    // epoch, and therefore emits a distinct non-authoritative snapshot instead.
+    const restarted = new PiEntryReconciler(new FilePiCursorStore(f.cursorDirectory), f.publisher);
+    const afterRestart = await restarted.stageClaimedSuccessor(
+      runtime(2n),
+      memoryEvidence(secondRaw, "second"),
+    );
+    assert.equal(afterRestart.mode, "volatile-snapshot");
+    assert.equal(afterRestart.replacementEpoch, null);
+    await restarted.publishAfterPromotion(afterRestart);
+    await assert.rejects(
+      stat(f.cursorDirectory),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
+    assert.deepEqual(
+      f.publisher.publications.slice(0, 2).map((publication) => publication.schemaRef),
+      [PI_VOLATILE_PROJECTION_SCHEMA_REF, PI_VOLATILE_PROJECTION_SCHEMA_REF],
+    );
+    assert.equal(
+      "replacementEpoch" in fromBinary(
+        PiVolatileProjectionSnapshotSchema,
+        f.publisher.publications[0]!.payload,
+      ),
+      false,
+    );
+
+    let volatileState: PiVolatileProjectionState | undefined;
+    for (const publication of f.publisher.publications.slice(0, 2)) {
+      volatileState = foldPiVolatileProjectionObservation(
+        volatileState,
+        projectionObservation(publication),
+      )!.state;
+    }
+    assert.ok(volatileState);
+    assert.deepEqual(
+      volatileState.exactEntries.map((entry) => entry.stableEntryId),
+      ["root", "second"],
+    );
+
+    const materialized = await restarted.stageClaimedSuccessor(runtime(2n), evidence(
       f.sessionDirectory,
       f.sessionPath,
-      raw,
-      "current",
+      secondRaw,
+      "second",
       async (cursor) => { throw new PiUnknownCursorError(cursor); },
     ));
     assert.equal(materialized.mode, "replacement");
+    assert.equal(materialized.replacementEpoch, 1n, "volatile state cannot seed a durable epoch");
     assert.equal(materialized.restartStable, true);
-    assert.equal(f.publisher.publications.length, 1, "materialization replacement remains staged");
-    await f.reconciler.publishAfterPromotion(materialized);
+    await restarted.publishAfterPromotion(materialized);
+    assert.equal(f.publisher.publications[2]!.schemaRef, PI_PERSISTED_REPLACEMENT_SCHEMA_REF);
+    let persistedState: PiPersistedProjectionState | undefined;
+    persistedState = foldPiPersistedProjectionObservation(
+      persistedState,
+      projectionObservation(f.publisher.publications[2]!),
+    )!.state;
+    assert.equal(persistedState.replacementEpoch, 1n);
+
     const scope = await scopeFor(f.sessionDirectory, f.sessionPath);
-    assert.equal((await f.store.load(scope))?.freshness, "current");
-    assert.equal((await f.store.load(scope))?.projection.cursor, "current");
+    const current = await f.store.load(scope);
+    assert.equal(current?.freshness, "current");
+    assert.equal(current?.projection.replacementEpoch, 1n);
+    assert.equal(current?.projection.cursor, "second");
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }
@@ -325,7 +418,6 @@ test("different Pi continuity does not load another cursor and reverse binding r
       adapterId,
       deploymentScope,
       piSessionId: "different-pi-session",
-      sessionRootId: "root",
       configuredSessionRoot: f.sessionDirectory,
       canonicalSessionPath: f.sessionPath,
     })).scope;

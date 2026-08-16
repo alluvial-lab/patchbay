@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import {
   AuthoritativeCursorReplacement,
-  externalCursorScopeKey,
   type ExternalCursorFetchPort,
   type ExternalCursorPublishPort,
   type KnownCursorSuffix,
@@ -18,6 +17,7 @@ import {
 import {
   encodePiProjectionReplacement,
   encodePiProjectionSuffix,
+  encodePiVolatileProjectionSnapshot,
   piProjectedEntriesEqual,
   piProjectionLeavesEqual,
   projectCompletePiEntries,
@@ -52,11 +52,11 @@ export interface PiCursorReconciliationEvidence {
 }
 
 export interface PiStagedCursorPublication {
-  readonly mode: "known" | "replacement" | "volatile-replacement" | "empty-memory";
+  readonly mode: "known" | "replacement" | "volatile-snapshot";
   readonly runtime: RuntimeGenerationRef;
-  readonly scope?: PiExternalCursorScope;
+  readonly scope: PiExternalCursorScope;
   readonly logicalTargetId: string;
-  readonly replacementEpoch: bigint;
+  readonly replacementEpoch: bigint | null;
   readonly baseCursor?: string;
   readonly entries: readonly PiProjectedEntry[];
   readonly cursor: PiProjectionCursor;
@@ -85,11 +85,6 @@ interface CachedFetch {
 export class PiEntryReconciler {
   readonly #store: FilePiCursorStore;
   readonly #observations: PiProjectionObservationPort;
-  readonly #volatile = new Map<string, ProjectionReplacement<
-    PiProjectedEntry,
-    PiProjectionCursor,
-    PiProjectionLeaf
-  >>();
 
   constructor(store: FilePiCursorStore, observations: PiProjectionObservationPort) {
     this.#store = store;
@@ -102,17 +97,7 @@ export class PiEntryReconciler {
     evidence: PiCursorReconciliationEvidence,
   ): Promise<PiStagedCursorPublication> {
     validateRuntime(runtime, evidence.logicalTargetId);
-    const projected = projectCompletePiEntries(
-      evidence.completeEntries,
-      evidence.leafId,
-      continuitySeed(runtime, evidence),
-    );
-    const continuity = await this.#continuity(runtime, evidence, projected.entries);
-    if (!continuity) {
-      return this.#stageEmptyMemory(runtime, evidence.logicalTargetId, projected.leaf);
-    }
-    // Reproject with the final opaque continuity id so every presentation
-    // membership is generation-stable and contains no local path material.
+    const continuity = await this.#continuity(runtime, evidence);
     const exact = projectCompletePiEntries(
       evidence.completeEntries,
       evidence.leafId,
@@ -126,11 +111,10 @@ export class PiEntryReconciler {
     }
 
     await this.#store.bindLogicalTarget(continuity.scope, evidence.logicalTargetId);
-    const volatile = this.#volatile.get(externalCursorScopeKey(continuity.scope));
     await this.#store.ensureReplacementBaseline(
       continuity.scope,
       evidence.logicalTargetId,
-      volatile ?? emptyProjection(),
+      emptyProjection(),
     );
     const current = await this.#store.load(continuity.scope);
     if (!current) throw new Error("Pi durable cursor baseline was not initialized");
@@ -209,23 +193,14 @@ export class PiEntryReconciler {
   async publishAfterPromotion(staged: PiStagedCursorPublication): Promise<void> {
     validateStagedPublication(staged);
     switch (staged.mode) {
-      case "empty-memory":
-        return;
-      case "volatile-replacement": {
-        const envelope = encodePiProjectionReplacement({
+      case "volatile-snapshot": {
+        const envelope = encodePiVolatileProjectionSnapshot({
           externalContinuityId: staged.scope!.externalContinuityId,
-          replacementEpoch: staged.replacementEpoch,
           exactEntries: staged.entries,
           cursor: staged.cursor,
           leaf: staged.leaf,
         });
         await this.#observations.publish(staged.runtime, envelope.schemaRef, envelope.payload);
-        this.#volatile.set(externalCursorScopeKey(staged.scope!), {
-          replacementEpoch: staged.replacementEpoch,
-          exactEntries: staged.entries,
-          cursor: staged.cursor,
-          leaf: staged.leaf,
-        });
         return;
       }
       case "known": {
@@ -237,7 +212,7 @@ export class PiEntryReconciler {
             leaf: staged.leaf,
           },
         };
-        await this.#machine(staged.scope!, staged.runtime, staged.replacementEpoch, fetch)
+        await this.#machine(staged.scope!, staged.runtime, staged.replacementEpoch!, fetch)
           .reconcileKnown(staged.scope!, staged.baseCursor!);
         return;
       }
@@ -247,7 +222,7 @@ export class PiEntryReconciler {
           PiProjectionCursor,
           PiProjectionLeaf
         > = {
-          replacementEpoch: staged.replacementEpoch,
+          replacementEpoch: staged.replacementEpoch!,
           exactEntries: staged.entries,
           cursor: staged.cursor,
           leaf: staged.leaf,
@@ -255,7 +230,7 @@ export class PiEntryReconciler {
         await this.#machine(
           staged.scope!,
           staged.runtime,
-          staged.replacementEpoch,
+          staged.replacementEpoch!,
           { complete: { entries: staged.entries, leaf: staged.leaf } },
         ).commitReplacement(staged.scope!, replacement);
         return;
@@ -333,12 +308,7 @@ export class PiEntryReconciler {
   async #continuity(
     runtime: RuntimeGenerationRef,
     evidence: PiCursorReconciliationEvidence,
-    entries: readonly PiProjectedEntry[],
   ) {
-    const sessionRootId = evidence.materialization.kind === "materialized"
-      ? evidence.materialization.seal.sessionRootId
-      : entries[0]?.stableEntryId;
-    if (!sessionRootId) return undefined;
     const canonicalSessionPath = evidence.materialization.kind === "materialized"
       ? evidence.materialization.seal.canonicalPath
       : evidence.declaredSessionPath;
@@ -346,7 +316,6 @@ export class PiEntryReconciler {
       adapterId: runtime.externalRuntime!.adapterId!.value,
       deploymentScope: runtime.externalRuntime!.deploymentScope,
       piSessionId: evidence.piSessionId,
-      sessionRootId,
       configuredSessionRoot: evidence.configuredSessionRoot,
       canonicalSessionPath,
     });
@@ -358,15 +327,12 @@ export class PiEntryReconciler {
     scope: PiExternalCursorScope,
     exact: ReturnType<typeof projectCompletePiEntries>,
   ): PiStagedCursorPublication {
-    const key = externalCursorScopeKey(scope);
-    const previous = this.#volatile.get(key);
-    const replacementEpoch = (previous?.replacementEpoch ?? 0n) + 1n;
     return stagedPublication({
-      mode: "volatile-replacement",
+      mode: "volatile-snapshot",
       runtime,
       scope,
       logicalTargetId,
-      replacementEpoch,
+      replacementEpoch: null,
       entries: exact.entries,
       cursor: exact.cursor,
       leaf: exact.leaf,
@@ -374,22 +340,6 @@ export class PiEntryReconciler {
     });
   }
 
-  #stageEmptyMemory(
-    runtime: RuntimeGenerationRef,
-    logicalTargetId: string,
-    leaf: PiProjectionLeaf,
-  ): PiStagedCursorPublication {
-    return stagedPublication({
-      mode: "empty-memory",
-      runtime,
-      logicalTargetId,
-      replacementEpoch: 0n,
-      entries: [],
-      cursor: null,
-      leaf,
-      restartStable: false,
-    });
-  }
 }
 
 export function serializePiStagedCursorPublication(
@@ -399,9 +349,9 @@ export function serializePiStagedCursorPublication(
   return {
     mode: staged.mode,
     runtime: runtimeJson(staged.runtime),
-    ...(staged.scope ? { scope: staged.scope } : {}),
+    scope: staged.scope,
     logicalTargetId: staged.logicalTargetId,
-    replacementEpoch: staged.replacementEpoch.toString(),
+    replacementEpoch: staged.replacementEpoch?.toString() ?? null,
     ...(staged.baseCursor ? { baseCursor: staged.baseCursor } : {}),
     entries: staged.entries,
     cursor: staged.cursor,
@@ -418,9 +368,9 @@ export function restorePiStagedCursorPublication(
   if (!isRecord(value)) throw new Error("Pi staged cursor journal payload is malformed");
   const mode = value["mode"];
   if (!isMode(mode)) throw new Error("Pi staged cursor journal mode is malformed");
-  const scope = value["scope"] === undefined ? undefined : parseScope(value["scope"]);
+  const scope = parseScope(value["scope"]);
   const epochText = value["replacementEpoch"];
-  if (typeof epochText !== "string" || !/^(?:0|[1-9][0-9]*)$/u.test(epochText)) {
+  if (!(epochText === null || (typeof epochText === "string" && /^[1-9][0-9]*$/u.test(epochText)))) {
     throw new Error("Pi staged cursor journal epoch is malformed");
   }
   const entries = Array.isArray(value["entries"])
@@ -433,9 +383,9 @@ export function restorePiStagedCursorPublication(
   const restored = stagedPublication({
     mode,
     runtime,
-    ...(scope ? { scope } : {}),
+    scope,
     logicalTargetId: stringField(value, "logicalTargetId"),
-    replacementEpoch: BigInt(epochText),
+    replacementEpoch: epochText === null ? null : BigInt(epochText),
     ...(typeof value["baseCursor"] === "string" ? { baseCursor: value["baseCursor"] } : {}),
     entries,
     cursor: value["cursor"] === null ? null : stringField(value, "cursor"),
@@ -459,8 +409,13 @@ function stagedPublication(input: Omit<PiStagedCursorPublication, "readinessDige
 
 function validateStagedPublication(staged: PiStagedCursorPublication): void {
   validateRuntime(staged.runtime, staged.logicalTargetId);
-  if (staged.mode !== "empty-memory" && !staged.scope) throw new Error("Pi staged publication has no continuity scope");
   if (staged.mode === "known" && !staged.baseCursor) throw new Error("Pi known publication has no base cursor");
+  if (
+    (staged.mode === "volatile-snapshot" && staged.replacementEpoch !== null)
+    || (staged.mode !== "volatile-snapshot" && (staged.replacementEpoch === null || staged.replacementEpoch <= 0n))
+  ) {
+    throw new Error("Pi staged publication has an invalid authoritative epoch claim");
+  }
   if (staged.restartStable !== (staged.mode === "known" || staged.mode === "replacement")) {
     throw new Error("Pi staged publication has an invalid restart-stability claim");
   }
@@ -474,9 +429,9 @@ function stagedDigest(input: Omit<PiStagedCursorPublication, "readinessDigest"> 
   hash.update(JSON.stringify({
     mode: input.mode,
     runtime: runtimeJson(input.runtime),
-    scope: input.scope ?? null,
+    scope: input.scope,
     logicalTargetId: input.logicalTargetId,
-    replacementEpoch: input.replacementEpoch.toString(),
+    replacementEpoch: input.replacementEpoch?.toString() ?? null,
     baseCursor: input.baseCursor ?? null,
     entries: input.entries,
     cursor: input.cursor,
@@ -518,14 +473,6 @@ function requireStringCursor(
 ): string {
   if (typeof suffix.baseCursor !== "string") throw new Error("Pi known suffix base cursor is absent");
   return suffix.baseCursor;
-}
-
-function continuitySeed(runtime: RuntimeGenerationRef, evidence: PiCursorReconciliationEvidence): string {
-  return createHash("sha256")
-    .update(runtime.externalRuntime?.adapterId?.value ?? "")
-    .update("\0")
-    .update(evidence.piSessionId)
-    .digest("hex");
 }
 
 function requireMaterializedProjection(
@@ -589,7 +536,7 @@ function stringField(value: Record<string, unknown>, field: string): string {
 }
 
 function isMode(value: unknown): value is PiStagedCursorPublication["mode"] {
-  return value === "known" || value === "replacement" || value === "volatile-replacement" || value === "empty-memory";
+  return value === "known" || value === "replacement" || value === "volatile-snapshot";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

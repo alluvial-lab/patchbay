@@ -353,8 +353,14 @@ function createCore(
         }
       }
     },
-    async stageSuccessor({ acceptedSpawn: accepted, runtime }) {
+    async stageSuccessor({
+      acceptedSpawn: accepted,
+      runtime,
+      presentationConnectivity,
+      presentationActivity,
+    }) {
       events.push("successor-staged");
+      events.push(`successor-presentation:${presentationConnectivity}:${presentationActivity}`);
       onStage?.(accepted, runtime);
     },
     async reportSpawnResult() { events.push("result-reported"); },
@@ -386,8 +392,9 @@ class OrderedJournal implements SpawnEffectJournal {
   ) {
     return this.inner.markPromotionObserved(claimOperationId, runtime);
   }
-  markPublicationCommitted(claimOperationId: string) {
-    return this.inner.markPublicationCommitted(claimOperationId);
+  async markPublicationCommitted(claimOperationId: string) {
+    await this.inner.markPublicationCommitted(claimOperationId);
+    this.events.push("journal-publication-committed");
   }
 }
 
@@ -651,6 +658,7 @@ test("fresh spawn journals the exact generation before launch and publishes only
       assert.equal(registry.resolve(session.runtimeSessionId)?.session, session);
       events.push("projection-published");
       session.publishStagedTranscript();
+      events.push("cursor-record-current");
       assert.equal(staged.readinessDigest, "a".repeat(64));
     },
     async publishRecoveredAfterPromotion() {
@@ -699,12 +707,85 @@ test("fresh spawn journals the exact generation before launch and publishes only
     );
     assert.ok(events.findIndex((event) => event.startsWith("journal-phase:")) < events.indexOf("successor-staged"));
     assert.ok(events.indexOf("successor-staged") < events.indexOf("result-reported"));
+    assert.ok(events.includes("successor-presentation:stale:unknown"));
     assert.ok(events.indexOf("result-reported") < events.indexOf("projection-published"));
     assert.equal(transcriptCount, 1, "staged transcript publishes exactly once after promotion");
+    assert.ok(events.indexOf("cursor-record-current") < events.indexOf("journal-publication-committed"));
+    assert.ok(events.indexOf("journal-publication-committed") < events.findIndex((event) => event.startsWith("session:live:")));
     assert.equal(registry.resolve(successor.entry.runtimeSessionId)?.session, successor.entry.session);
   } finally {
     await registry.dispose();
     await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("promotion crash windows never report live before projection, cursor, and journal commit", async () => {
+  for (const crashPoint of ["before-envelope", "before-local-cas"] as const) {
+    const events: string[] = [];
+    const runtimePort = new FakeRuntimePort(events);
+    const registry = new SessionRegistry();
+    const fixture = await journalFixture(events);
+    const accepted = acceptedSpawn({ commandId: `publication-crash-${crashPoint}`, generation: 1n });
+    let supervisor!: ClaimAwareSpawnSupervisor;
+    let cursorRecordCurrent = false;
+    const reconciler: PiAuthoritativeReconciler = {
+      async stageClaimedSuccessor(runtime) {
+        return {
+          runtime,
+          readinessDigest: "b".repeat(64),
+          entryCount: 0,
+          recoveryEntries: [],
+          recoveryLeafId: null,
+        };
+      },
+      async publishAfterPromotion() {
+        if (crashPoint === "before-envelope") throw new Error("injected before envelope");
+        events.push("projection-envelope-durable");
+        if (crashPoint === "before-local-cas") throw new Error("injected before local CAS");
+        cursorRecordCurrent = true;
+      },
+      async publishRecoveredAfterPromotion() {
+        throw new Error("not used");
+      },
+    };
+    const core = createCore(events, (acceptedClaim, runtime) => {
+      setImmediate(() => {
+        supervisor.acceptPromotion(create(SpawnPromotionCommittedSchema, {
+          acceptedClaim,
+          promotedRuntime: runtime,
+        }));
+      });
+    });
+    supervisor = new ClaimAwareSpawnSupervisor({
+      runtimePort,
+      journal: fixture.journal,
+      registry,
+      core,
+      targets: [managedTarget()],
+      reconciler,
+    });
+
+    try {
+      await assert.rejects(
+        supervisor.handleAcceptedSpawn(accepted),
+        /successor publication failed after core promotion/u,
+      );
+      const journal = await fixture.journal.reconcile(accepted.claim!.claimOperationId!.value);
+      assert.equal(journal?.promotionObserved, true, crashPoint);
+      assert.equal(journal?.publicationCommitted, false, crashPoint);
+      assert.equal(cursorRecordCurrent, false, crashPoint);
+      assert.ok(events.includes("successor-presentation:stale:unknown"), crashPoint);
+      assert.ok(events.includes("session:stale:unknown"), crashPoint);
+      assert.equal(events.some((event) => event.startsWith("session:live:")), false, crashPoint);
+      assert.equal(
+        events.includes("projection-envelope-durable"),
+        crashPoint === "before-local-cas",
+        crashPoint,
+      );
+    } finally {
+      await registry.dispose();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
   }
 });
 
