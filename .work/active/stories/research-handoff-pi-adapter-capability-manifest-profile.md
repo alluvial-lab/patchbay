@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-manifest-profile
 kind: story
-stage: review
+stage: implementing
 tags: [adapter, protocol]
 parent: research-handoff-pi-adapter-capability
 depends_on: [capability-manifest-durability-and-reconciliation-depth, research-handoff-spawn-continuation-payload-authority-contract]
