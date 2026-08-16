@@ -17,6 +17,7 @@ import {
   continuationContextExplanation,
   continuationContextStatusName,
   continuationSpawnPayload,
+  declaredManagedSpawnTarget,
   freshSpawnPayload,
   spawnAdapterTarget,
   spawnClaimDispositionName,
@@ -25,7 +26,7 @@ import type { ControlClient } from "../core-client.js";
 import type { CredentialStore } from "../credentials.js";
 import type { CliOutput } from "../main.js";
 import { printSubmissionResult } from "../output.js";
-import { capabilityForUnknownSubmission } from "./adapter-status.js";
+import { capabilityForUnknownSubmission, loadAdapterCapability } from "./adapter-status.js";
 import {
   operationBase,
   operationContext,
@@ -40,14 +41,13 @@ import {
 
 export interface SpawnOptions extends OperationIdOptions {
   adapterId: string;
-  shape: string;
+  logicalTargetId?: string;
   deploymentAuthorityRef?: string;
   json: boolean;
 }
 
 export interface RestartOptions extends OperationIdOptions {
   target: string;
-  shape: string;
   deploymentAuthorityRef?: string;
   json: boolean;
 }
@@ -99,42 +99,55 @@ export async function abandonSpawnTargetCommand(
 }
 
 export async function spawnCommand(
-  client: Pick<ControlClient, "submit">
-    & Partial<Pick<ControlClient, "queryDiagnostics">>,
+  client: Pick<ControlClient, "submit" | "queryDiagnostics">,
   store: CredentialStore,
   authorityDomainId: string,
   options: SpawnOptions,
   output: CliOutput,
 ): Promise<number> {
   const context = await operationContext(store, authorityDomainId);
+  const declaredCapability = await loadAdapterCapability(
+    client,
+    store,
+    authorityDomainId,
+    options.adapterId,
+  );
+  const selected = declaredManagedSpawnTarget(declaredCapability, "fresh", options.logicalTargetId);
+  if (!selected.available) throw new Error(selected.reason);
+  if (options.commandId && options.commandId !== selected.logicalTargetId) {
+    throw new Error("fresh managed spawn command id must equal the declared logical target id");
+  }
   const targetScope = spawnAdapterTarget(options.adapterId);
   const operation = operationBase(
     context,
     targetScope,
     OperationKind.SPAWN,
-    operationIds(targetScope, options),
+    operationIds(targetScope, { ...options, commandId: selected.logicalTargetId }),
   );
   operation.payload = freshSpawnPayload({
-    shape: options.shape,
+    ...selected.target,
     deploymentAuthorityRef: options.deploymentAuthorityRef,
   });
   output.stderr(options.json
-    ? JSON.stringify({ target: `adapter=${encodeURIComponent(options.adapterId)}`, intent: "fresh" })
-    : `Target: adapter=${options.adapterId} intent=fresh`);
+    ? JSON.stringify({
+        target: `adapter=${encodeURIComponent(options.adapterId)}`,
+        logicalTargetId: selected.logicalTargetId,
+        intent: "fresh",
+      })
+    : `Target: adapter=${options.adapterId} managed=${selected.logicalTargetId} intent=fresh`);
   const result = await client.submit({ operation });
-  const capability = await capabilityForUnknownSubmission(
+  const outcomeCapability = await capabilityForUnknownSubmission(
     client,
     store,
     authorityDomainId,
     targetScope,
     result,
   );
-  return printSubmissionResult(result, options.json, output, capability);
+  return printSubmissionResult(result, options.json, output, outcomeCapability);
 }
 
 export async function restartCommand(
-  client: Pick<ControlClient, "loadSnapshot" | "subscribe" | "submit">
-    & Partial<Pick<ControlClient, "queryDiagnostics">>,
+  client: Pick<ControlClient, "loadSnapshot" | "subscribe" | "submit" | "queryDiagnostics">,
   store: CredentialStore,
   authorityDomainId: string,
   options: RestartOptions,
@@ -143,7 +156,15 @@ export async function restartCommand(
   const context = await operationContext(store, authorityDomainId);
   const session = resolveSession(await loadSessions(client, authorityDomainId), options.target);
   const managed = await resolveManagedLogicalTarget(client, authorityDomainId, session);
-  const targetScope = spawnAdapterTarget(required(session.adapterId?.value, "session adapter id"));
+  const adapterId = required(session.adapterId?.value, "session adapter id");
+  const declaredCapability = await loadAdapterCapability(client, store, authorityDomainId, adapterId);
+  const selected = declaredManagedSpawnTarget(
+    declaredCapability,
+    "continuation",
+    managed.logicalTargetId,
+  );
+  if (!selected.available) throw new Error(selected.reason);
+  const targetScope = spawnAdapterTarget(adapterId);
   const operation = operationBase(
     context,
     targetScope,
@@ -151,7 +172,7 @@ export async function restartCommand(
     operationIds(targetScope, options),
   );
   operation.payload = continuationSpawnPayload(exactPrior(managed.logicalTargetId, session), {
-    shape: options.shape,
+    ...selected.target,
     deploymentAuthorityRef: options.deploymentAuthorityRef,
   });
   const identity = canonicalSessionIdentity(session);
@@ -167,14 +188,14 @@ export async function restartCommand(
       ? ""
       : `; current ${continuationContextExplanation(managed.contextStatus)}`}`);
   const result = await client.submit({ operation });
-  const capability = await capabilityForUnknownSubmission(
+  const outcomeCapability = await capabilityForUnknownSubmission(
     client,
     store,
     authorityDomainId,
     targetScope,
     result,
   );
-  return printSubmissionResult(result, options.json, output, capability);
+  return printSubmissionResult(result, options.json, output, outcomeCapability);
 }
 
 function exactPrior(logicalTargetId: string, session: Session) {

@@ -28,7 +28,9 @@ import {
   FailureCode,
   GenerationSchema,
   IdempotencyStrength,
+  LogicalTargetIdSchema,
   LsnSchema,
+  ManagedSpawnTargetCapabilitySchema,
   ObservationKind,
   ObservationRequestSchema,
   ObservationSchema,
@@ -36,6 +38,7 @@ import {
   OperationState,
   PayloadContentType,
   PayloadEnvelopeSchema,
+  PiContinuationMode,
   PiControlProofKind,
   PiControlProofSchema,
   PiCursorDurabilityCondition,
@@ -55,6 +58,7 @@ import {
   PiRuntimeProfileSchema,
   PiSessionDurabilitySchema,
   PiSessionMaterializationPolicy,
+  PiSpawnTargetSpecSchema,
   PiTransportMechanism,
   ReceiveRequestSchema,
   ReconciliationAction,
@@ -102,15 +106,22 @@ const encoder = new TextEncoder();
 const attachmentTokenHeader = "x-patchbay-adapter-attachment-token";
 export const PI_RUNTIME_PROFILE_SCHEMA_REF = "patchbay.PiRuntimeProfile.v1";
 export const PI_RPC_TARGET_SHAPE = "pi-rpc";
+export const PI_SPAWN_TARGET_SCHEMA_REF = "patchbay.PiSpawnTargetSpec.v1";
 export const PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION = "pi-managed-lifecycle.v2";
 
 type AdapterClient = Client<typeof AdapterControlService>;
+
+export interface PiManagedTargetCapabilityInput {
+  readonly projectContextRef: string;
+  readonly logicalTargetId: string;
+}
 
 export interface CoreClientOptions {
   coreAddress: string;
   adapterId: string;
   authorityDomainId: string;
   attachmentEvidence: string;
+  managedTargets?: readonly PiManagedTargetCapabilityInput[];
 }
 
 export interface SessionIdentity {
@@ -186,7 +197,7 @@ export class PatchbayCoreClient {
           }),
           authorityDomainId: this.#authorityDomainId(),
           adapterGeneration: create(GenerationSchema, { value: BigInt(adapterGeneration) }),
-          capability: requiredPiCapabilityManifest(),
+          capability: requiredPiCapabilityManifest(this.#options.managedTargets ?? []),
         }),
           attachmentEvidence: encoder.encode(this.#options.attachmentEvidence),
         }),
@@ -643,6 +654,7 @@ export const PI_CAPABILITY_EVIDENCE: Readonly<PiCapabilityEvidence> = Object.fre
 
 export function piCapabilityManifest(
   evidence: PiCapabilityEvidence = PI_CAPABILITY_EVIDENCE,
+  managedTargets: readonly PiManagedTargetCapabilityInput[] = [],
 ): AdapterCapability {
   requireCompletePiCapabilityEvidence(evidence);
   return create(AdapterCapabilitySchema, {
@@ -696,6 +708,7 @@ export function piCapabilityManifest(
       contentType: PayloadContentType.PROTOBUF,
       schemaRef: PI_RUNTIME_PROFILE_SCHEMA_REF,
     }),
+    managedSpawnTargets: managedTargets.map((target) => managedSpawnTargetCapability(target)),
   });
 }
 
@@ -705,8 +718,36 @@ export function isPiProjectionSchemaRef(value: string): boolean {
     || value === PI_VOLATILE_PROJECTION_SCHEMA_REF;
 }
 
-function requiredPiCapabilityManifest(): AdapterCapability {
-  const manifest = piCapabilityManifest(PI_CAPABILITY_EVIDENCE);
+function managedSpawnTargetCapability(
+  target: PiManagedTargetCapabilityInput,
+) {
+  if (!/^[A-Za-z0-9._:-]{1,256}$/.test(target.projectContextRef)) {
+    throw new Error("Pi project-context references must be opaque 1..256 byte identifiers");
+  }
+  if (!target.logicalTargetId || target.logicalTargetId.length > 256
+      || !/^[\x21-\x7e]+$/.test(target.logicalTargetId)) {
+    throw new Error("Pi managed logical-target ids must be 1..256 printable ASCII bytes");
+  }
+  const adapterPayload = (continuationMode: PiContinuationMode) => create(PayloadEnvelopeSchema, {
+    contentType: PayloadContentType.PROTOBUF,
+    schemaRef: PI_SPAWN_TARGET_SCHEMA_REF,
+    payload: toBinary(PiSpawnTargetSpecSchema, create(PiSpawnTargetSpecSchema, {
+      projectContextRef: target.projectContextRef,
+      continuationMode,
+    })),
+  });
+  return create(ManagedSpawnTargetCapabilitySchema, {
+    logicalTargetId: create(LogicalTargetIdSchema, { value: target.logicalTargetId }),
+    targetSpecShape: PI_RPC_TARGET_SHAPE,
+    freshAdapterPayload: adapterPayload(PiContinuationMode.UNSPECIFIED),
+    continuationAdapterPayload: adapterPayload(PiContinuationMode.REQUIRE_RESUME),
+  });
+}
+
+function requiredPiCapabilityManifest(
+  managedTargets: readonly PiManagedTargetCapabilityInput[],
+): AdapterCapability {
+  const manifest = piCapabilityManifest(PI_CAPABILITY_EVIDENCE, managedTargets);
   decodePiRuntimeProfile(manifest);
   return manifest;
 }

@@ -3,14 +3,19 @@ use std::collections::{HashMap, HashSet};
 use patchbay_contracts::patchbay::{
     adapter_assurance_manifest, AdapterAssuranceManifest, AdapterAssuranceManifestV1,
     AdapterCapability, AdapterReconciliationStrength, AdapterSnapshotSupport,
-    AdapterTargetCategory, FailureCode, IdempotencyStrength, OperationKind, PayloadContentType,
-    PayloadEnvelope, ReconciliationAction, ResourceCapability, ResourceKind,
-    ResourceProjectionContract, SchemaDescriptor,
+    AdapterTargetCategory, FailureCode, IdempotencyStrength, ManagedSpawnTargetCapability,
+    OperationKind, PayloadContentType, PayloadEnvelope, ReconciliationAction, ResourceCapability,
+    ResourceKind, ResourceProjectionContract, SchemaDescriptor,
 };
 
 const MAX_RESOURCE_CAPABILITIES: usize = 128;
+const MAX_MANAGED_SPAWN_TARGETS: usize = 128;
+const MAX_TARGET_SPEC_SHAPES: usize = 128;
+const MAX_TARGET_SPEC_SHAPE_BYTES: usize = 128;
+const MAX_LOGICAL_TARGET_ID_BYTES: usize = 256;
 const MAX_SCHEMA_REF_BYTES: usize = 256;
 const MAX_ADAPTER_PROFILE_BYTES: usize = 64 * 1024;
+const MAX_SPAWN_TARGET_PAYLOAD_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapabilityValidationContext {
@@ -75,6 +80,8 @@ impl ValidatedAdapterCapability {
             .transpose()?;
         validate_operation_kinds(&capability.supported_operation_kinds)?;
         validate_known_failure_modes(&capability.known_failure_modes)?;
+        let supported_target_spec_shapes =
+            validate_target_spec_shapes(&capability.supported_target_spec_shapes)?;
         let session_snapshot = AdapterSnapshotSupport::try_from(
             capability.session_snapshot_support,
         )
@@ -139,6 +146,11 @@ impl ValidatedAdapterCapability {
                 return Err(CapabilityValidationError::DuplicateResourceKind(kind.value));
             }
         }
+        validate_managed_spawn_targets(
+            capability,
+            &supported_target_spec_shapes,
+            &target_categories,
+        )?;
 
         Ok(Self {
             assurance,
@@ -184,6 +196,119 @@ fn validate_operation_kinds(values: &[i32]) -> Result<(), CapabilityValidationEr
         }
     }
     Ok(())
+}
+
+fn validate_target_spec_shapes(
+    values: &[String],
+) -> Result<HashSet<String>, CapabilityValidationError> {
+    if values.len() > MAX_TARGET_SPEC_SHAPES {
+        return Err(CapabilityValidationError::TooManyTargetSpecShapes);
+    }
+    let mut seen = HashSet::new();
+    for value in values {
+        if !bounded_graphic(value, MAX_TARGET_SPEC_SHAPE_BYTES) {
+            return Err(CapabilityValidationError::InvalidTargetSpecShape);
+        }
+        if !seen.insert(value.clone()) {
+            return Err(CapabilityValidationError::DuplicateTargetSpecShape(
+                value.clone(),
+            ));
+        }
+    }
+    Ok(seen)
+}
+
+fn validate_managed_spawn_targets(
+    capability: &AdapterCapability,
+    supported_shapes: &HashSet<String>,
+    target_categories: &HashSet<AdapterTargetCategory>,
+) -> Result<(), CapabilityValidationError> {
+    if capability.managed_spawn_targets.len() > MAX_MANAGED_SPAWN_TARGETS {
+        return Err(CapabilityValidationError::TooManyManagedSpawnTargets);
+    }
+    if !capability.managed_spawn_targets.is_empty()
+        && (!capability
+            .supported_operation_kinds
+            .contains(&(OperationKind::Spawn as i32))
+            || !target_categories.contains(&AdapterTargetCategory::RuntimeSession))
+    {
+        return Err(CapabilityValidationError::ManagedSpawnTargetCategoryMismatch);
+    }
+
+    let mut logical_targets = HashSet::new();
+    for target in &capability.managed_spawn_targets {
+        validate_managed_spawn_target(target, supported_shapes)?;
+        let logical_target_id = target
+            .logical_target_id
+            .as_ref()
+            .expect("validated managed spawn target id");
+        if !logical_targets.insert(logical_target_id.value.clone()) {
+            return Err(CapabilityValidationError::DuplicateManagedSpawnTarget(
+                logical_target_id.value.clone(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_managed_spawn_target(
+    target: &ManagedSpawnTargetCapability,
+    supported_shapes: &HashSet<String>,
+) -> Result<(), CapabilityValidationError> {
+    let logical_target_id = target
+        .logical_target_id
+        .as_ref()
+        .filter(|id| bounded_graphic(&id.value, MAX_LOGICAL_TARGET_ID_BYTES))
+        .ok_or(CapabilityValidationError::InvalidManagedSpawnTargetId)?;
+    debug_assert!(!logical_target_id.value.is_empty());
+    if !supported_shapes.contains(&target.target_spec_shape) {
+        return Err(CapabilityValidationError::UndeclaredManagedSpawnTargetShape);
+    }
+    validate_spawn_target_payload(target.fresh_adapter_payload.as_ref(), "fresh")?;
+    if target.continuation_adapter_payload.is_some() {
+        validate_spawn_target_payload(
+            target.continuation_adapter_payload.as_ref(),
+            "continuation",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_spawn_target_payload(
+    payload: Option<&PayloadEnvelope>,
+    intent: &'static str,
+) -> Result<(), CapabilityValidationError> {
+    let payload = payload.ok_or(CapabilityValidationError::MissingManagedSpawnTargetPayload(
+        intent,
+    ))?;
+    if payload.payload.is_empty() || payload.payload.len() > MAX_SPAWN_TARGET_PAYLOAD_BYTES {
+        return Err(CapabilityValidationError::InvalidManagedSpawnTargetPayload(
+            intent,
+        ));
+    }
+    if payload.schema_ref.is_empty()
+        || payload.schema_ref.len() > MAX_SCHEMA_REF_BYTES
+        || payload
+            .schema_ref
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace())
+    {
+        return Err(CapabilityValidationError::InvalidManagedSpawnTargetPayload(
+            intent,
+        ));
+    }
+    let content_type = PayloadContentType::try_from(payload.content_type)
+        .map_err(|_| CapabilityValidationError::InvalidManagedSpawnTargetPayload(intent))?;
+    if content_type == PayloadContentType::Unspecified {
+        return Err(CapabilityValidationError::InvalidManagedSpawnTargetPayload(
+            intent,
+        ));
+    }
+    Ok(())
+}
+
+fn bounded_graphic(value: &str, maximum: usize) -> bool {
+    !value.is_empty() && value.len() <= maximum && value.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
 fn validate_known_failure_modes(values: &[i32]) -> Result<(), CapabilityValidationError> {
@@ -597,6 +722,26 @@ pub enum CapabilityValidationError {
     UnspecifiedSupportedOperationKind,
     #[error("manifest contains duplicate supported OperationKind {0:?}")]
     DuplicateSupportedOperationKind(OperationKind),
+    #[error("manifest contains more than 128 target-spec shapes")]
+    TooManyTargetSpecShapes,
+    #[error("manifest target-spec shape must be 1..=128 printable ASCII bytes")]
+    InvalidTargetSpecShape,
+    #[error("manifest contains duplicate target-spec shape {0}")]
+    DuplicateTargetSpecShape(String),
+    #[error("manifest contains more than 128 managed spawn targets")]
+    TooManyManagedSpawnTargets,
+    #[error("managed spawn targets require spawn support and the runtime-session category")]
+    ManagedSpawnTargetCategoryMismatch,
+    #[error("managed spawn target logical id must be 1..=256 printable ASCII bytes")]
+    InvalidManagedSpawnTargetId,
+    #[error("manifest contains duplicate managed spawn target {0}")]
+    DuplicateManagedSpawnTarget(String),
+    #[error("managed spawn target uses an undeclared target-spec shape")]
+    UndeclaredManagedSpawnTargetShape,
+    #[error("managed spawn target is missing its {0} adapter payload")]
+    MissingManagedSpawnTargetPayload(&'static str),
+    #[error("managed spawn target {0} adapter payload is malformed")]
+    InvalidManagedSpawnTargetPayload(&'static str),
     #[error("manifest contains unknown known failure mode {0}")]
     UnknownKnownFailureMode(i32),
     #[error("manifest known failure mode is unspecified")]

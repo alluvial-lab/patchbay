@@ -22,11 +22,13 @@ import {
   LogicalTargetIdSchema,
   RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
+  type AdapterCapabilitySummary,
   type AuthorityDomainId,
   type Operation,
 } from "@patchbay/contracts";
 import {
   continuationSpawnPayload,
+  declaredManagedSpawnTarget,
   freshSpawnPayload,
   spawnAdapterTarget,
 } from "@patchbay/operator-domain";
@@ -154,10 +156,10 @@ function composeCockpit(
   let diagnosticRequestSequence = 0;
 
   async function queryAdapterStatus(session: SessionView | undefined, reason: string): Promise<void> {
+    if (!session && options.startSubscription === false) return;
     if (projection.model.lockdown.active || projection.model.lockdown.submitting) return;
     const adapterId = session?.identity.adapterId;
-    if (!adapterId) return;
-    const key = `${adapterId}:${reason}`;
+    const key = `${adapterId ?? "*"}:${reason}`;
     if (inFlightDiagnostics.has(key)) return;
     inFlightDiagnostics.add(key);
     try {
@@ -318,11 +320,23 @@ function composeCockpit(
       void queryAdapterStatus(session, reason);
     },
     actions: {
-      spawn(adapterId) {
-        return submit(buildFreshSpawnOperation(authorityDomainId, adapterId, nextIds()));
+      spawn(adapterId, logicalTargetId) {
+        const ids = nextIds();
+        return submit(buildFreshSpawnOperation(
+          authorityDomainId,
+          adapterId,
+          projection.model.adapters.get(adapterId)?.status?.capability,
+          { idempotencyKey: ids.idempotencyKey },
+          logicalTargetId,
+        ));
       },
       restart(session) {
-        return submit(buildRestartOperation(authorityDomainId, session, nextIds()));
+        return submit(buildRestartOperation(
+          authorityDomainId,
+          session,
+          projection.model.adapters.get(session.identity.adapterId)?.status?.capability,
+          nextIds(),
+        ));
       },
       async abandonSpawnTarget(command) {
         if (!command.spawnLogicalTargetId) {
@@ -417,27 +431,40 @@ function composeCockpit(
 export function buildFreshSpawnOperation(
   authorityDomainId: AuthorityDomainId,
   adapterId: string,
-  ids: { commandId: string; idempotencyKey: string },
+  capability: AdapterCapabilitySummary | undefined,
+  ids: { idempotencyKey: string },
+  logicalTargetId?: string,
 ): Operation {
+  const selected = declaredManagedSpawnTarget(capability, "fresh", logicalTargetId);
+  if (!selected.available) throw new Error(selected.reason);
   return create(OperationSchema, {
-    commandId: create(CommandIdSchema, { value: ids.commandId }),
+    // Fresh managed logical-target identity is the command id allocated by the
+    // core; the adapter-declared target therefore owns this stable id.
+    commandId: create(CommandIdSchema, { value: selected.logicalTargetId }),
     authorityDomainId,
     sender: create(ActorEndpointRefSchema, {}),
     kind: OperationKind.SPAWN,
     targetScope: spawnAdapterTarget(adapterId),
     idempotencyKey: ids.idempotencyKey,
-    payload: freshSpawnPayload({ shape: "session" }),
+    payload: freshSpawnPayload(selected.target),
   });
 }
 
 export function buildRestartOperation(
   authorityDomainId: AuthorityDomainId,
   session: SessionView,
+  capability: AdapterCapabilitySummary | undefined,
   ids: { commandId: string; idempotencyKey: string },
 ): Operation {
   if (!session.logicalTargetId) {
     throw new Error("managed logical target identity is unavailable; reconcile before restart");
   }
+  const selected = declaredManagedSpawnTarget(
+    capability,
+    "continuation",
+    session.logicalTargetId,
+  );
+  if (!selected.available) throw new Error(selected.reason);
   const exactPrior = create(RuntimeGenerationRefSchema, {
     logicalTargetId: create(LogicalTargetIdSchema, { value: session.logicalTargetId }),
     externalRuntime: create(ExternalRuntimeRefSchema, {
@@ -454,7 +481,7 @@ export function buildRestartOperation(
     kind: OperationKind.SPAWN,
     targetScope: spawnAdapterTarget(session.identity.adapterId),
     idempotencyKey: ids.idempotencyKey,
-    payload: continuationSpawnPayload(exactPrior, { shape: "session" }),
+    payload: continuationSpawnPayload(exactPrior, selected.target),
   });
 }
 

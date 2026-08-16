@@ -912,6 +912,22 @@ pub struct AdapterCapability {
     /// bounded opaque envelope and never interprets the profile payload.
     #[prost(message, optional, tag="14")]
     pub adapter_profile: ::core::option::Option<PayloadEnvelope>,
+    /// Configured managed targets whose adapter-owned payload templates let a
+    /// control surface construct fresh and, when declared, continuation spawn
+    /// requests without interpreting adapter-specific schemas.
+    #[prost(message, repeated, tag="15")]
+    pub managed_spawn_targets: ::prost::alloc::vec::Vec<ManagedSpawnTargetCapability>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ManagedSpawnTargetCapability {
+    #[prost(message, optional, tag="1")]
+    pub logical_target_id: ::core::option::Option<LogicalTargetId>,
+    #[prost(string, tag="2")]
+    pub target_spec_shape: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="3")]
+    pub fresh_adapter_payload: ::core::option::Option<PayloadEnvelope>,
+    #[prost(message, optional, tag="4")]
+    pub continuation_adapter_payload: ::core::option::Option<PayloadEnvelope>,
 }
 /// Versioned, complete declaration of adapter durability and reconciliation
 /// assurances. V1 is frozen; new semantic dimensions require a new branch.
@@ -3865,6 +3881,8 @@ pub struct AdapterCapabilitySummary {
     pub assurance: ::core::option::Option<AdapterAssuranceManifest>,
     #[prost(message, optional, tag="15")]
     pub adapter_profile: ::core::option::Option<AdapterProfileSummary>,
+    #[prost(message, repeated, tag="16")]
+    pub managed_spawn_targets: ::prost::alloc::vec::Vec<ManagedSpawnTargetCapability>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterStatus {

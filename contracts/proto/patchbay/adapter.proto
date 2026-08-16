@@ -25,6 +25,17 @@ message AdapterCapability {
   // Optional adapter-specific generated profile. The core validates only the
   // bounded opaque envelope and never interprets the profile payload.
   PayloadEnvelope adapter_profile = 14;
+  // Configured managed targets whose adapter-owned payload templates let a
+  // control surface construct fresh and, when declared, continuation spawn
+  // requests without interpreting adapter-specific schemas.
+  repeated ManagedSpawnTargetCapability managed_spawn_targets = 15;
+}
+
+message ManagedSpawnTargetCapability {
+  LogicalTargetId logical_target_id = 1;
+  string target_spec_shape = 2;
+  PayloadEnvelope fresh_adapter_payload = 3;
+  PayloadEnvelope continuation_adapter_payload = 4;
 }
 
 // Versioned, complete declaration of adapter durability and reconciliation

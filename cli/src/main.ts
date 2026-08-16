@@ -230,7 +230,7 @@ export async function run(
           config.authorityDomainId,
           {
             adapterId: parsed.positionals[0]!,
-            shape: parsed.positionals[1] ?? "session",
+            logicalTargetId: parsed.positionals[1],
             deploymentAuthorityRef: parsed.options.get("deployment-authority-ref"),
             json,
             idempotencyKey: parsed.options.get("idempotency-key"),
@@ -240,14 +240,13 @@ export async function run(
         );
 
       case "restart":
-        requirePositionals(command, parsed.positionals, 1, 2);
+        requirePositionals(command, parsed.positionals, 1, 1);
         return await restartCommand(
           makeControlClient(config.coreAddr, config.coreSecret, store),
           store,
           config.authorityDomainId,
           {
             target: parsed.positionals[0]!,
-            shape: parsed.positionals[1] ?? "session",
             deploymentAuthorityRef: parsed.options.get("deployment-authority-ref"),
             json,
             idempotencyKey: parsed.options.get("idempotency-key"),
@@ -537,9 +536,9 @@ export function usage(): string {
     "  resource-inspect <adapter=...;resource-kind=...;resource=...> [--replay-events] [--json]",
     "      Inspect one canonical resource wrapper and its shared safe summary.",
     "      --replay-events additionally requires authority-domain query authority.",
-    "  spawn <adapter-id> [shape] [--deployment-authority-ref REF] [--idempotency-key K] [--command-id ID] [--json]",
-    "      Submit a fresh spawn Operation to one explicit adapter.",
-    "  restart <target> [shape] [--deployment-authority-ref REF] [--idempotency-key K] [--command-id ID] [--json]",
+    "  spawn <adapter-id> [logical-target-id] [--deployment-authority-ref REF] [--idempotency-key K] [--command-id ID] [--json]",
+    "      Submit a fresh spawn Operation from the adapter's declared managed target.",
+    "  restart <target> [--deployment-authority-ref REF] [--idempotency-key K] [--command-id ID] [--json]",
     "      Submit restart as a new spawn Operation with the exact current managed continuation.",
     "  spawn-target-abandon <claim-command-id> <logical-target-id> [--reason-code CODE] [--json]",
     "      Permanently retire an unreconcilable managed target and consume its spawn claim.",

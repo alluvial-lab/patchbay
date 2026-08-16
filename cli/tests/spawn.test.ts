@@ -7,15 +7,25 @@ import test from "node:test";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import {
   AbandonSpawnTargetResultSchema,
+  AdapterCapabilitySummarySchema,
   AdapterIdSchema,
+  AdapterStatusPageSchema,
+  AdapterStatusSchema,
   CommandIdSchema,
   ContinuationContextStatus,
   ExternalRuntimeRefSchema,
   GenerationSchema,
   LogicalTargetIdSchema,
+  LsnSchema,
+  ManagedSpawnTargetCapabilitySchema,
   OperationKind,
   OperationSchema,
   OperationState,
+  PayloadContentType,
+  PayloadEnvelopeSchema,
+  PiContinuationMode,
+  PiSpawnTargetSpecSchema,
+  QueryDiagnosticsResponseSchema,
   RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
   SpawnClaimDisposition,
@@ -44,6 +54,50 @@ async function store(): Promise<CredentialStore> {
   const result = new CredentialStore(join(directory, "credentials.json"));
   await result.write(credentials());
   return result;
+}
+
+function adapterCapabilityResponse(
+  logicalTargetId: string,
+  projectContextRef: string,
+) {
+  const payload = (continuationMode: PiContinuationMode) => create(PayloadEnvelopeSchema, {
+    contentType: PayloadContentType.PROTOBUF,
+    schemaRef: "patchbay.PiSpawnTargetSpec.v1",
+    payload: toBinary(PiSpawnTargetSpecSchema, create(PiSpawnTargetSpecSchema, {
+      projectContextRef,
+      continuationMode,
+    })),
+  });
+  return create(QueryDiagnosticsResponseSchema, {
+    submission: create(SubmissionResultSchema, {
+      outcome: SubmissionOutcome.ACCEPTED,
+      operationState: OperationState.COMPLETED,
+    }),
+    resultEventId: {
+      authorityDomainId: { value: DOMAIN },
+      lsn: create(LsnSchema, { value: 10n }),
+    },
+    asOfLsn: create(LsnSchema, { value: 10n }),
+    result: {
+      case: "adapters",
+      value: create(AdapterStatusPageSchema, {
+        adapters: [create(AdapterStatusSchema, {
+          adapterId: create(AdapterIdSchema, { value: "pi-adapter" }),
+          capability: create(AdapterCapabilitySummarySchema, {
+            supportedOperationKinds: [OperationKind.SPAWN],
+            supportedTargetSpecShapes: ["pi-rpc"],
+            sessionReplacementSupport: true,
+            managedSpawnTargets: [create(ManagedSpawnTargetCapabilitySchema, {
+              logicalTargetId: create(LogicalTargetIdSchema, { value: logicalTargetId }),
+              targetSpecShape: "pi-rpc",
+              freshAdapterPayload: payload(PiContinuationMode.UNSPECIFIED),
+              continuationAdapterPayload: payload(PiContinuationMode.REQUIRE_RESUME),
+            })],
+          }),
+        })],
+      }),
+    },
+  });
 }
 
 function accepted(commandId: string) {
@@ -101,6 +155,9 @@ test("spawn submits the shared fresh SpawnRequest to one explicit adapter", asyn
   const output = captureOutput();
   const exit = await spawnCommand(
     {
+      async queryDiagnostics() {
+        return adapterCapabilityResponse("spawn-fresh", "project-fresh");
+      },
       async submit(request) {
         submitted = request.operation ? create(OperationSchema, request.operation) : undefined;
         return accepted("spawn-fresh");
@@ -110,7 +167,7 @@ test("spawn submits the shared fresh SpawnRequest to one explicit adapter", asyn
     DOMAIN,
     {
       adapterId: "pi-adapter",
-      shape: "session",
+      logicalTargetId: "spawn-fresh",
       commandId: "spawn-fresh",
       idempotencyKey: "spawn-fresh-key",
       json: false,
@@ -122,7 +179,41 @@ test("spawn submits the shared fresh SpawnRequest to one explicit adapter", asyn
   assert.equal(submitted?.targetScope?.adapterId?.value, "pi-adapter");
   const request = fromBinary(SpawnRequestSchema, submitted!.payload!.payload);
   assert.equal(request.intent.case, "fresh");
+  assert.equal(request.targetSpec?.shape, "pi-rpc");
+  assert.equal(
+    fromBinary(PiSpawnTargetSpecSchema, request.targetSpec!.adapterPayload!.payload).projectContextRef,
+    "project-fresh",
+  );
   assert.match(output.err.join("\n"), /intent=fresh/);
+});
+
+test("spawn fails closed before submit when the adapter declares no target-spec shape", async () => {
+  let submitCalls = 0;
+  const response = adapterCapabilityResponse("spawn-fresh", "project-fresh");
+  if (response.result.case !== "adapters") assert.fail("adapter result expected");
+  response.result.value.adapters[0]!.capability!.supportedTargetSpecShapes = [];
+  await assert.rejects(
+    spawnCommand(
+      {
+        async queryDiagnostics() { return response; },
+        async submit() {
+          submitCalls += 1;
+          return accepted("spawn-fresh");
+        },
+      },
+      await store(),
+      DOMAIN,
+      {
+        adapterId: "pi-adapter",
+        logicalTargetId: "spawn-fresh",
+        idempotencyKey: "spawn-fresh-key",
+        json: false,
+      },
+      captureOutput(),
+    ),
+    /does not declare a spawn target-spec shape/,
+  );
+  assert.equal(submitCalls, 0);
 });
 
 test("restart resolves durable managed identity and submits exact continuation without restoration claims", async () => {
@@ -145,7 +236,7 @@ test("restart resolves durable managed identity and submits exact continuation w
   });
   let submitted: Operation | undefined;
   const output = captureOutput();
-  const client: Pick<ControlClient, "loadSnapshot" | "subscribe" | "submit"> = {
+  const client: Pick<ControlClient, "loadSnapshot" | "subscribe" | "submit" | "queryDiagnostics"> = {
     async loadSnapshot() {
       return snapshotResponse();
     },
@@ -156,6 +247,9 @@ test("restart resolves durable managed identity and submits exact continuation w
           payload: toBinary(SpawnPromotionCommittedSchema, promotion),
         }),
       });
+    },
+    async queryDiagnostics() {
+      return adapterCapabilityResponse("logical-primary", "project-restart");
     },
     async submit(request) {
       submitted = request.operation ? create(OperationSchema, request.operation) : undefined;
@@ -168,7 +262,6 @@ test("restart resolves durable managed identity and submits exact continuation w
     DOMAIN,
     {
       target: "runtime-1",
-      shape: "session",
       commandId: "spawn-restart",
       idempotencyKey: "spawn-restart-key",
       json: false,
@@ -182,6 +275,10 @@ test("restart resolves durable managed identity and submits exact continuation w
   assert.equal(request.intent.case, "continuation");
   if (request.intent.case !== "continuation") assert.fail("continuation intent expected");
   assert.deepEqual(request.intent.value.prior, prior);
+  assert.equal(request.targetSpec?.shape, "pi-rpc");
+  const target = fromBinary(PiSpawnTargetSpecSchema, request.targetSpec!.adapterPayload!.payload);
+  assert.equal(target.projectContextRef, "project-restart");
+  assert.equal(target.continuationMode, PiContinuationMode.REQUIRE_RESUME);
   assert.match(output.err.join("\n"), /logical context resumed/);
   assert.doesNotMatch(output.err.join("\n"), /context continuity is unknown/);
   assert.doesNotMatch(output.err.join("\n"), /process state (was|is) restored/i);

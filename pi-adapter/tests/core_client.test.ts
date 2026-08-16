@@ -34,6 +34,8 @@ import {
   PiReloadableResourceKind,
   PiRuntimeProfileSchema,
   PiSessionMaterializationPolicy,
+  PiSpawnTargetSpecSchema,
+  PiContinuationMode,
   PiTransportMechanism,
   ReconciliationAction,
   SessionActivityState,
@@ -48,6 +50,7 @@ import {
   PI_MANAGED_LIFECYCLE_CONFORMANCE_VERSION,
   PI_RPC_TARGET_SHAPE,
   PI_RUNTIME_PROFILE_SCHEMA_REF,
+  PI_SPAWN_TARGET_SCHEMA_REF,
   isPiProjectionSchemaRef,
   piCapabilityManifest,
   type PiCapabilityEvidence,
@@ -61,6 +64,35 @@ import {
 import type { SessionReportOrder } from "../src/session_report_sequencer.js";
 
 const attachmentTokenHeader = "x-patchbay-adapter-attachment-token";
+
+test("Pi manifest carries configured managed target templates for both spawn intents", () => {
+  const manifest = piCapabilityManifest(PI_CAPABILITY_EVIDENCE, [{
+    projectContextRef: "project-context-1",
+    logicalTargetId: "logical-target-1",
+  }]);
+  assert.equal(manifest.managedSpawnTargets.length, 1);
+  const target = manifest.managedSpawnTargets[0]!;
+  assert.equal(target.logicalTargetId?.value, "logical-target-1");
+  assert.equal(target.targetSpecShape, PI_RPC_TARGET_SHAPE);
+  assert.equal(target.freshAdapterPayload?.schemaRef, PI_SPAWN_TARGET_SCHEMA_REF);
+  assert.equal(target.continuationAdapterPayload?.schemaRef, PI_SPAWN_TARGET_SCHEMA_REF);
+  const fresh = fromBinary(PiSpawnTargetSpecSchema, target.freshAdapterPayload!.payload);
+  const continuation = fromBinary(
+    PiSpawnTargetSpecSchema,
+    target.continuationAdapterPayload!.payload,
+  );
+  assert.equal(fresh.projectContextRef, "project-context-1");
+  assert.equal(fresh.continuationMode, PiContinuationMode.UNSPECIFIED);
+  assert.equal(continuation.projectContextRef, "project-context-1");
+  assert.equal(continuation.continuationMode, PiContinuationMode.REQUIRE_RESUME);
+  assert.throws(
+    () => piCapabilityManifest(PI_CAPABILITY_EVIDENCE, [{
+      projectContextRef: "/raw/path",
+      logicalTargetId: "logical-target-1",
+    }]),
+    /opaque/,
+  );
+});
 
 test("Pi manifest activates only from one complete implementation-conformance evidence set", () => {
   const manifest = piCapabilityManifest();

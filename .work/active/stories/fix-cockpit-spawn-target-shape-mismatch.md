@@ -1,7 +1,7 @@
 ---
 id: fix-cockpit-spawn-target-shape-mismatch
 kind: story
-stage: implementing
+stage: review
 tags: [verification, adapter]
 parent: null
 depends_on: [fix-pi-managed-spawn-delivery-wiring]
@@ -66,6 +66,60 @@ window coordinated with the orchestrator.
 - [ ] Cockpit "+" produces a spawn the Pi supervisor accepts (delivery →
       launch → journal → staged → promoted → live) on the live stack.
 - [ ] Restart (continuation) same.
-- [ ] Adapter-neutral: no Pi vocabulary hardcoded in cockpit; undeclared
+- [x] Adapter-neutral: no Pi vocabulary hardcoded in cockpit; undeclared
       adapters disable the action canonically.
-- [ ] Full four verification groups + web-cockpit/cli suites green.
+- [x] Full four verification groups + web-cockpit/cli suites green.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol` (caller-selected for the
+  generated-contract, adapter-boundary, and multi-surface integration). Direct
+  implementation was used because this delegated worker cannot fan out under
+  the harness recursion guard.
+- Review weight: `standard` (project default). This standalone fix is left at
+  `stage: review` for the orchestrator's bounded review and live UAT checkpoint.
+- Contract and validation: `AdapterCapability` and canonical diagnostics now
+  carry bounded `managed_spawn_targets`, binding a logical-target id and a
+  declared shape to fresh and optional continuation opaque payload templates.
+  Core registration validates shape/id uniqueness, declared-shape membership,
+  operation/category coherence, envelope framing, and bounds without decoding
+  adapter-specific bytes.
+- Pi declaration: each configured managed target now emits exact `pi-rpc`
+  `PiSpawnTargetSpec` templates: unspecified continuation mode for fresh spawn
+  and `require_resume` for continuation. The bounded project-context reference
+  is the only Pi construction value surfaced; paths, labels, and credentials
+  remain excluded.
+- Shared consumers: `operator-domain` owns fail-closed managed-target selection
+  and canonical reasons. Cockpit fresh/restart and CLI spawn/restart both reuse
+  it, pass through the exact declared opaque payload, and reject zero/multiple
+  shapes, unavailable capability, undeclared targets, shape mismatch, and
+  absent intent payloads before submission. Fresh managed command identity is
+  the declared logical-target id; restart preserves the exact prior runtime
+  generation.
+- Regression coverage: core malformed-manifest tests, Pi manifest and real-core
+  diagnostics assertions, production delivery-loop construction through the
+  shared helper, cockpit/CLI exact protobuf assertions, and zero-shape UI/CLI
+  fail-closed tests. The real Pi lifecycle E2E exercises fresh launch,
+  journal/stage/promotion/live publication and exact continuation with these
+  shared templates.
+- Mutation evidence: the existing Pi mutation suite killed **31/31**. Four
+  focused new manual probes also died: hardcoding `session` instead of the
+  declared shape, keeping zero-shape spawn enabled, swapping fresh to the
+  continuation payload, and omitting the configured Pi project-context
+  reference (**4/4**).
+- Full verification (2026-08-16):
+  1. Rust workspace build/tests, `cargo fmt --all --check`, workspace clippy
+     with `-D warnings`, and `cargo check -p patchbay-core` — **PASS**.
+  2. Contract generated drift, vectors, model promotion, and TypeScript build —
+     **PASS** (60 vectors, 19 promoted vectors, 33 implementation checks, 38
+     contract mutation witnesses).
+  3. `operator-domain` build/tests — **PASS** (34/34).
+  4. `pi-adapter` build/tests plus mutations — **PASS** (129/129; 31/31).
+  Consumer suites: `web-cockpit` **150/150**, CLI **54/54** plus real-core
+  resource projection, and token-commune adapter **63/63** including both
+  real-core flows.
+- The live UAT stack was not restarted or otherwise touched, per operator
+  instruction. The fresh/restart live-UAT acceptance checkboxes remain open for
+  operator confirmation; automated real-core/real-Pi coverage is green.
+- Pre-existing untracked `cli/rt-probe.tmp.mjs` was preserved and excluded from
+  this change. No worktree was created and nothing was pushed.

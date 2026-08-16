@@ -799,6 +799,7 @@ impl DiagnosticsProjection {
                                     },
                                 ),
                             ),
+                            managed_spawn_targets: capability.managed_spawn_targets.clone(),
                         }
                     });
                     let recent_diagnostics = if recent_limit == 0 {

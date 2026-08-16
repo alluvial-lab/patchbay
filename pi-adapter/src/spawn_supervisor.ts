@@ -30,7 +30,7 @@ import {
   type SpawnPriorWorkEffect,
   type RuntimeGenerationRef,
 } from "@patchbay/contracts";
-import { PI_RPC_TARGET_SHAPE } from "./core_client.js";
+import { PI_RPC_TARGET_SHAPE, PI_SPAWN_TARGET_SCHEMA_REF } from "./core_client.js";
 import type { ConfiguredDeploymentTarget } from "./deployment_authority.js";
 import { PiRpcTransportError } from "./rpc_client.js";
 import {
@@ -68,7 +68,7 @@ import {
   type PiStagedCursorPublication,
 } from "./entry_reconciler.js";
 
-export const PI_SPAWN_TARGET_SCHEMA_REF = "patchbay.PiSpawnTargetSpec.v1";
+export { PI_SPAWN_TARGET_SCHEMA_REF } from "./core_client.js";
 export const PI_SPAWN_RESULT_SCHEMA_REF = "patchbay.PiSpawnResult.v1";
 export { PI_RPC_TARGET_SHAPE } from "./core_client.js";
 

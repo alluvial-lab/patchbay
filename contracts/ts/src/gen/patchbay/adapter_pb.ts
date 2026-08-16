@@ -6,7 +6,7 @@ import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2"
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { AdapterId, AuthorityDomainId, EndpointId, Generation, Lsn, PayloadContentType, PayloadEnvelope, ResourceKind } from "./common_pb.js";
+import type { AdapterId, AuthorityDomainId, EndpointId, Generation, LogicalTargetId, Lsn, PayloadContentType, PayloadEnvelope, ResourceKind } from "./common_pb.js";
 import { file_patchbay_common } from "./common_pb.js";
 import type { FailureCode, OperationKind } from "./operations_pb.js";
 import { file_patchbay_operations } from "./operations_pb.js";
@@ -16,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file patchbay/adapter.proto.
  */
 export const file_patchbay_adapter: GenFile = /*@__PURE__*/
-  fileDesc("ChZwYXRjaGJheS9hZGFwdGVyLnByb3RvEghwYXRjaGJheSL1BQoRQWRhcHRlckNhcGFiaWxpdHkSOgoZc3VwcG9ydGVkX29wZXJhdGlvbl9raW5kcxgBIAMoDjIXLnBhdGNoYmF5Lk9wZXJhdGlvbktpbmQSJAocc3VwcG9ydGVkX3RhcmdldF9zcGVjX3NoYXBlcxgCIAMoCRIZChFzdHJlYW1pbmdfc3VwcG9ydBgDIAEoCBJCChhzZXNzaW9uX3NuYXBzaG90X3N1cHBvcnQYBCABKA4yIC5wYXRjaGJheS5BZGFwdGVyU25hcHNob3RTdXBwb3J0EhwKFGNhbmNlbGxhdGlvbl9zdXBwb3J0GAUgASgIEiMKG3Nlc3Npb25fcmVwbGFjZW1lbnRfc3VwcG9ydBgGIAEoCBI/ChRpZGVtcG90ZW5jeV9zdHJlbmd0aBgHIAEoDjIdLnBhdGNoYmF5LklkZW1wb3RlbmN5U3RyZW5ndGhCAhgBEjUKEWF0dGFjaG1lbnRfbWV0aG9kGAggASgLMhoucGF0Y2hiYXkuQXR0YWNobWVudE1ldGhvZBIyChNrbm93bl9mYWlsdXJlX21vZGVzGAkgAygOMhUucGF0Y2hiYXkuRmFpbHVyZUNvZGUSTAoUZGlhZ25vc3RpY19yZXBvcnRpbmcYCiABKAsyLi5wYXRjaGJheS5BZGFwdGVyRGlhZ25vc3RpY1JlcG9ydGluZ0NhcGFiaWxpdHkSOgoRdGFyZ2V0X2NhdGVnb3JpZXMYCyADKA4yHy5wYXRjaGJheS5BZGFwdGVyVGFyZ2V0Q2F0ZWdvcnkSOwoVcmVzb3VyY2VfY2FwYWJpbGl0aWVzGAwgAygLMhwucGF0Y2hiYXkuUmVzb3VyY2VDYXBhYmlsaXR5EjUKCWFzc3VyYW5jZRgNIAEoCzIiLnBhdGNoYmF5LkFkYXB0ZXJBc3N1cmFuY2VNYW5pZmVzdBIyCg9hZGFwdGVyX3Byb2ZpbGUYDiABKAsyGS5wYXRjaGJheS5QYXlsb2FkRW52ZWxvcGUiWgoYQWRhcHRlckFzc3VyYW5jZU1hbmlmZXN0EjIKAnYxGAEgASgLMiQucGF0Y2hiYXkuQWRhcHRlckFzc3VyYW5jZU1hbmlmZXN0VjFIAEIKCghjb250cmFjdCKiAwoaQWRhcHRlckFzc3VyYW5jZU1hbmlmZXN0VjESPQoWZGVkdXBsaWNhdGlvbl9zdHJlbmd0aBgBIAEoDjIdLnBhdGNoYmF5LklkZW1wb3RlbmN5U3RyZW5ndGgSJwoaY29udGludWF0aW9uX3Byb29mX3N1cHBvcnQYAiABKAhIAIgBARIbCg5jdXJzb3Jfc3VwcG9ydBgDIAEoCEgBiAEBEiUKGGdlbmVyYXRpb25fZmVuY2Vfc3VwcG9ydBgEIAEoCEgCiAEBEkgKF3JlY29uY2lsaWF0aW9uX3N0cmVuZ3RoGAUgASgOMicucGF0Y2hiYXkuQWRhcHRlclJlY29uY2lsaWF0aW9uU3RyZW5ndGgSPwoXdW5wcm92ZW5fb3V0Y29tZV9hY3Rpb24YBiABKA4yHi5wYXRjaGJheS5SZWNvbmNpbGlhdGlvbkFjdGlvbkIdChtfY29udGludWF0aW9uX3Byb29mX3N1cHBvcnRCEQoPX2N1cnNvcl9zdXBwb3J0QhsKGV9nZW5lcmF0aW9uX2ZlbmNlX3N1cHBvcnQiWgoQU2NoZW1hRGVzY3JpcHRvchISCgpzY2hlbWFfcmVmGAEgASgJEjIKDGNvbnRlbnRfdHlwZRgCIAEoDjIcLnBhdGNoYmF5LlBheWxvYWRDb250ZW50VHlwZSLBAQoaUmVzb3VyY2VQcm9qZWN0aW9uQ29udHJhY3QSOAoPdGFyZ2V0X2NhdGVnb3J5GAEgASgOMh8ucGF0Y2hiYXkuQWRhcHRlclRhcmdldENhdGVnb3J5EjIKDnBheWxvYWRfc2NoZW1hGAIgASgLMhoucGF0Y2hiYXkuU2NoZW1hRGVzY3JpcHRvchI1ChFwcm9qZWN0aW9uX3NjaGVtYRgDIAEoCzIaLnBhdGNoYmF5LlNjaGVtYURlc2NyaXB0b3IiwgEKElJlc291cmNlQ2FwYWJpbGl0eRItCg1yZXNvdXJjZV9raW5kGAEgASgLMhYucGF0Y2hiYXkuUmVzb3VyY2VLaW5kEjoKEHNuYXBzaG90X3N1cHBvcnQYAiABKA4yIC5wYXRjaGJheS5BZGFwdGVyU25hcHNob3RTdXBwb3J0EkEKE3Byb2plY3Rpb25fY29udHJhY3QYAyABKAsyJC5wYXRjaGJheS5SZXNvdXJjZVByb2plY3Rpb25Db250cmFjdCJACiRBZGFwdGVyRGlhZ25vc3RpY1JlcG9ydGluZ0NhcGFiaWxpdHkSGAoQZGlhZ25vc3RpY19jb2RlcxgBIAMoCSJzChBBdHRhY2htZW50TWV0aG9kEgwKBGtpbmQYASABKAkSEgoKZGVzY3JpcHRvchgCIAEoDBI9ChdkZXNjcmlwdG9yX2NvbnRlbnRfdHlwZRgDIAEoDjIcLnBhdGNoYmF5LlBheWxvYWRDb250ZW50VHlwZSLaAgoTQWRhcHRlclJlZ2lzdHJhdGlvbhInCgphZGFwdGVyX2lkGAEgASgLMhMucGF0Y2hiYXkuQWRhcHRlcklkEikKC2VuZHBvaW50X2lkGAIgASgLMhQucGF0Y2hiYXkuRW5kcG9pbnRJZBI4ChNhdXRob3JpdHlfZG9tYWluX2lkGAMgASgLMhsucGF0Y2hiYXkuQXV0aG9yaXR5RG9tYWluSWQSMAoSYWRhcHRlcl9nZW5lcmF0aW9uGAQgASgLMhQucGF0Y2hiYXkuR2VuZXJhdGlvbhIvCgpjYXBhYmlsaXR5GAUgASgLMhsucGF0Y2hiYXkuQWRhcHRlckNhcGFiaWxpdHkSIQoKYXR0YWNoX2xzbhgGIAEoCzINLnBhdGNoYmF5LkxzbhIvCgthdHRhY2hlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAq2gEKHUFkYXB0ZXJSZWNvbmNpbGlhdGlvblN0cmVuZ3RoEi8KK0FEQVBURVJfUkVDT05DSUxJQVRJT05fU1RSRU5HVEhfVU5TUEVDSUZJRUQQABIoCiRBREFQVEVSX1JFQ09OQ0lMSUFUSU9OX1NUUkVOR1RIX05PTkUQARIrCidBREFQVEVSX1JFQ09OQ0lMSUFUSU9OX1NUUkVOR1RIX0JPVU5ERUQQAhIxCi1BREFQVEVSX1JFQ09OQ0lMSUFUSU9OX1NUUkVOR1RIX0FVVEhPUklUQVRJVkUQAyqIAQoUUmVjb25jaWxpYXRpb25BY3Rpb24SJQohUkVDT05DSUxJQVRJT05fQUNUSU9OX1VOU1BFQ0lGSUVEEAASHgoaUkVDT05DSUxJQVRJT05fQUNUSU9OX05PTkUQARIpCiVSRUNPTkNJTElBVElPTl9BQ1RJT05fTUFOVUFMX1JFUVVJUkVEEAIqzQEKFUFkYXB0ZXJUYXJnZXRDYXRlZ29yeRInCiNBREFQVEVSX1RBUkdFVF9DQVRFR09SWV9VTlNQRUNJRklFRBAAEisKJ0FEQVBURVJfVEFSR0VUX0NBVEVHT1JZX1JVTlRJTUVfU0VTU0lPThABEjAKLEFEQVBURVJfVEFSR0VUX0NBVEVHT1JZX09QRVJBVElPTkFMX1JFU09VUkNFEAISLAooQURBUFRFUl9UQVJHRVRfQ0FURUdPUllfS05PV0xFREdFX0JVTkRMRRADKq4BChNJZGVtcG90ZW5jeVN0cmVuZ3RoEiQKIElERU1QT1RFTkNZX1NUUkVOR1RIX1VOU1BFQ0lGSUVEEAASHQoZSURFTVBPVEVOQ1lfU1RSRU5HVEhfTk9ORRABEi0KKUlERU1QT1RFTkNZX1NUUkVOR1RIX0FUX1BBVENIQkFZX0JPVU5EQVJZEAISIwofSURFTVBPVEVOQ1lfU1RSRU5HVEhfRU5EX1RPX0VORBADKrcBChZBZGFwdGVyU25hcHNob3RTdXBwb3J0EigKJEFEQVBURVJfU05BUFNIT1RfU1VQUE9SVF9VTlNQRUNJRklFRBAAEioKJkFEQVBURVJfU05BUFNIT1RfU1VQUE9SVF9BVVRIT1JJVEFUSVZFEAESJAogQURBUFRFUl9TTkFQU0hPVF9TVVBQT1JUX1BBUlRJQUwQAhIhCh1BREFQVEVSX1NOQVBTSE9UX1NVUFBPUlRfTk9ORRADYgZwcm90bzM", [file_google_protobuf_timestamp, file_patchbay_common, file_patchbay_operations]);
+  fileDesc("ChZwYXRjaGJheS9hZGFwdGVyLnByb3RvEghwYXRjaGJheSK8BgoRQWRhcHRlckNhcGFiaWxpdHkSOgoZc3VwcG9ydGVkX29wZXJhdGlvbl9raW5kcxgBIAMoDjIXLnBhdGNoYmF5Lk9wZXJhdGlvbktpbmQSJAocc3VwcG9ydGVkX3RhcmdldF9zcGVjX3NoYXBlcxgCIAMoCRIZChFzdHJlYW1pbmdfc3VwcG9ydBgDIAEoCBJCChhzZXNzaW9uX3NuYXBzaG90X3N1cHBvcnQYBCABKA4yIC5wYXRjaGJheS5BZGFwdGVyU25hcHNob3RTdXBwb3J0EhwKFGNhbmNlbGxhdGlvbl9zdXBwb3J0GAUgASgIEiMKG3Nlc3Npb25fcmVwbGFjZW1lbnRfc3VwcG9ydBgGIAEoCBI/ChRpZGVtcG90ZW5jeV9zdHJlbmd0aBgHIAEoDjIdLnBhdGNoYmF5LklkZW1wb3RlbmN5U3RyZW5ndGhCAhgBEjUKEWF0dGFjaG1lbnRfbWV0aG9kGAggASgLMhoucGF0Y2hiYXkuQXR0YWNobWVudE1ldGhvZBIyChNrbm93bl9mYWlsdXJlX21vZGVzGAkgAygOMhUucGF0Y2hiYXkuRmFpbHVyZUNvZGUSTAoUZGlhZ25vc3RpY19yZXBvcnRpbmcYCiABKAsyLi5wYXRjaGJheS5BZGFwdGVyRGlhZ25vc3RpY1JlcG9ydGluZ0NhcGFiaWxpdHkSOgoRdGFyZ2V0X2NhdGVnb3JpZXMYCyADKA4yHy5wYXRjaGJheS5BZGFwdGVyVGFyZ2V0Q2F0ZWdvcnkSOwoVcmVzb3VyY2VfY2FwYWJpbGl0aWVzGAwgAygLMhwucGF0Y2hiYXkuUmVzb3VyY2VDYXBhYmlsaXR5EjUKCWFzc3VyYW5jZRgNIAEoCzIiLnBhdGNoYmF5LkFkYXB0ZXJBc3N1cmFuY2VNYW5pZmVzdBIyCg9hZGFwdGVyX3Byb2ZpbGUYDiABKAsyGS5wYXRjaGJheS5QYXlsb2FkRW52ZWxvcGUSRQoVbWFuYWdlZF9zcGF3bl90YXJnZXRzGA8gAygLMiYucGF0Y2hiYXkuTWFuYWdlZFNwYXduVGFyZ2V0Q2FwYWJpbGl0eSLqAQocTWFuYWdlZFNwYXduVGFyZ2V0Q2FwYWJpbGl0eRI0ChFsb2dpY2FsX3RhcmdldF9pZBgBIAEoCzIZLnBhdGNoYmF5LkxvZ2ljYWxUYXJnZXRJZBIZChF0YXJnZXRfc3BlY19zaGFwZRgCIAEoCRI4ChVmcmVzaF9hZGFwdGVyX3BheWxvYWQYAyABKAsyGS5wYXRjaGJheS5QYXlsb2FkRW52ZWxvcGUSPwocY29udGludWF0aW9uX2FkYXB0ZXJfcGF5bG9hZBgEIAEoCzIZLnBhdGNoYmF5LlBheWxvYWRFbnZlbG9wZSJaChhBZGFwdGVyQXNzdXJhbmNlTWFuaWZlc3QSMgoCdjEYASABKAsyJC5wYXRjaGJheS5BZGFwdGVyQXNzdXJhbmNlTWFuaWZlc3RWMUgAQgoKCGNvbnRyYWN0IqIDChpBZGFwdGVyQXNzdXJhbmNlTWFuaWZlc3RWMRI9ChZkZWR1cGxpY2F0aW9uX3N0cmVuZ3RoGAEgASgOMh0ucGF0Y2hiYXkuSWRlbXBvdGVuY3lTdHJlbmd0aBInChpjb250aW51YXRpb25fcHJvb2Zfc3VwcG9ydBgCIAEoCEgAiAEBEhsKDmN1cnNvcl9zdXBwb3J0GAMgASgISAGIAQESJQoYZ2VuZXJhdGlvbl9mZW5jZV9zdXBwb3J0GAQgASgISAKIAQESSAoXcmVjb25jaWxpYXRpb25fc3RyZW5ndGgYBSABKA4yJy5wYXRjaGJheS5BZGFwdGVyUmVjb25jaWxpYXRpb25TdHJlbmd0aBI/Chd1bnByb3Zlbl9vdXRjb21lX2FjdGlvbhgGIAEoDjIeLnBhdGNoYmF5LlJlY29uY2lsaWF0aW9uQWN0aW9uQh0KG19jb250aW51YXRpb25fcHJvb2Zfc3VwcG9ydEIRCg9fY3Vyc29yX3N1cHBvcnRCGwoZX2dlbmVyYXRpb25fZmVuY2Vfc3VwcG9ydCJaChBTY2hlbWFEZXNjcmlwdG9yEhIKCnNjaGVtYV9yZWYYASABKAkSMgoMY29udGVudF90eXBlGAIgASgOMhwucGF0Y2hiYXkuUGF5bG9hZENvbnRlbnRUeXBlIsEBChpSZXNvdXJjZVByb2plY3Rpb25Db250cmFjdBI4Cg90YXJnZXRfY2F0ZWdvcnkYASABKA4yHy5wYXRjaGJheS5BZGFwdGVyVGFyZ2V0Q2F0ZWdvcnkSMgoOcGF5bG9hZF9zY2hlbWEYAiABKAsyGi5wYXRjaGJheS5TY2hlbWFEZXNjcmlwdG9yEjUKEXByb2plY3Rpb25fc2NoZW1hGAMgASgLMhoucGF0Y2hiYXkuU2NoZW1hRGVzY3JpcHRvciLCAQoSUmVzb3VyY2VDYXBhYmlsaXR5Ei0KDXJlc291cmNlX2tpbmQYASABKAsyFi5wYXRjaGJheS5SZXNvdXJjZUtpbmQSOgoQc25hcHNob3Rfc3VwcG9ydBgCIAEoDjIgLnBhdGNoYmF5LkFkYXB0ZXJTbmFwc2hvdFN1cHBvcnQSQQoTcHJvamVjdGlvbl9jb250cmFjdBgDIAEoCzIkLnBhdGNoYmF5LlJlc291cmNlUHJvamVjdGlvbkNvbnRyYWN0IkAKJEFkYXB0ZXJEaWFnbm9zdGljUmVwb3J0aW5nQ2FwYWJpbGl0eRIYChBkaWFnbm9zdGljX2NvZGVzGAEgAygJInMKEEF0dGFjaG1lbnRNZXRob2QSDAoEa2luZBgBIAEoCRISCgpkZXNjcmlwdG9yGAIgASgMEj0KF2Rlc2NyaXB0b3JfY29udGVudF90eXBlGAMgASgOMhwucGF0Y2hiYXkuUGF5bG9hZENvbnRlbnRUeXBlItoCChNBZGFwdGVyUmVnaXN0cmF0aW9uEicKCmFkYXB0ZXJfaWQYASABKAsyEy5wYXRjaGJheS5BZGFwdGVySWQSKQoLZW5kcG9pbnRfaWQYAiABKAsyFC5wYXRjaGJheS5FbmRwb2ludElkEjgKE2F1dGhvcml0eV9kb21haW5faWQYAyABKAsyGy5wYXRjaGJheS5BdXRob3JpdHlEb21haW5JZBIwChJhZGFwdGVyX2dlbmVyYXRpb24YBCABKAsyFC5wYXRjaGJheS5HZW5lcmF0aW9uEi8KCmNhcGFiaWxpdHkYBSABKAsyGy5wYXRjaGJheS5BZGFwdGVyQ2FwYWJpbGl0eRIhCgphdHRhY2hfbHNuGAYgASgLMg0ucGF0Y2hiYXkuTHNuEi8KC2F0dGFjaGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCraAQodQWRhcHRlclJlY29uY2lsaWF0aW9uU3RyZW5ndGgSLworQURBUFRFUl9SRUNPTkNJTElBVElPTl9TVFJFTkdUSF9VTlNQRUNJRklFRBAAEigKJEFEQVBURVJfUkVDT05DSUxJQVRJT05fU1RSRU5HVEhfTk9ORRABEisKJ0FEQVBURVJfUkVDT05DSUxJQVRJT05fU1RSRU5HVEhfQk9VTkRFRBACEjEKLUFEQVBURVJfUkVDT05DSUxJQVRJT05fU1RSRU5HVEhfQVVUSE9SSVRBVElWRRADKogBChRSZWNvbmNpbGlhdGlvbkFjdGlvbhIlCiFSRUNPTkNJTElBVElPTl9BQ1RJT05fVU5TUEVDSUZJRUQQABIeChpSRUNPTkNJTElBVElPTl9BQ1RJT05fTk9ORRABEikKJVJFQ09OQ0lMSUFUSU9OX0FDVElPTl9NQU5VQUxfUkVRVUlSRUQQAirNAQoVQWRhcHRlclRhcmdldENhdGVnb3J5EicKI0FEQVBURVJfVEFSR0VUX0NBVEVHT1JZX1VOU1BFQ0lGSUVEEAASKwonQURBUFRFUl9UQVJHRVRfQ0FURUdPUllfUlVOVElNRV9TRVNTSU9OEAESMAosQURBUFRFUl9UQVJHRVRfQ0FURUdPUllfT1BFUkFUSU9OQUxfUkVTT1VSQ0UQAhIsCihBREFQVEVSX1RBUkdFVF9DQVRFR09SWV9LTk9XTEVER0VfQlVORExFEAMqrgEKE0lkZW1wb3RlbmN5U3RyZW5ndGgSJAogSURFTVBPVEVOQ1lfU1RSRU5HVEhfVU5TUEVDSUZJRUQQABIdChlJREVNUE9URU5DWV9TVFJFTkdUSF9OT05FEAESLQopSURFTVBPVEVOQ1lfU1RSRU5HVEhfQVRfUEFUQ0hCQVlfQk9VTkRBUlkQAhIjCh9JREVNUE9URU5DWV9TVFJFTkdUSF9FTkRfVE9fRU5EEAMqtwEKFkFkYXB0ZXJTbmFwc2hvdFN1cHBvcnQSKAokQURBUFRFUl9TTkFQU0hPVF9TVVBQT1JUX1VOU1BFQ0lGSUVEEAASKgomQURBUFRFUl9TTkFQU0hPVF9TVVBQT1JUX0FVVEhPUklUQVRJVkUQARIkCiBBREFQVEVSX1NOQVBTSE9UX1NVUFBPUlRfUEFSVElBTBACEiEKHUFEQVBURVJfU05BUFNIT1RfU1VQUE9SVF9OT05FEANiBnByb3RvMw", [file_google_protobuf_timestamp, file_patchbay_common, file_patchbay_operations]);
 
 /**
  * @generated from message patchbay.AdapterCapability
@@ -98,6 +98,15 @@ export type AdapterCapability = Message<"patchbay.AdapterCapability"> & {
    * @generated from field: patchbay.PayloadEnvelope adapter_profile = 14;
    */
   adapterProfile?: PayloadEnvelope | undefined;
+
+  /**
+   * Configured managed targets whose adapter-owned payload templates let a
+   * control surface construct fresh and, when declared, continuation spawn
+   * requests without interpreting adapter-specific schemas.
+   *
+   * @generated from field: repeated patchbay.ManagedSpawnTargetCapability managed_spawn_targets = 15;
+   */
+  managedSpawnTargets: ManagedSpawnTargetCapability[];
 };
 
 /**
@@ -106,6 +115,38 @@ export type AdapterCapability = Message<"patchbay.AdapterCapability"> & {
  */
 export const AdapterCapabilitySchema: GenMessage<AdapterCapability> = /*@__PURE__*/
   messageDesc(file_patchbay_adapter, 0);
+
+/**
+ * @generated from message patchbay.ManagedSpawnTargetCapability
+ */
+export type ManagedSpawnTargetCapability = Message<"patchbay.ManagedSpawnTargetCapability"> & {
+  /**
+   * @generated from field: patchbay.LogicalTargetId logical_target_id = 1;
+   */
+  logicalTargetId?: LogicalTargetId | undefined;
+
+  /**
+   * @generated from field: string target_spec_shape = 2;
+   */
+  targetSpecShape: string;
+
+  /**
+   * @generated from field: patchbay.PayloadEnvelope fresh_adapter_payload = 3;
+   */
+  freshAdapterPayload?: PayloadEnvelope | undefined;
+
+  /**
+   * @generated from field: patchbay.PayloadEnvelope continuation_adapter_payload = 4;
+   */
+  continuationAdapterPayload?: PayloadEnvelope | undefined;
+};
+
+/**
+ * Describes the message patchbay.ManagedSpawnTargetCapability.
+ * Use `create(ManagedSpawnTargetCapabilitySchema)` to create a new message.
+ */
+export const ManagedSpawnTargetCapabilitySchema: GenMessage<ManagedSpawnTargetCapability> = /*@__PURE__*/
+  messageDesc(file_patchbay_adapter, 1);
 
 /**
  * Versioned, complete declaration of adapter durability and reconciliation
@@ -131,7 +172,7 @@ export type AdapterAssuranceManifest = Message<"patchbay.AdapterAssuranceManifes
  * Use `create(AdapterAssuranceManifestSchema)` to create a new message.
  */
 export const AdapterAssuranceManifestSchema: GenMessage<AdapterAssuranceManifest> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 1);
+  messageDesc(file_patchbay_adapter, 2);
 
 /**
  * @generated from message patchbay.AdapterAssuranceManifestV1
@@ -173,7 +214,7 @@ export type AdapterAssuranceManifestV1 = Message<"patchbay.AdapterAssuranceManif
  * Use `create(AdapterAssuranceManifestV1Schema)` to create a new message.
  */
 export const AdapterAssuranceManifestV1Schema: GenMessage<AdapterAssuranceManifestV1> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 2);
+  messageDesc(file_patchbay_adapter, 3);
 
 /**
  * A schema identity binding. Matching this descriptor does not establish that
@@ -198,7 +239,7 @@ export type SchemaDescriptor = Message<"patchbay.SchemaDescriptor"> & {
  * Use `create(SchemaDescriptorSchema)` to create a new message.
  */
 export const SchemaDescriptorSchema: GenMessage<SchemaDescriptor> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 3);
+  messageDesc(file_patchbay_adapter, 4);
 
 /**
  * @generated from message patchbay.ResourceProjectionContract
@@ -225,7 +266,7 @@ export type ResourceProjectionContract = Message<"patchbay.ResourceProjectionCon
  * Use `create(ResourceProjectionContractSchema)` to create a new message.
  */
 export const ResourceProjectionContractSchema: GenMessage<ResourceProjectionContract> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 4);
+  messageDesc(file_patchbay_adapter, 5);
 
 /**
  * @generated from message patchbay.ResourceCapability
@@ -252,7 +293,7 @@ export type ResourceCapability = Message<"patchbay.ResourceCapability"> & {
  * Use `create(ResourceCapabilitySchema)` to create a new message.
  */
 export const ResourceCapabilitySchema: GenMessage<ResourceCapability> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 5);
+  messageDesc(file_patchbay_adapter, 6);
 
 /**
  * @generated from message patchbay.AdapterDiagnosticReportingCapability
@@ -269,7 +310,7 @@ export type AdapterDiagnosticReportingCapability = Message<"patchbay.AdapterDiag
  * Use `create(AdapterDiagnosticReportingCapabilitySchema)` to create a new message.
  */
 export const AdapterDiagnosticReportingCapabilitySchema: GenMessage<AdapterDiagnosticReportingCapability> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 6);
+  messageDesc(file_patchbay_adapter, 7);
 
 /**
  * @generated from message patchbay.AttachmentMethod
@@ -296,7 +337,7 @@ export type AttachmentMethod = Message<"patchbay.AttachmentMethod"> & {
  * Use `create(AttachmentMethodSchema)` to create a new message.
  */
 export const AttachmentMethodSchema: GenMessage<AttachmentMethod> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 7);
+  messageDesc(file_patchbay_adapter, 8);
 
 /**
  * @generated from message patchbay.AdapterRegistration
@@ -343,7 +384,7 @@ export type AdapterRegistration = Message<"patchbay.AdapterRegistration"> & {
  * Use `create(AdapterRegistrationSchema)` to create a new message.
  */
 export const AdapterRegistrationSchema: GenMessage<AdapterRegistration> = /*@__PURE__*/
-  messageDesc(file_patchbay_adapter, 8);
+  messageDesc(file_patchbay_adapter, 9);
 
 /**
  * @generated from enum patchbay.AdapterReconciliationStrength

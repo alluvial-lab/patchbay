@@ -2,6 +2,7 @@ import { create, toBinary } from "@bufbuild/protobuf";
 import {
   AdapterIdSchema,
   ContinuationContextStatus,
+  OperationKind,
   FreshSpawnSchema,
   PayloadContentType,
   PayloadEnvelopeSchema,
@@ -11,6 +12,8 @@ import {
   SpawnTargetSpecSchema,
   TargetScopeKind,
   TargetScopeSchema,
+  type AdapterCapabilitySummary,
+  type ManagedSpawnTargetCapability,
   type PayloadEnvelope,
   type RuntimeGenerationRef,
   type SpawnRequest,
@@ -19,6 +22,98 @@ import {
 } from "@patchbay/contracts";
 
 export const SPAWN_REQUEST_SCHEMA = "patchbay.SpawnRequest";
+
+export const SPAWN_ACTION_UNAVAILABLE = Object.freeze({
+  CAPABILITY_UNAVAILABLE: "Adapter capability is unavailable.",
+  OPERATION_UNSUPPORTED: "Adapter does not declare spawn support.",
+  SHAPE_UNDECLARED: "Adapter does not declare a spawn target-spec shape.",
+  SHAPE_AMBIGUOUS: "Adapter declares multiple spawn target-spec shapes; this action requires exactly one.",
+  SESSION_REPLACEMENT_UNSUPPORTED: "Adapter does not declare session replacement support.",
+  TARGET_UNDECLARED: "Adapter does not declare a configured managed spawn target.",
+  TARGET_AMBIGUOUS: "Adapter declares multiple managed spawn targets; select one before spawning.",
+  TARGET_NOT_FOUND: "The selected managed spawn target is not declared by the adapter.",
+  TARGET_SHAPE_MISMATCH: "The managed spawn target does not match the adapter's declared target-spec shape.",
+  TARGET_PAYLOAD_UNAVAILABLE: "The managed spawn target does not declare the required adapter payload.",
+} as const);
+
+export type SpawnActionUnavailableReason =
+  (typeof SPAWN_ACTION_UNAVAILABLE)[keyof typeof SPAWN_ACTION_UNAVAILABLE];
+
+export type DeclaredManagedSpawnTarget =
+  | {
+      available: true;
+      logicalTargetId: string;
+      target: SpawnTargetSpecInput;
+    }
+  | {
+      available: false;
+      reason: SpawnActionUnavailableReason;
+    };
+
+interface SpawnCapabilityDeclaration {
+  readonly supportedOperationKinds: readonly OperationKind[];
+  readonly supportedTargetSpecShapes: readonly string[];
+  readonly sessionReplacementSupport: boolean;
+  readonly managedSpawnTargets: readonly ManagedSpawnTargetCapability[];
+}
+
+/** Resolve one adapter-declared managed target without interpreting its
+ * adapter-specific payload. Capability remains advisory; the adapter still
+ * owns support at delivery time. */
+export function declaredManagedSpawnTarget(
+  capability: AdapterCapabilitySummary | SpawnCapabilityDeclaration | undefined,
+  intent: "fresh" | "continuation",
+  logicalTargetId?: string,
+): DeclaredManagedSpawnTarget {
+  if (!capability) return { available: false, reason: SPAWN_ACTION_UNAVAILABLE.CAPABILITY_UNAVAILABLE };
+  if (!capability.supportedOperationKinds.includes(OperationKind.SPAWN)) {
+    return { available: false, reason: SPAWN_ACTION_UNAVAILABLE.OPERATION_UNSUPPORTED };
+  }
+  if (intent === "continuation" && !capability.sessionReplacementSupport) {
+    return {
+      available: false,
+      reason: SPAWN_ACTION_UNAVAILABLE.SESSION_REPLACEMENT_UNSUPPORTED,
+    };
+  }
+  if (capability.supportedTargetSpecShapes.length === 0) {
+    return { available: false, reason: SPAWN_ACTION_UNAVAILABLE.SHAPE_UNDECLARED };
+  }
+  if (capability.supportedTargetSpecShapes.length !== 1) {
+    return { available: false, reason: SPAWN_ACTION_UNAVAILABLE.SHAPE_AMBIGUOUS };
+  }
+  const shape = capability.supportedTargetSpecShapes[0]!;
+  const candidates = capability.managedSpawnTargets.filter((target) =>
+    logicalTargetId === undefined || target.logicalTargetId?.value === logicalTargetId,
+  );
+  if (logicalTargetId !== undefined && candidates.length === 0) {
+    return { available: false, reason: SPAWN_ACTION_UNAVAILABLE.TARGET_NOT_FOUND };
+  }
+  if (candidates.length === 0) {
+    return { available: false, reason: SPAWN_ACTION_UNAVAILABLE.TARGET_UNDECLARED };
+  }
+  if (candidates.length !== 1) {
+    return { available: false, reason: SPAWN_ACTION_UNAVAILABLE.TARGET_AMBIGUOUS };
+  }
+  const selected = candidates[0]!;
+  const selectedLogicalTargetId = selected.logicalTargetId?.value;
+  if (!selectedLogicalTargetId) {
+    return { available: false, reason: SPAWN_ACTION_UNAVAILABLE.TARGET_NOT_FOUND };
+  }
+  if (selected.targetSpecShape !== shape) {
+    return { available: false, reason: SPAWN_ACTION_UNAVAILABLE.TARGET_SHAPE_MISMATCH };
+  }
+  const adapterPayload = intent === "fresh"
+    ? selected.freshAdapterPayload
+    : selected.continuationAdapterPayload;
+  if (!adapterPayload) {
+    return { available: false, reason: SPAWN_ACTION_UNAVAILABLE.TARGET_PAYLOAD_UNAVAILABLE };
+  }
+  return {
+    available: true,
+    logicalTargetId: selectedLogicalTargetId,
+    target: { shape, adapterPayload },
+  };
+}
 
 /** Adapter-owned target parameters carried without becoming target identity. */
 export interface SpawnTargetSpecInput {

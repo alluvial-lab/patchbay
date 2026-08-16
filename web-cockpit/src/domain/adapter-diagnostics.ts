@@ -53,18 +53,18 @@ export function adapterConnectionPresentation(
 
 export function buildAdapterStatusQueryOperation(
   authorityDomainId: AuthorityDomainId,
-  adapterId: string,
+  adapterId: string | undefined,
   ids: { commandId: string; idempotencyKey: string },
 ): Operation {
-  if (!authorityDomainId.value || !adapterId || !ids.commandId || !ids.idempotencyKey) {
+  if (!authorityDomainId.value || !ids.commandId || !ids.idempotencyKey) {
     throw new Error("adapter diagnostics query identity is incomplete");
   }
   const query = create(DiagnosticsQuerySchema, {
     query: {
       case: "adapters",
       value: create(AdapterStatusQuerySchema, {
-        adapterIds: [create(AdapterIdSchema, { value: adapterId })],
-        limit: 1,
+        adapterIds: adapterId ? [create(AdapterIdSchema, { value: adapterId })] : [],
+        limit: adapterId ? 1 : 100,
         recentDiagnosticLimit: 20,
       }),
     },
@@ -151,11 +151,14 @@ export function mergeAdapterStatusResult(
 
 export function clearAdapterStatus(
   model: PresentationModel,
-  adapterId: string,
+  adapterId?: string,
 ): PresentationModel {
   const next = cloneModel(model);
-  const current = next.adapters.get(adapterId);
-  if (current) next.adapters.set(adapterId, { ...current, status: undefined });
+  const adapterIds = adapterId ? [adapterId] : [...next.adapters.keys()];
+  for (const id of adapterIds) {
+    const current = next.adapters.get(id);
+    if (current) next.adapters.set(id, { ...current, status: undefined });
+  }
   return next;
 }
 

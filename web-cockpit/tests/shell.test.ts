@@ -20,6 +20,7 @@ import {
   IdempotencyStrength,
   LocalSubmissionState,
   LogicalTargetIdSchema,
+  ManagedSpawnTargetCapabilitySchema,
   OperationKind,
   OperationSchema,
   OperationState,
@@ -329,6 +330,49 @@ test("desktop shell is two-pane and rows lead with identity before label metadat
   assert.match(shell.detail.header.textContent!, /provider\/model-1/);
   assert.equal(shell.detail.element.dataset.sessionKey, sessionKey(first.identity));
   assert.equal(shell.element.querySelectorAll(".session-detail").length, 1);
+});
+
+test("session-list spawn derives one declared shape and disables an undeclared shape canonically", () => {
+  const dom = new JSDOM();
+  const model = withSessions(session("session-1"));
+  const payload = create(PayloadEnvelopeSchema, {
+    contentType: PayloadContentType.PROTOBUF,
+    schemaRef: "adapter.SpawnTarget.v1",
+    payload: new Uint8Array([1]),
+  });
+  model.adapters.set("pi", {
+    adapterId: "pi",
+    status: create(AdapterStatusSchema, {
+      capability: create(AdapterCapabilitySummarySchema, {
+        supportedOperationKinds: [OperationKind.SPAWN],
+        supportedTargetSpecShapes: ["declared-shape"],
+        managedSpawnTargets: [create(ManagedSpawnTargetCapabilitySchema, {
+          logicalTargetId: create(LogicalTargetIdSchema, { value: "logical-1" }),
+          targetSpecShape: "declared-shape",
+          freshAdapterPayload: payload,
+          continuationAdapterPayload: payload,
+        })],
+      }),
+    }),
+    asOfLsn: 1n,
+    recentDiagnostics: [],
+  });
+  let selected: readonly [string, string] | undefined;
+  const shell = createCockpitShell(dom.window.document, model, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    actions: { spawn: (adapterId, logicalTargetId) => { selected = [adapterId, logicalTargetId]; } },
+  });
+  const spawn = shell.element.querySelector<HTMLButtonElement>(".sidebar__actions button")!;
+  assert.equal(spawn.disabled, false);
+  assert.equal(spawn.title, "Spawn logical-1 on pi");
+  spawn.click();
+  assert.deepEqual(selected, ["pi", "logical-1"]);
+
+  model.adapters.get("pi")!.status!.capability!.supportedTargetSpecShapes = [];
+  shell.update(model);
+  const disabled = shell.element.querySelector<HTMLButtonElement>(".sidebar__actions button")!;
+  assert.equal(disabled.disabled, true);
+  assert.equal(disabled.title, "Adapter does not declare a spawn target-spec shape.");
 });
 
 test("session-list spawn action is inert while lockdown is pending or active", () => {

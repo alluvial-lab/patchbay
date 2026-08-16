@@ -2,10 +2,11 @@ use patchbay_contracts::patchbay::{
     adapter_assurance_manifest, ActorEndpointRef, ActorId, AdapterAssuranceManifest,
     AdapterAssuranceManifestV1, AdapterCapability, AdapterId, AdapterReconciliationStrength,
     AdapterRegistration, AdapterSnapshotSupport, AdapterTargetCategory, AttachmentMethod,
-    AuthorityDomainId, EndpointId, FailureCode, Generation, IdempotencyStrength, Observation,
-    ObservationKind, OperationKind, PayloadContentType, PayloadEnvelope, ReconciliationAction,
-    ResourceCapability, ResourceId, ResourceKind, ResourceProjectionContract, SchemaDescriptor,
-    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+    AuthorityDomainId, EndpointId, FailureCode, Generation, IdempotencyStrength, LogicalTargetId,
+    ManagedSpawnTargetCapability, Observation, ObservationKind, OperationKind, PayloadContentType,
+    PayloadEnvelope, ReconciliationAction, ResourceCapability, ResourceId, ResourceKind,
+    ResourceProjectionContract, SchemaDescriptor, StoredEventKind, StoredEventPayload, TargetScope,
+    TargetScopeKind,
 };
 use patchbay_core::{
     adapter::{
@@ -71,6 +72,31 @@ fn session_capability() -> AdapterCapability {
         session_snapshot_support: AdapterSnapshotSupport::Partial as i32,
         target_categories: vec![AdapterTargetCategory::RuntimeSession as i32],
         ..current_capability()
+    }
+}
+
+fn managed_spawn_target(logical_target_id: &str, shape: &str) -> ManagedSpawnTargetCapability {
+    let payload = PayloadEnvelope {
+        payload: vec![1],
+        content_type: PayloadContentType::Protobuf as i32,
+        schema_ref: "example.SpawnTarget.v1".to_owned(),
+    };
+    ManagedSpawnTargetCapability {
+        logical_target_id: Some(LogicalTargetId {
+            value: logical_target_id.to_owned(),
+        }),
+        target_spec_shape: shape.to_owned(),
+        fresh_adapter_payload: Some(payload.clone()),
+        continuation_adapter_payload: Some(payload),
+    }
+}
+
+fn managed_spawn_capability() -> AdapterCapability {
+    AdapterCapability {
+        supported_operation_kinds: vec![OperationKind::Spawn as i32],
+        supported_target_spec_shapes: vec!["managed".to_owned()],
+        managed_spawn_targets: vec![managed_spawn_target("logical-1", "managed")],
+        ..session_capability()
     }
 }
 
@@ -740,6 +766,12 @@ fn replay_only_legacy_assurance_normalizes_conservatively() {
 
 #[test]
 fn invalid_manifest_shapes_fail_closed() {
+    ValidatedAdapterCapability::try_from_wire(
+        &managed_spawn_capability(),
+        CapabilityValidationContext::Attach,
+    )
+    .expect("managed spawn target capability");
+
     let mut cases = Vec::new();
 
     cases.push(("missing categories", current_capability()));
@@ -758,6 +790,34 @@ fn invalid_manifest_shapes_fail_closed() {
         OperationKind::Instruct as i32,
     ];
     cases.push(("duplicate supported operation", duplicate_operation));
+
+    let mut duplicate_shape = managed_spawn_capability();
+    duplicate_shape
+        .supported_target_spec_shapes
+        .push("managed".to_owned());
+    cases.push(("duplicate target-spec shape", duplicate_shape));
+
+    let mut invalid_shape = managed_spawn_capability();
+    invalid_shape.supported_target_spec_shapes = vec!["contains whitespace".to_owned()];
+    cases.push(("invalid target-spec shape", invalid_shape));
+
+    let mut undeclared_target_shape = managed_spawn_capability();
+    undeclared_target_shape.managed_spawn_targets[0].target_spec_shape = "other".to_owned();
+    cases.push(("undeclared managed target shape", undeclared_target_shape));
+
+    let mut duplicate_target = managed_spawn_capability();
+    duplicate_target
+        .managed_spawn_targets
+        .push(managed_spawn_target("logical-1", "managed"));
+    cases.push(("duplicate managed target", duplicate_target));
+
+    let mut missing_target_payload = managed_spawn_capability();
+    missing_target_payload.managed_spawn_targets[0].fresh_adapter_payload = None;
+    cases.push(("missing managed target payload", missing_target_payload));
+
+    let mut target_without_spawn = managed_spawn_capability();
+    target_without_spawn.supported_operation_kinds = vec![OperationKind::Instruct as i32];
+    cases.push(("managed target without spawn", target_without_spawn));
 
     let mut unspecified_failure = session_capability();
     unspecified_failure.known_failure_modes = vec![FailureCode::Unspecified as i32];

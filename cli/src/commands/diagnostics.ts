@@ -456,6 +456,12 @@ function adapterCapabilityView(capability: AdapterCapabilitySummary) {
     targetCategories: capability.targetCategories.map((value) =>
       enumLabel(AdapterTargetCategory, value)
     ),
+    managedSpawnTargets: capability.managedSpawnTargets.map((target) => ({
+      logicalTargetId: target.logicalTargetId?.value || null,
+      targetSpecShape: target.targetSpecShape,
+      freshAdapterPayloadSchemaRef: target.freshAdapterPayload?.schemaRef || null,
+      continuationAdapterPayloadSchemaRef: target.continuationAdapterPayload?.schemaRef || null,
+    })),
     resourceCapabilities: capability.resourceCapabilities.map((resource) => ({
       resourceKind: resource.resourceKind?.value || null,
       snapshotSupport: enumLabel(AdapterSnapshotSupport, resource.snapshotSupport),

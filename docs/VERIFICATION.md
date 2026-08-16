@@ -337,8 +337,10 @@ cwd, session-file, cursor, and reload vocabulary remains in the generated opaque
 Focused tests cover challenged cwd/session correlation, memory-only versus
 materialized durability, raw/RPC tree integrity, launch-effect journaling and
 poison, successor staging before atomic core promotion, native-continuity cursor
-replacement, reload admission/markers/re-handshake/reconciliation, and fully
-injected offline SDK fixtures. The integrated harness uses a real core server and
+replacement, reload admission/markers/re-handshake/reconciliation, configured
+managed-target capability templates, shared cockpit/CLI target derivation, and fully
+injected offline SDK fixtures. Shape-mismatch, zero-shape availability, and missing
+project-context-envelope mutations fail their focused oracles. The integrated harness uses a real core server and
 real supervised `pi --mode rpc` children to perform fresh spawn, offline
 materialization, exact continuation, same-process reload, forced adapter-stream
 reconnect/replay, durable journal/cursor acknowledgement, active recovery

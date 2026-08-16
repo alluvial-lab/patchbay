@@ -51,6 +51,16 @@ test("adapter status query uses generated diagnostics payload and explicit recen
   const decoded = requirePayload(operation.payload?.payload);
   assert.equal(decoded.query.case, "adapters");
   assert.equal(decoded.query.value.recentDiagnosticLimit, 20);
+  assert.deepEqual(decoded.query.value.adapterIds.map((id) => id.value), ["pi"]);
+
+  const all = buildAdapterStatusQueryOperation(
+    create(AuthorityDomainIdSchema, { value: "main" }),
+    undefined,
+    { commandId: "query-all", idempotencyKey: "query-all-key" },
+  );
+  const allDecoded = requirePayload(all.payload?.payload);
+  assert.equal(allDecoded.query.case, "adapters");
+  assert.deepEqual(allDecoded.query.value.adapterIds, []);
 });
 
 test("adapter diagnostics narrow the generated assurance oneof and fail closed", () => {

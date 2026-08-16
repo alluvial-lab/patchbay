@@ -1,5 +1,6 @@
 import { create } from "@bufbuild/protobuf";
 import { AuthorityDomainIdSchema, SessionConnectivityState, type AuthorityDomainId } from "@patchbay/contracts";
+import { declaredManagedSpawnTarget } from "@patchbay/operator-domain";
 
 import {
   resourceKey,
@@ -84,6 +85,7 @@ export function createCockpitShell(
   let mobileDetailOpen = false;
   let mobileResourceDetailOpen = false;
   let filter = "";
+  let selectedSpawnTargetId: string | undefined;
   let destination: CockpitDestination = "sessions";
   let settingsOpen = false;
   let settingsOpenerSource: NavigationSource | undefined;
@@ -131,6 +133,7 @@ export function createCockpitShell(
       filter,
       showToolCalls,
       model.lockdown.active || Boolean(model.lockdown.submitting),
+      selectedSpawnTargetId,
       {
         select(session) {
           selectedKey = sessionKey(session.identity);
@@ -142,8 +145,12 @@ export function createCockpitShell(
           render();
         },
         spawn: options.actions?.spawn
-          ? (adapterId) => options.actions!.spawn!(adapterId)
+          ? (adapterId, logicalTargetId) => options.actions!.spawn!(adapterId, logicalTargetId)
           : undefined,
+        selectSpawnTarget(logicalTargetId) {
+          selectedSpawnTargetId = logicalTargetId;
+          render();
+        },
       },
     );
     const main = document.createElement("section");
@@ -547,7 +554,8 @@ function capitalize(value: string): string {
 interface SidebarActions {
   select(session: SessionView): void;
   filter(value: string): void;
-  spawn?(adapterId: string): void | Promise<void>;
+  spawn?(adapterId: string, logicalTargetId: string): void | Promise<void>;
+  selectSpawnTarget(logicalTargetId: string): void;
 }
 
 function renderSidebar(
@@ -557,6 +565,7 @@ function renderSidebar(
   filter: string,
   showToolCalls: boolean,
   lockdownReadOnly: boolean,
+  selectedSpawnTargetId: string | undefined,
   actions: SidebarActions,
 ): HTMLElement {
   const sidebar = document.createElement("aside");
@@ -570,18 +579,45 @@ function renderSidebar(
     ...model.adapters.keys(),
     ...[...model.sessions.values()].map((session) => session.identity.adapterId),
   ])].sort();
+  const adapterId = knownAdapters.length === 1 ? knownAdapters[0] : undefined;
+  const capability = adapterId ? model.adapters.get(adapterId)?.status?.capability : undefined;
+  const declaredTargets = capability?.managedSpawnTargets.filter((target) => target.logicalTargetId?.value) ?? [];
+  const selectedTarget = declaredTargets.some((target) => target.logicalTargetId?.value === selectedSpawnTargetId)
+    ? selectedSpawnTargetId
+    : declaredTargets[0]?.logicalTargetId?.value;
+  if (declaredTargets.length > 1) {
+    const picker = document.createElement("select");
+    picker.className = "input spawn-target-picker";
+    picker.setAttribute("aria-label", "Managed spawn target");
+    for (const target of declaredTargets) {
+      const value = target.logicalTargetId!.value;
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      option.selected = value === selectedTarget;
+      picker.append(option);
+    }
+    picker.addEventListener("change", () => actions.selectSpawnTarget(picker.value));
+    headerActions.append(picker);
+  }
+  const availability = adapterId
+    ? declaredManagedSpawnTarget(capability, "fresh", selectedTarget)
+    : undefined;
+  const spawnLabel = lockdownReadOnly
+    ? "Disabled during lockdown or while a lockdown decision is pending."
+    : knownAdapters.length !== 1
+      ? "Spawn requires exactly one selected adapter"
+      : !actions.spawn
+        ? "Spawn session unavailable"
+        : availability?.available
+          ? `Spawn ${availability.logicalTargetId} on ${adapterId}`
+          : availability?.reason ?? "Spawn session unavailable";
   const spawn = iconActionButton(
     document,
     "plus",
-    lockdownReadOnly
-      ? "Disabled during lockdown or while a lockdown decision is pending."
-      : knownAdapters.length === 1 && actions.spawn
-        ? `Spawn session on ${knownAdapters[0]}`
-        : knownAdapters.length === 1
-          ? "Spawn session unavailable"
-          : "Spawn requires exactly one selected adapter",
-    !lockdownReadOnly && knownAdapters.length === 1 && actions.spawn
-      ? () => actions.spawn!(knownAdapters[0]!)
+    spawnLabel,
+    !lockdownReadOnly && adapterId && actions.spawn && availability?.available
+      ? () => actions.spawn!(adapterId, availability.logicalTargetId)
       : undefined,
   );
   headerActions.append(

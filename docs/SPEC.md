@@ -191,7 +191,7 @@ Adapters are replaceable edges. The first adapter targets Pi workflows so the op
 Adapters report:
 
 - actor and target identity, using runtime-session identity for sessions and resource identity for operational resources;
-- supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values);
+- supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values plus configured managed-target construction templates);
 - capabilities;
 - protocol-derived connectivity and activity status;
 - Operation acceptance/failure and Observations;

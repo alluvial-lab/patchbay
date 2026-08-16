@@ -3,6 +3,7 @@ import { mkdtemp, readFile, readdir, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { create, toBinary } from "@bufbuild/protobuf";
+import { declaredManagedSpawnTarget, freshSpawnPayload } from "@patchbay/operator-domain";
 import {
   AcceptedOperationSchema,
   AdapterIdSchema,
@@ -14,7 +15,6 @@ import {
   EventIdSchema,
   ExternalRuntimeRefSchema,
   FailureCode,
-  FreshSpawnSchema,
   GenerationSchema,
   GrantIdSchema,
   LogicalTargetIdSchema,
@@ -27,7 +27,6 @@ import {
   PayloadEnvelopeSchema,
   PiReconfigureRequestSchema,
   PiReloadableResourceKind,
-  PiSpawnTargetSpecSchema,
   RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
@@ -36,17 +35,17 @@ import {
   SpawnExecutionPhase,
   SpawnGenerationClaimSchema,
   SpawnPromotionCommittedSchema,
-  SpawnRequestSchema,
-  SpawnTargetSpecSchema,
   TargetScopeKind,
   TargetScopeSchema,
   type Delivery,
+  type PayloadEnvelope,
   type SpawnClaimAccepted,
 } from "@patchbay/contracts";
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import {
   PatchbayCoreClient,
-  PI_RPC_TARGET_SHAPE,
+  piCapabilityManifest,
+  PI_CAPABILITY_EVIDENCE,
   type SessionIdentity,
 } from "../src/core_client.js";
 import type { SessionReportOrder } from "../src/session_report_sequencer.js";
@@ -73,7 +72,6 @@ import {
 import { PiRpcTransportError } from "../src/rpc_client.js";
 import { PiReloadAmbiguousError, PiReloadRejectedError } from "../src/reload_controller.js";
 import { SessionRegistry } from "../src/session_registry.js";
-import { PI_SPAWN_TARGET_SCHEMA_REF } from "../src/spawn_supervisor.js";
 
 const encoder = new TextEncoder();
 
@@ -167,10 +165,17 @@ test("production delivery loop routes the exact accepted spawn envelope to the s
   const directory = await mkdtemp(join(process.cwd(), "tmp-delivery-loop-spawn-"));
   const canonicalDirectory = await realpath(directory);
   const journalDirectory = join(directory, "journal");
-  const acceptedSpawn = managedAcceptedSpawn({
-    commandId,
+  const capability = piCapabilityManifest(PI_CAPABILITY_EVIDENCE, [{
     projectContextRef,
     logicalTargetId: commandId,
+  }]);
+  const selectedTarget = declaredManagedSpawnTarget(capability, "fresh", commandId);
+  if (!selectedTarget.available) assert.fail(selectedTarget.reason);
+  assert.equal(selectedTarget.available, true);
+  const acceptedSpawn = managedAcceptedSpawn({
+    commandId,
+    logicalTargetId: commandId,
+    payload: freshSpawnPayload(selectedTarget.target),
   });
   const compatibilityOperation = create(OperationSchema, {
     commandId: create(CommandIdSchema, { value: commandId }),
@@ -1231,23 +1236,9 @@ class DeliveryLoopRuntimePort implements ManagedPiRuntimePort {
 
 function managedAcceptedSpawn(options: {
   readonly commandId: string;
-  readonly projectContextRef: string;
   readonly logicalTargetId: string;
+  readonly payload: PayloadEnvelope;
 }): SpawnClaimAccepted {
-  const piTarget = create(PiSpawnTargetSpecSchema, {
-    projectContextRef: options.projectContextRef,
-  });
-  const request = create(SpawnRequestSchema, {
-    intent: { case: "fresh", value: create(FreshSpawnSchema) },
-    targetSpec: create(SpawnTargetSpecSchema, {
-      shape: PI_RPC_TARGET_SHAPE,
-      adapterPayload: create(PayloadEnvelopeSchema, {
-        contentType: PayloadContentType.PROTOBUF,
-        schemaRef: PI_SPAWN_TARGET_SCHEMA_REF,
-        payload: toBinary(PiSpawnTargetSpecSchema, piTarget),
-      }),
-    }),
-  });
   const operation = create(OperationSchema, {
     commandId: create(CommandIdSchema, { value: options.commandId }),
     authorityDomainId: create(AuthorityDomainIdSchema, { value: "authority-test" }),
@@ -1256,11 +1247,7 @@ function managedAcceptedSpawn(options: {
       kind: TargetScopeKind.ADAPTER,
       adapterId: create(AdapterIdSchema, { value: "pi" }),
     }),
-    payload: create(PayloadEnvelopeSchema, {
-      contentType: PayloadContentType.PROTOBUF,
-      schemaRef: "patchbay.SpawnRequest",
-      payload: toBinary(SpawnRequestSchema, request),
-    }),
+    payload: options.payload,
   });
   return create(SpawnClaimAcceptedSchema, {
     acceptedOperation: create(AcceptedOperationSchema, {

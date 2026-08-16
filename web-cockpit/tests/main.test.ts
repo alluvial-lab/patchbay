@@ -2,11 +2,17 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { create, fromBinary } from "@bufbuild/protobuf";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import {
+  AdapterCapabilitySummarySchema,
   AuthorityDomainIdSchema,
+  LogicalTargetIdSchema,
+  ManagedSpawnTargetCapabilitySchema,
   OperationKind,
   PayloadContentType,
+  PayloadEnvelopeSchema,
+  PiContinuationMode,
+  PiSpawnTargetSpecSchema,
   SessionActivityState,
   SpawnRequestSchema,
   SessionConnectivityState,
@@ -126,17 +132,25 @@ test("composition submission builder emits a boundary-valid instruct Operation",
   assert.equal(new TextDecoder().decode(operation.payload?.payload), "Run the verification suite");
 });
 
-test("fresh and restart actions emit the same spawn kind with exact distinct intents", () => {
-  const fresh = buildFreshSpawnOperation(DOMAIN, "pi", {
-    commandId: "spawn-fresh",
-    idempotencyKey: "spawn-fresh-key",
-  });
-  const restart = buildRestartOperation(DOMAIN, session(), {
+test("fresh and restart actions derive the declared target shape and exact adapter payloads", () => {
+  const capability = spawnCapability([
+    ["spawn-fresh", "project-fresh"],
+    ["logical-1", "project-restart"],
+  ]);
+  const fresh = buildFreshSpawnOperation(
+    DOMAIN,
+    "pi",
+    capability,
+    { idempotencyKey: "spawn-fresh-key" },
+    "spawn-fresh",
+  );
+  const restart = buildRestartOperation(DOMAIN, session(), capability, {
     commandId: "spawn-restart",
     idempotencyKey: "spawn-restart-key",
   });
   assert.equal(fresh.kind, OperationKind.SPAWN);
   assert.equal(restart.kind, OperationKind.SPAWN);
+  assert.equal(fresh.commandId?.value, "spawn-fresh");
   assert.equal(fresh.targetScope?.adapterId?.value, "pi");
   assert.equal(restart.targetScope?.adapterId?.value, "pi");
   const freshRequest = fromBinary(SpawnRequestSchema, fresh.payload!.payload);
@@ -146,6 +160,18 @@ test("fresh and restart actions emit the same spawn kind with exact distinct int
   if (restartRequest.intent.case !== "continuation") assert.fail("continuation intent expected");
   assert.equal(restartRequest.intent.value.prior?.logicalTargetId?.value, "logical-1");
   assert.equal(restartRequest.intent.value.prior?.externalRuntime?.generation?.value, 1n);
+  assert.equal(freshRequest.targetSpec?.shape, "pi-rpc");
+  assert.equal(restartRequest.targetSpec?.shape, "pi-rpc");
+  assert.equal(
+    fromBinary(PiSpawnTargetSpecSchema, freshRequest.targetSpec!.adapterPayload!.payload).projectContextRef,
+    "project-fresh",
+  );
+  const restartTarget = fromBinary(
+    PiSpawnTargetSpecSchema,
+    restartRequest.targetSpec!.adapterPayload!.payload,
+  );
+  assert.equal(restartTarget.projectContextRef, "project-restart");
+  assert.equal(restartTarget.continuationMode, PiContinuationMode.REQUIRE_RESUME);
 });
 
 test("browser build emits a servable HTML entry and bundled module", async () => {
@@ -164,6 +190,30 @@ async function waitForElement<T extends Element>(dom: JSDOM, selector: string): 
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error(`element did not appear: ${selector}`);
+}
+
+function spawnCapability(targets: readonly (readonly [string, string])[]) {
+  return create(AdapterCapabilitySummarySchema, {
+    supportedOperationKinds: [OperationKind.SPAWN],
+    supportedTargetSpecShapes: ["pi-rpc"],
+    sessionReplacementSupport: true,
+    managedSpawnTargets: targets.map(([logicalTargetId, projectContextRef]) => {
+      const payload = (continuationMode: PiContinuationMode) => create(PayloadEnvelopeSchema, {
+        contentType: PayloadContentType.PROTOBUF,
+        schemaRef: "patchbay.PiSpawnTargetSpec.v1",
+        payload: toBinary(PiSpawnTargetSpecSchema, create(PiSpawnTargetSpecSchema, {
+          projectContextRef,
+          continuationMode,
+        })),
+      });
+      return create(ManagedSpawnTargetCapabilitySchema, {
+        logicalTargetId: create(LogicalTargetIdSchema, { value: logicalTargetId }),
+        targetSpecShape: "pi-rpc",
+        freshAdapterPayload: payload(PiContinuationMode.UNSPECIFIED),
+        continuationAdapterPayload: payload(PiContinuationMode.REQUIRE_RESUME),
+      });
+    }),
+  });
 }
 
 function session(): SessionView {

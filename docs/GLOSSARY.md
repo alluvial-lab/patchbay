@@ -82,7 +82,7 @@ The lifecycle registry for an Elicitation. Initial state is `opened`; transition
 
 ## Adapter capability
 
-A declaration an adapter makes about the targets, Operations, and guarantees it supports: generated target categories; supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values); streaming, cancellation, and session-replacement support; a runtime-session snapshot tier; exact per-`ResourceKind` snapshot tiers and resource projection contracts; one complete versioned assurance manifest; at most one optional bounded opaque adapter profile; attachment method; diagnostic reporting; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
+A declaration an adapter makes about the targets, Operations, and guarantees it supports: generated target categories; supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values plus bounded configured managed-target fresh and optional continuation payload templates); streaming, cancellation, and session-replacement support; a runtime-session snapshot tier; exact per-`ResourceKind` snapshot tiers and resource projection contracts; one complete versioned assurance manifest; at most one optional bounded opaque adapter profile; attachment method; diagnostic reporting; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
 
 ## Adapter profile
 

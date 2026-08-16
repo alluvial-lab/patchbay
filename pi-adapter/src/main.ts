@@ -153,7 +153,16 @@ export class AdapterProcess {
     this.#options = options;
     const localDiagnostics = options.diagnostics ?? NOOP_ADAPTER_DIAGNOSTICS;
     this.#diagnostics = localDiagnostics;
-    this.#core = new PatchbayCoreClient(options, localDiagnostics);
+    const { managedTargets, ...coreOptions } = options;
+    this.#core = new PatchbayCoreClient({
+      ...coreOptions,
+      ...(managedTargets ? {
+        managedTargets: managedTargets.map((target) => ({
+          projectContextRef: target.projectContextRef,
+          logicalTargetId: target.deploymentTarget.logicalTargetId,
+        })),
+      } : {}),
+    }, localDiagnostics);
     if (options.forwardDiagnostics) {
       const forwarder = new CoreDiagnosticsForwarder(
         (report, signal) => this.#core.reportDiagnostic(report, signal),

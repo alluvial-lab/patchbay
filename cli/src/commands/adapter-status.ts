@@ -69,6 +69,41 @@ export async function adapterStatusCommand(
   return runDiagnosticsCommand(client, store, authorityDomainId, spec, output);
 }
 
+export async function loadAdapterCapability(
+  client: Pick<ControlClient, "queryDiagnostics">,
+  store: CredentialStore,
+  authorityDomainId: string,
+  adapterId: string,
+): Promise<AdapterCapabilitySummary | undefined> {
+  if (!adapterId) return undefined;
+  const context = await operationContext(store, authorityDomainId);
+  const queryTarget = authorityDomainTarget(authorityDomainId);
+  const operation = operationBase(
+    context,
+    queryTarget,
+    OperationKind.QUERY,
+    operationIds(queryTarget, {}),
+  );
+  operation.payload = create(PayloadEnvelopeSchema, {
+    contentType: PayloadContentType.PROTOBUF,
+    schemaRef: "patchbay.DiagnosticsQuery",
+    payload: toBinary(DiagnosticsQuerySchema, adapterStatusQuery([adapterId], undefined, 1, 1)),
+  });
+  const response = await client.queryDiagnostics({ operation });
+  if (response.submission?.outcome !== SubmissionOutcome.ACCEPTED
+      || response.submission.operationState !== OperationState.COMPLETED
+      || response.resultEventId?.authorityDomainId?.value !== authorityDomainId
+      || !response.resultEventId.lsn
+      || !response.asOfLsn
+      || response.result.case !== "adapters") {
+    return undefined;
+  }
+  const matches = response.result.value.adapters.filter(
+    (adapter) => adapter.adapterId?.value === adapterId,
+  );
+  return matches.length === 1 ? matches[0]?.capability : undefined;
+}
+
 export async function capabilityForUnknownSubmission(
   client: Partial<Pick<ControlClient, "queryDiagnostics">>,
   store: CredentialStore,
@@ -81,32 +116,7 @@ export async function capabilityForUnknownSubmission(
   if (!adapterId || !client.queryDiagnostics) return undefined;
 
   try {
-    const context = await operationContext(store, authorityDomainId);
-    const queryTarget = authorityDomainTarget(authorityDomainId);
-    const operation = operationBase(
-      context,
-      queryTarget,
-      OperationKind.QUERY,
-      operationIds(queryTarget, {}),
-    );
-    operation.payload = create(PayloadEnvelopeSchema, {
-      contentType: PayloadContentType.PROTOBUF,
-      schemaRef: "patchbay.DiagnosticsQuery",
-      payload: toBinary(DiagnosticsQuerySchema, adapterStatusQuery([adapterId], undefined, 1, 1)),
-    });
-    const response = await client.queryDiagnostics({ operation });
-    if (response.submission?.outcome !== SubmissionOutcome.ACCEPTED
-        || response.submission.operationState !== OperationState.COMPLETED
-        || response.resultEventId?.authorityDomainId?.value !== authorityDomainId
-        || !response.resultEventId.lsn
-        || !response.asOfLsn
-        || response.result.case !== "adapters") {
-      return undefined;
-    }
-    const matches = response.result.value.adapters.filter(
-      (adapter) => adapter.adapterId?.value === adapterId,
-    );
-    return matches.length === 1 ? matches[0]?.capability : undefined;
+    return await loadAdapterCapability(client as Pick<ControlClient, "queryDiagnostics">, store, authorityDomainId, adapterId);
   } catch {
     return undefined;
   }

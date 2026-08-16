@@ -225,6 +225,7 @@ message AdapterCapabilitySummary {
   repeated ResourceCapability resource_capabilities = 13;
   AdapterAssuranceManifest assurance = 14;
   AdapterProfileSummary adapter_profile = 15;
+  repeated ManagedSpawnTargetCapability managed_spawn_targets = 16;
 }
 
 message AdapterStatus {

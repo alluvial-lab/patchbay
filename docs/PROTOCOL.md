@@ -726,6 +726,7 @@ Adapters declare supported targets, Operations, and guarantees in one capability
 
 - target categories from the registry below;
 - supported `OperationKind`s (and, for `spawn`, supported `target_spec.shape` values);
+- configured managed spawn targets, each binding one logical-target id and declared shape to a fresh and optional continuation opaque adapter-payload template;
 - streaming support (boolean);
 - runtime-session snapshot support (authoritative / partial / none);
 - exact per-`ResourceKind` snapshot tier and payload/projection schema descriptors;
@@ -770,6 +771,8 @@ Durable pre-category registrations are the narrow compatibility exception: repla
 A schema descriptor is an exact `(schema_ref, content_type)` format binding, not proof that opaque bytes semantically satisfy the named schema. Resource ingress must first select the exact authenticated `(adapter_id, resource_kind)` declaration and match both payload and projection descriptors. A local typed decoder remains responsible for rejecting malformed bytes before installing resource state or a domain projection. Adapter-supplied renderer code, HTML, CSS, and dynamic plugins are not loaded: surfaces nest locally decoded adapter domain data beneath canonical Patchbay identity, revision, staleness, authority, attention, and Operation presentation.
 
 Each capability is shaped by where the core's behavior branches. Snapshot support is tiered because the core's reconciliation contract on reconnect depends on the tier, and resource tiers are never inferred from the session tier. Assurance dimensions are generated values because retry and unknown-outcome presentation consume them without recreating a registry. Streaming, cancellation, and session replacement remain separate booleans; none implies continuation proof, cursor support, generation fencing, or reconciliation depth. Installed, attached, reachable, and delivery-stream state remains runtime diagnostic evidence rather than assurance.
+
+Managed spawn targets are bounded advisory construction templates, not target identity or authority. A fresh template carries the adapter payload for generation 1; an optional continuation template carries the payload for an exact prior of the same declared logical target. The core validates generic framing, uniqueness, declared-shape membership, and payload bounds but never decodes an adapter-specific template. Canonical diagnostics reproduce these templates so control surfaces can submit without hardcoding adapter schemas. A surface enables spawn/restart only when the adapter declares `spawn`, exactly one target-spec shape, and one matching configured target selection; zero or multiple shapes and absent/mismatched targets remain unavailable with a canonical reason. Template carriage never replaces the Grant check or the adapter's delivery-time support decision.
 
 Control surfaces render unsupported actions as unavailable rather than attempting best-effort hidden behavior.
 

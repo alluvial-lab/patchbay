@@ -2,11 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { create, fromBinary } from "@bufbuild/protobuf";
 import {
+  AdapterCapabilitySummarySchema,
   AdapterIdSchema,
   ContinuationContextStatus,
   ExternalRuntimeRefSchema,
   GenerationSchema,
   LogicalTargetIdSchema,
+  ManagedSpawnTargetCapabilitySchema,
+  OperationKind,
+  PayloadContentType,
+  PayloadEnvelopeSchema,
   RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
   SpawnRequestSchema,
@@ -16,7 +21,9 @@ import {
   continuationContextExplanation,
   continuationContextStatusName,
   continuationSpawnPayload,
+  declaredManagedSpawnTarget,
   freshSpawnPayload,
+  SPAWN_ACTION_UNAVAILABLE,
   spawnAdapterTarget,
 } from "../src/spawn.js";
 
@@ -53,6 +60,63 @@ test("fresh and continuation encode as one spawn payload with disjoint exact int
   assert.equal(target.kind, TargetScopeKind.ADAPTER);
   assert.equal(target.adapterId?.value, "pi");
   assert.equal(target.runtimeSessionId, undefined);
+});
+
+test("declared managed spawn target derives one shape and intent-specific opaque payload", () => {
+  const freshAdapterPayload = create(PayloadEnvelopeSchema, {
+    contentType: PayloadContentType.PROTOBUF,
+    schemaRef: "adapter.SpawnTarget.v1",
+    payload: new Uint8Array([1]),
+  });
+  const continuationAdapterPayload = create(PayloadEnvelopeSchema, {
+    contentType: PayloadContentType.PROTOBUF,
+    schemaRef: "adapter.SpawnTarget.v1",
+    payload: new Uint8Array([2]),
+  });
+  const capability = create(AdapterCapabilitySummarySchema, {
+    supportedOperationKinds: [OperationKind.SPAWN],
+    supportedTargetSpecShapes: ["adapter-managed"],
+    sessionReplacementSupport: true,
+    managedSpawnTargets: [create(ManagedSpawnTargetCapabilitySchema, {
+      logicalTargetId: create(LogicalTargetIdSchema, { value: "logical-a" }),
+      targetSpecShape: "adapter-managed",
+      freshAdapterPayload,
+      continuationAdapterPayload,
+    })],
+  });
+
+  const fresh = declaredManagedSpawnTarget(capability, "fresh");
+  const continuation = declaredManagedSpawnTarget(capability, "continuation", "logical-a");
+  assert.equal(fresh.available, true);
+  assert.equal(continuation.available, true);
+  if (!fresh.available || !continuation.available) assert.fail("managed targets must resolve");
+  assert.equal(fresh.logicalTargetId, "logical-a");
+  assert.equal(fresh.target.shape, "adapter-managed");
+  assert.deepEqual(fresh.target.adapterPayload, freshAdapterPayload);
+  assert.deepEqual(continuation.target.adapterPayload, continuationAdapterPayload);
+});
+
+test("spawn target derivation fails closed for undeclared and ambiguous shapes", () => {
+  const zero = create(AdapterCapabilitySummarySchema, {
+    supportedOperationKinds: [OperationKind.SPAWN],
+  });
+  assert.deepEqual(declaredManagedSpawnTarget(zero, "fresh"), {
+    available: false,
+    reason: SPAWN_ACTION_UNAVAILABLE.SHAPE_UNDECLARED,
+  });
+
+  const multiple = create(AdapterCapabilitySummarySchema, {
+    supportedOperationKinds: [OperationKind.SPAWN],
+    supportedTargetSpecShapes: ["one", "two"],
+  });
+  assert.deepEqual(declaredManagedSpawnTarget(multiple, "fresh"), {
+    available: false,
+    reason: SPAWN_ACTION_UNAVAILABLE.SHAPE_AMBIGUOUS,
+  });
+  assert.deepEqual(declaredManagedSpawnTarget(undefined, "fresh"), {
+    available: false,
+    reason: SPAWN_ACTION_UNAVAILABLE.CAPABILITY_UNAVAILABLE,
+  });
 });
 
 test("continuation rejects wildcard, zero, and unadvanceable prior identity", () => {

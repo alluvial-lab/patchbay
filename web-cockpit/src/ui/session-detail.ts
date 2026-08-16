@@ -2,6 +2,7 @@ import { fromBinary } from "@bufbuild/protobuf";
 import {
   continuationContextExplanation,
   continuationContextStatusName,
+  declaredManagedSpawnTarget,
   submissionOutcomeQualifier,
 } from "@patchbay/operator-domain";
 import {
@@ -56,7 +57,7 @@ import {
 type SessionCommandActionView = Omit<CommandView, "target"> & { target?: SessionIdentity };
 
 export interface SessionDetailActions {
-  spawn?(adapterId: string): void | Promise<void>;
+  spawn?(adapterId: string, logicalTargetId: string): void | Promise<void>;
   restart?(session: SessionView): void | Promise<void>;
   send?(session: SessionView, text: string): void | Promise<void>;
   attach?(session: SessionView): void | Promise<void>;
@@ -169,14 +170,31 @@ function renderHeader(
     header.append(textElement(document, "span", "session-row__identity", formatSessionIdentity(session.identity)));
     header.append(textElement(document, "span", "session-row__context", session.model ?? "Model unknown"));
     header.append(renderSessionStatus(document, session, showToolCalls));
+    const adapter = model.adapters.get(session.identity.adapterId);
+    const restartAvailability = session.logicalTargetId
+      ? declaredManagedSpawnTarget(
+          adapter?.status?.capability,
+          "continuation",
+          session.logicalTargetId,
+        )
+      : undefined;
     const restart = iconButton(document, "plus", "Restart as spawn continuation", "btn btn-secondary btn--sm");
-    restart.disabled = lockdownActive || !stableTarget(session) || !session.logicalTargetId || !actions?.restart;
-    restart.title = restart.disabled
-      ? "Restart unavailable until a managed logical target is reconciled"
-      : "Restart as a new spawn Operation with exact continuation identity";
+    restart.disabled = lockdownActive
+      || !stableTarget(session)
+      || !session.logicalTargetId
+      || !actions?.restart
+      || !restartAvailability?.available;
+    restart.title = lockdownActive
+      ? "Disabled during lockdown or while a lockdown decision is pending."
+      : !stableTarget(session) || !session.logicalTargetId
+        ? "Restart unavailable until a managed logical target is reconciled"
+        : !actions?.restart
+          ? "Restart action is unavailable."
+          : restartAvailability?.available
+            ? "Restart as a new spawn Operation with exact continuation identity"
+            : restartAvailability?.reason ?? "Restart action is unavailable.";
     restart.addEventListener("click", () => void actions?.restart?.(session));
     header.append(restart);
-    const adapter = model.adapters.get(session.identity.adapterId);
     if (adapter) {
       header.append(renderAdapterStatus(document, adapter));
       const issues = diagnosticsForSession(adapter, session.identity).filter((diagnostic) => diagnostic.severity === AdapterDiagnosticSeverity.WARNING || diagnostic.severity === AdapterDiagnosticSeverity.ERROR);

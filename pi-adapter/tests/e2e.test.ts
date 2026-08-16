@@ -15,6 +15,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
+import {
+  continuationSpawnPayload,
+  declaredManagedSpawnTarget,
+  freshSpawnPayload,
+} from "@patchbay/operator-domain";
 import { Code, ConnectError, createClient, type Interceptor } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import {
@@ -53,14 +58,12 @@ import {
   PayloadContentType,
   PayloadEnvelopeSchema,
   FreshSpawnSchema,
-  PiContinuationMode,
   PiReconfigureRequestSchema,
   PiReloadableResourceKind,
   PiSpawnTargetSpecSchema,
   PrincipalEnrollmentSchema,
   QueryDiagnosticsRequestSchema,
   QuarantinedRuntimeEvidenceSchema,
-  SpawnContinuationSchema,
   SpawnExecutionPhase,
   SpawnPromotionCommittedSchema,
   SpawnRequestSchema,
@@ -91,7 +94,10 @@ import {
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import {
   PatchbayCoreClient,
+  piCapabilityManifest,
+  PI_CAPABILITY_EVIDENCE,
   PI_RPC_TARGET_SHAPE,
+  PI_SPAWN_TARGET_SCHEMA_REF,
 } from "../src/core_client.js";
 import { openAdapterDiagnostics } from "../src/adapter_diagnostics.js";
 import { AdapterProcess, type PreprovisionedSession } from "../src/main.js";
@@ -102,7 +108,6 @@ import {
   type PiRpcRuntime,
 } from "../src/pi_process.js";
 import { AgentSessionRuntimeFixture, type PiSession } from "../src/pi_session.js";
-import { PI_SPAWN_TARGET_SCHEMA_REF } from "../src/spawn_supervisor.js";
 import {
   createOfflineFixtureServices,
   createOfflineModelRuntime,
@@ -769,6 +774,15 @@ export default function offlineMaterialization(pi) {
     const assurance = registration.capability?.assurance?.contract;
     assert.equal(registration.capability?.supportedOperationKinds.includes(OperationKind.SPAWN), true);
     assert.deepEqual(registration.capability?.supportedTargetSpecShapes, [PI_RPC_TARGET_SHAPE]);
+    assert.equal(registration.capability?.managedSpawnTargets.length, 1);
+    const declaredTarget = registration.capability!.managedSpawnTargets[0]!;
+    assert.equal(declaredTarget.logicalTargetId?.value, freshCommandId);
+    assert.equal(declaredTarget.targetSpecShape, PI_RPC_TARGET_SHAPE);
+    assert.equal(declaredTarget.freshAdapterPayload?.schemaRef, PI_SPAWN_TARGET_SCHEMA_REF);
+    assert.equal(
+      fromBinary(PiSpawnTargetSpecSchema, declaredTarget.freshAdapterPayload!.payload).projectContextRef,
+      projectContextRef,
+    );
     assert.equal(registration.capability?.sessionReplacementSupport, true);
     assert.equal(assurance?.case, "v1");
     if (assurance?.case !== "v1") assert.fail("activated Pi assurance V1 is absent");
@@ -778,6 +792,23 @@ export default function offlineMaterialization(pi) {
     assert.equal(
       assurance.value.reconciliationStrength,
       AdapterReconciliationStrength.BOUNDED,
+    );
+
+    const adapterStatus = await control.queryDiagnostics(
+      create(QueryDiagnosticsRequestSchema, {
+        operation: adapterStatusOperation("managed-target-capability-status"),
+      }),
+    );
+    assert.equal(adapterStatus.submission?.outcome, SubmissionOutcome.ACCEPTED);
+    assert.equal(adapterStatus.submission?.operationState, OperationState.COMPLETED);
+    assert.equal(adapterStatus.result.case, "adapters");
+    if (adapterStatus.result.case !== "adapters") assert.fail("adapter diagnostics expected");
+    const projectedTarget = adapterStatus.result.value.adapters[0]?.capability?.managedSpawnTargets[0];
+    assert.equal(projectedTarget?.logicalTargetId?.value, freshCommandId);
+    assert.equal(projectedTarget?.targetSpecShape, PI_RPC_TARGET_SHAPE);
+    assert.equal(
+      fromBinary(PiSpawnTargetSpecSchema, projectedTarget!.freshAdapterPayload!.payload).projectContextRef,
+      projectContextRef,
     );
 
     const fresh = await control.submit(create(SubmitRequestSchema, {
@@ -1172,28 +1203,18 @@ function managedSpawnOperation(options: {
   readonly projectContextRef: string;
   readonly prior?: RuntimeGenerationRef;
 }) {
-  const piTarget = create(PiSpawnTargetSpecSchema, {
+  const logicalTargetId = options.prior?.logicalTargetId?.value ?? options.commandId;
+  const capability = piCapabilityManifest(PI_CAPABILITY_EVIDENCE, [{
     projectContextRef: options.projectContextRef,
-    continuationMode: options.prior
-      ? PiContinuationMode.REQUIRE_RESUME
-      : PiContinuationMode.UNSPECIFIED,
-  });
-  const request = create(SpawnRequestSchema, {
-    intent: options.prior
-      ? {
-          case: "continuation",
-          value: create(SpawnContinuationSchema, { prior: options.prior }),
-        }
-      : { case: "fresh", value: create(FreshSpawnSchema, {}) },
-    targetSpec: create(SpawnTargetSpecSchema, {
-      shape: PI_RPC_TARGET_SHAPE,
-      adapterPayload: create(PayloadEnvelopeSchema, {
-        contentType: PayloadContentType.PROTOBUF,
-        schemaRef: PI_SPAWN_TARGET_SCHEMA_REF,
-        payload: toBinary(PiSpawnTargetSpecSchema, piTarget),
-      }),
-    }),
-  });
+    logicalTargetId,
+  }]);
+  const selected = declaredManagedSpawnTarget(
+    capability,
+    options.prior ? "continuation" : "fresh",
+    logicalTargetId,
+  );
+  if (!selected.available) assert.fail(selected.reason);
+  assert.equal(selected.available, true);
   return create(OperationSchema, {
     commandId: create(CommandIdSchema, { value: options.commandId }),
     authorityDomainId: create(AuthorityDomainIdSchema, { value: domainId }),
@@ -1211,11 +1232,9 @@ function managedSpawnOperation(options: {
     }),
     submittedAt: { seconds: 1n },
     idempotencyKey: `${options.commandId}-key`,
-    payload: create(PayloadEnvelopeSchema, {
-      contentType: PayloadContentType.PROTOBUF,
-      schemaRef: "patchbay.SpawnRequest",
-      payload: toBinary(SpawnRequestSchema, request),
-    }),
+    payload: options.prior
+      ? continuationSpawnPayload(options.prior, selected.target)
+      : freshSpawnPayload(selected.target),
   });
 }
 
