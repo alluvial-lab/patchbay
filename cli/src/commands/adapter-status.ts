@@ -1,12 +1,26 @@
-import { create } from "@bufbuild/protobuf";
+import { create, toBinary } from "@bufbuild/protobuf";
 import {
   AdapterIdSchema,
   AdapterStatusQuerySchema,
   DiagnosticsQuerySchema,
+  OperationKind,
+  OperationState,
+  PayloadContentType,
+  PayloadEnvelopeSchema,
+  SubmissionOutcome,
+  type AdapterCapabilitySummary,
+  type SubmissionResult,
+  type TargetScope,
 } from "@patchbay/contracts";
 import type { ControlClient } from "../core-client.js";
 import type { CredentialStore } from "../credentials.js";
 import type { CliOutput } from "../main.js";
+import {
+  operationBase,
+  operationContext,
+  operationIds,
+} from "./operations.js";
+import { authorityDomainTarget } from "./sessions.js";
 import {
   adapterStatusPageView,
   adapterTables,
@@ -37,19 +51,14 @@ export async function adapterStatusCommand(
   // Preserve an explicitly supplied opaque cursor, including an empty value;
   // core owns cursor validation and must distinguish it from omission.
   const limit = parsePositiveLimit(options.limit, 500, "--limit");
-  const query = create(DiagnosticsQuerySchema, {
-    query: {
-      case: "adapters",
-      value: create(AdapterStatusQuerySchema, {
-        adapterIds: adapterIds.map((value) => create(AdapterIdSchema, { value })),
-        afterAdapterId: options.afterAdapterId,
-        limit,
-        // Core's adapter page limit does not imply a recent-diagnostics prefix;
-        // request the bounded default explicitly so the projection includes it.
-        recentDiagnosticLimit: 100,
-      }),
-    },
-  });
+  const query = adapterStatusQuery(
+    adapterIds,
+    options.afterAdapterId,
+    limit,
+    // Core's adapter page limit does not imply a recent-diagnostics prefix;
+    // request the bounded default explicitly so the projection includes it.
+    100,
+  );
   const spec: DiagnosticsCommandSpec<"adapters"> = {
     query,
     resultCase: "adapters",
@@ -58,4 +67,66 @@ export async function adapterStatusCommand(
     humanResult: adapterTables,
   };
   return runDiagnosticsCommand(client, store, authorityDomainId, spec, output);
+}
+
+export async function capabilityForUnknownSubmission(
+  client: Partial<Pick<ControlClient, "queryDiagnostics">>,
+  store: CredentialStore,
+  authorityDomainId: string,
+  target: TargetScope,
+  result: SubmissionResult,
+): Promise<AdapterCapabilitySummary | undefined> {
+  if (result.outcome !== SubmissionOutcome.UNKNOWN) return undefined;
+  const adapterId = target.adapterId?.value;
+  if (!adapterId || !client.queryDiagnostics) return undefined;
+
+  try {
+    const context = await operationContext(store, authorityDomainId);
+    const queryTarget = authorityDomainTarget(authorityDomainId);
+    const operation = operationBase(
+      context,
+      queryTarget,
+      OperationKind.QUERY,
+      operationIds(queryTarget, {}),
+    );
+    operation.payload = create(PayloadEnvelopeSchema, {
+      contentType: PayloadContentType.PROTOBUF,
+      schemaRef: "patchbay.DiagnosticsQuery",
+      payload: toBinary(DiagnosticsQuerySchema, adapterStatusQuery([adapterId], undefined, 1, 1)),
+    });
+    const response = await client.queryDiagnostics({ operation });
+    if (response.submission?.outcome !== SubmissionOutcome.ACCEPTED
+        || response.submission.operationState !== OperationState.COMPLETED
+        || response.resultEventId?.authorityDomainId?.value !== authorityDomainId
+        || !response.resultEventId.lsn
+        || !response.asOfLsn
+        || response.result.case !== "adapters") {
+      return undefined;
+    }
+    const matches = response.result.value.adapters.filter(
+      (adapter) => adapter.adapterId?.value === adapterId,
+    );
+    return matches.length === 1 ? matches[0]?.capability : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function adapterStatusQuery(
+  adapterIds: readonly string[],
+  afterAdapterId: string | undefined,
+  limit: number | undefined,
+  recentDiagnosticLimit: number,
+) {
+  return create(DiagnosticsQuerySchema, {
+    query: {
+      case: "adapters",
+      value: create(AdapterStatusQuerySchema, {
+        adapterIds: adapterIds.map((value) => create(AdapterIdSchema, { value })),
+        afterAdapterId,
+        limit,
+        recentDiagnosticLimit,
+      }),
+    },
+  });
 }

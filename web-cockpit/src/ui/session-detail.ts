@@ -2,6 +2,7 @@ import { fromBinary } from "@bufbuild/protobuf";
 import {
   continuationContextExplanation,
   continuationContextStatusName,
+  submissionOutcomeQualifier,
 } from "@patchbay/operator-domain";
 import {
   AdapterDiagnosticSeverity,
@@ -11,6 +12,7 @@ import {
   PayloadContentType,
   SessionActivityState,
   SpawnRequestSchema,
+  SubmissionOutcome,
   type AdapterCapabilitySummary,
   type SubmissionResult,
 } from "@patchbay/contracts";
@@ -65,6 +67,7 @@ export interface SessionDetailActions {
 
 export interface SubmissionFeedback {
   state: LocalSubmissionState;
+  adapterId?: string;
   result?: SubmissionResult;
   error?: string;
 }
@@ -120,12 +123,16 @@ export function renderSessionDetail(
   timeline.className = "timeline";
   timeline.setAttribute("aria-live", "polite");
   renderTimeline(document, timeline, model, session, options);
+  const submissionAdapterId = options.submission?.adapterId ?? session?.identity.adapterId;
   const { composer, input, send } = renderComposer(
     document,
     session,
     options.actions,
     options.submission,
     options.lockdownActive,
+    submissionAdapterId
+      ? model.adapters.get(submissionAdapterId)?.status?.capability
+      : undefined,
   );
   detail.append(header);
   if (runtimeContext) detail.append(runtimeContext);
@@ -508,6 +515,7 @@ function renderComposer(
   actions: SessionDetailActions | undefined,
   submission: SubmissionFeedback | undefined,
   lockdownActive = false,
+  capability?: AdapterCapabilitySummary,
 ): { composer: HTMLElement; input: HTMLTextAreaElement; send: HTMLButtonElement } {
   const composer = document.createElement("form");
   composer.className = "composer";
@@ -557,7 +565,7 @@ function renderComposer(
       ),
     );
   }
-  if (submission) renderSubmissionFeedback(document, composer, submission);
+  if (submission) renderSubmissionFeedback(document, composer, submission, capability);
   return { composer, input, send };
 }
 
@@ -565,6 +573,7 @@ function renderSubmissionFeedback(
   document: Document,
   composer: HTMLElement,
   submission: SubmissionFeedback,
+  capability: AdapterCapabilitySummary | undefined,
 ): void {
   if (submission.state === LocalSubmissionState.SUBMITTING) {
     composer.append(
@@ -573,13 +582,33 @@ function renderSubmissionFeedback(
   } else if (submission.state === LocalSubmissionState.SUBMIT_FAILED) {
     composer.append(renderFailureText(document, "submit_failed", submission.error ?? "Submission failed before an outcome was confirmed."));
   } else if (submission.state === LocalSubmissionState.UNKNOWN) {
-    composer.append(renderFailureText(document, "unknown", submission.error ?? "Acceptance is unknown; reconcile before claiming success or retrying."));
+    const outcome = submission.result?.outcome ?? SubmissionOutcome.UNKNOWN;
+    const qualifier = submissionOutcomeQualifier(outcome, capability);
+    const feedback = renderFailureText(
+      document,
+      "unknown",
+      submission.error ?? "Acceptance is unknown; reconcile before claiming success or retrying.",
+    );
+    if (qualifier) {
+      feedback.append(textElement(
+        document,
+        "span",
+        "command-step__race",
+        `Outcome qualifier: ${qualifier}`,
+      ));
+    }
+    composer.append(feedback);
   }
 
   const result = submission.result;
   if (!result) return;
   if (result.failureCode !== FailureCode.UNSPECIFIED) {
-    composer.append(renderFailureBanner(document, result.failureCode, result.diagnosticMessage));
+    composer.append(renderFailureBanner(
+      document,
+      result.failureCode,
+      result.diagnosticMessage,
+      capability,
+    ));
   }
   if (result.deduplicated) {
     const indicator = textElement(

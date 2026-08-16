@@ -25,6 +25,7 @@ import type { ControlClient } from "../core-client.js";
 import type { CredentialStore } from "../credentials.js";
 import type { CliOutput } from "../main.js";
 import { printSubmissionResult } from "../output.js";
+import { capabilityForUnknownSubmission } from "./adapter-status.js";
 import {
   operationBase,
   operationContext,
@@ -98,7 +99,8 @@ export async function abandonSpawnTargetCommand(
 }
 
 export async function spawnCommand(
-  client: Pick<ControlClient, "submit">,
+  client: Pick<ControlClient, "submit">
+    & Partial<Pick<ControlClient, "queryDiagnostics">>,
   store: CredentialStore,
   authorityDomainId: string,
   options: SpawnOptions,
@@ -119,11 +121,20 @@ export async function spawnCommand(
   output.stderr(options.json
     ? JSON.stringify({ target: `adapter=${encodeURIComponent(options.adapterId)}`, intent: "fresh" })
     : `Target: adapter=${options.adapterId} intent=fresh`);
-  return printSubmissionResult(await client.submit({ operation }), options.json, output);
+  const result = await client.submit({ operation });
+  const capability = await capabilityForUnknownSubmission(
+    client,
+    store,
+    authorityDomainId,
+    targetScope,
+    result,
+  );
+  return printSubmissionResult(result, options.json, output, capability);
 }
 
 export async function restartCommand(
-  client: Pick<ControlClient, "loadSnapshot" | "subscribe" | "submit">,
+  client: Pick<ControlClient, "loadSnapshot" | "subscribe" | "submit">
+    & Partial<Pick<ControlClient, "queryDiagnostics">>,
   store: CredentialStore,
   authorityDomainId: string,
   options: RestartOptions,
@@ -155,7 +166,15 @@ export async function restartCommand(
     : `Target: ${identity} intent=continuation${managed.contextStatus === undefined
       ? ""
       : `; current ${continuationContextExplanation(managed.contextStatus)}`}`);
-  return printSubmissionResult(await client.submit({ operation }), options.json, output);
+  const result = await client.submit({ operation });
+  const capability = await capabilityForUnknownSubmission(
+    client,
+    store,
+    authorityDomainId,
+    targetScope,
+    result,
+  );
+  return printSubmissionResult(result, options.json, output, capability);
 }
 
 function exactPrior(logicalTargetId: string, session: Session) {

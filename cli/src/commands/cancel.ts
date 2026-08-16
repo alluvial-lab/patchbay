@@ -3,6 +3,7 @@ import type { ControlClient } from "../core-client.js";
 import type { CredentialStore } from "../credentials.js";
 import type { CliOutput } from "../main.js";
 import { printSubmissionResult } from "../output.js";
+import { capabilityForUnknownSubmission } from "./adapter-status.js";
 import {
   commandCorrelation,
   operationBase,
@@ -19,7 +20,8 @@ export interface CancelOptions extends OperationIdOptions {
 }
 
 export async function cancelCommand(
-  client: Pick<ControlClient, "subscribe" | "submit">,
+  client: Pick<ControlClient, "subscribe" | "submit">
+    & Partial<Pick<ControlClient, "queryDiagnostics">>,
   store: CredentialStore,
   authorityDomainId: string,
   options: CancelOptions,
@@ -39,5 +41,13 @@ export async function cancelCommand(
       ? JSON.stringify({ target: targetIdentity(target), commandId: options.targetCommandId })
       : `Target: ${targetIdentity(target)} command=${options.targetCommandId}`,
   );
-  return printSubmissionResult(await client.submit({ operation }), options.json, output);
+  const result = await client.submit({ operation });
+  const capability = await capabilityForUnknownSubmission(
+    client,
+    store,
+    authorityDomainId,
+    target,
+    result,
+  );
+  return printSubmissionResult(result, options.json, output, capability);
 }

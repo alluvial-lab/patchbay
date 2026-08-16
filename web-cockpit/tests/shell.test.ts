@@ -1051,6 +1051,57 @@ test("shell surfaces reconnect and offline state with locked banner primitives",
   assert.ok(banner.querySelector(".connectivity-indicator--offline"));
 });
 
+test("submission UNKNOWN consumes each adapter action and undeclared assurance is conservative", () => {
+  const result = create(SubmissionResultSchema, {
+    outcome: SubmissionOutcome.UNKNOWN,
+    operationState: OperationState.UNSPECIFIED,
+  });
+  for (const [action, qualifier] of [
+    [ReconciliationAction.NONE, "unknown"],
+    [ReconciliationAction.MANUAL_REQUIRED, "manual-required"],
+    [undefined, "manual-required"],
+  ] as const) {
+    const dom = new JSDOM();
+    const view = session("submission-unknown");
+    const model = withSessions(view);
+    if (action !== undefined) {
+      model.adapters.set("pi", {
+        adapterId: "pi",
+        status: create(AdapterStatusSchema, {
+          capability: assuranceCapability(IdempotencyStrength.NONE, action),
+        }),
+        asOfLsn: 1n,
+        recentDiagnostics: [],
+      });
+    }
+    const detail = renderSessionDetail(dom.window.document, model, view, {
+      markdown: createMarkdownRenderer(dom.window as unknown as Window),
+      submission: {
+        state: LocalSubmissionState.UNKNOWN,
+        adapterId: "pi",
+        result,
+      },
+    });
+    assert.match(detail.composer.textContent ?? "", new RegExp(`Outcome qualifier: ${qualifier}`));
+  }
+
+  const dom = new JSDOM();
+  const view = session("submission-accepted");
+  const model = withAdapterCapabilities(withSessions(view));
+  const accepted = renderSessionDetail(dom.window.document, model, view, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    submission: {
+      state: LocalSubmissionState.DRAFT,
+      adapterId: "pi",
+      result: create(SubmissionResultSchema, {
+        outcome: SubmissionOutcome.ACCEPTED,
+        operationState: OperationState.ACCEPTED,
+      }),
+    },
+  });
+  assert.doesNotMatch(accepted.composer.textContent ?? "", /Outcome qualifier:/);
+});
+
 test("deduplicated submission is visible as already in flight", () => {
   const dom = new JSDOM();
   const view = session("session-1");

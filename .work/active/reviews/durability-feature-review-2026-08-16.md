@@ -55,3 +55,24 @@ No other material, important, or nit findings.
 ## Recommendation
 
 **Return with focused scope.** Close or explicitly narrow the pre-acceptance `SubmissionOutcome.UNKNOWN` qualifier claim and roll `docs/UX.md` to the resulting shipped behavior. Then rerun the focused submission-unknown presentation tests plus the full clean-tree suite and commission thorough pass 2. The generic V1 contract and Pi manifest-profile consumption seam are otherwise ready.
+
+## Fixed — 2026-08-16
+
+The material finding is wired rather than narrowed. One shared operator-domain derivation now combines `SubmissionOutcome.UNKNOWN` with the owning adapter's generated, complete assurance V1 `unproven_outcome_action`; `NONE` renders `unknown`, `MANUAL_REQUIRED` renders `manual-required`, and missing/malformed/unavailable declarations default conservatively to `manual-required`. Non-unknown submission outcomes return no qualifier, so capability alone remains advisory and cannot create a presentation decision.
+
+The web cockpit retains the submitted Operation's adapter id, looks up that adapter's canonical diagnostics capability, and applies the qualifier to both typed and transport-inferred unknown feedback. The CLI performs one best-effort canonical adapter-status query only after a typed unknown for adapter-targeted commands, passes the returned capability beside the outcome into JSON/human presentation, and falls back to conservative `manual-required` if the query or declaration is unavailable. Accepted `execution_outcome_unknown` presentation now shares the same conservative derivation. No protocol/generated artifact or foundation assertion changed; `docs/UX.md` now matches shipped behavior.
+
+The carried nit is also closed: CLI diagnostics table-drive `UNSPECIFIED` and unknown numerics across deduplication strength, reconciliation strength, and unproven-outcome action.
+
+Execution capability: `openai-codex/gpt-5.6-sol` (caller-selected for the focused cross-surface review fix). Review weight remains caller-selected `thorough`; pass 2 is delegated to the parent autopilot driver.
+
+Mutation evidence: replacing the shared qualifier derivation with an implementation that ignored the manifest and always returned `manual-required` failed the focused operator-domain regression (`expected 'unknown', actual 'manual-required'`). `git restore operator-domain/src/reconciliation/outcome_qualifier.ts` restored the staged implementation, after which focused operator-domain, web, and CLI tests passed.
+
+Full verification:
+
+1. `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`: **PASS** — all workspace targets, tests, doctests, and warnings-denied clippy passed; the server suite included 84 unit tests.
+2. `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build`: **PASS** — 59 vectors, 19 promoted vectors, 29 implementation checks, 38 killed mutation witnesses, and generated drift clean.
+3. `cd operator-domain && npm run build && npm test`: **PASS** — 28/28 tests.
+4. `cd pi-adapter && npm test`: **PASS** — 61/61 tests, including the real core/adapter loop.
+
+Consumer suites: `cd web-cockpit && npm test`: **PASS** — 144/144; `cd cli && npm test`: **PASS** — 53/53 plus the real-core resource projection; `cd token-commune-adapter && npm test`: **PASS** — 63/63, including both real-core flows. `cargo fmt --all -- --check`, staged/unstaged `git diff --check`, and the focused post-mutation restores also passed.

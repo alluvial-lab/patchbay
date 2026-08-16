@@ -5,10 +5,19 @@ import { join } from "node:path";
 import test from "node:test";
 import { create, toBinary } from "@bufbuild/protobuf";
 import {
+  AdapterAssuranceManifestSchema,
+  AdapterAssuranceManifestV1Schema,
+  AdapterCapabilitySummarySchema,
+  AdapterIdSchema,
+  AdapterReconciliationStrength,
+  AdapterStatusPageSchema,
+  AdapterStatusSchema,
   CommandIdSchema,
   OperationKind,
   OperationSchema,
+  IdempotencyStrength,
   OperationState,
+  ReconciliationAction,
   StoredEventKind,
   StoredEventPayloadSchema,
   SubmissionOutcome,
@@ -27,6 +36,7 @@ import {
   DOMAIN,
   session,
   snapshotResponse,
+  diagnosticsResponse,
 } from "./helpers.js";
 
 async function credentialStore(): Promise<CredentialStore> {
@@ -90,6 +100,59 @@ test("instruct prints stable identity before submission and keeps JSON output se
   assertDefaultValidityWindow(submitted);
   assert.equal(JSON.parse(output.out[0]!).outcome, "accepted");
   assert.equal([...output.out, ...output.err].join("\n").includes(BEARER_SECRET), false);
+});
+
+test("UNKNOWN instruct fetches the limiting adapter declaration before rendering its qualifier", async () => {
+  const store = await credentialStore();
+  const output = captureOutput();
+  let diagnosticsCalls = 0;
+  const client = {
+    async loadSnapshot() {
+      return snapshotResponse();
+    },
+    async submit() {
+      return create(SubmissionResultSchema, {
+        outcome: SubmissionOutcome.UNKNOWN,
+        operationState: OperationState.UNSPECIFIED,
+      });
+    },
+    async queryDiagnostics() {
+      diagnosticsCalls += 1;
+      return diagnosticsResponse("adapters", create(AdapterStatusPageSchema, {
+        adapters: [create(AdapterStatusSchema, {
+          adapterId: create(AdapterIdSchema, { value: "pi-adapter" }),
+          capability: create(AdapterCapabilitySummarySchema, {
+            assurance: create(AdapterAssuranceManifestSchema, {
+              contract: {
+                case: "v1",
+                value: create(AdapterAssuranceManifestV1Schema, {
+                  deduplicationStrength: IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
+                  continuationProofSupport: false,
+                  cursorSupport: false,
+                  generationFenceSupport: false,
+                  reconciliationStrength: AdapterReconciliationStrength.NONE,
+                  unprovenOutcomeAction: ReconciliationAction.NONE,
+                }),
+              },
+            }),
+          }),
+        })],
+      }));
+    },
+  };
+
+  assert.equal(
+    await instructCommand(
+      client as never,
+      store,
+      DOMAIN,
+      { target: "runtime-1", prompt: "Run the checks", json: true },
+      output,
+    ),
+    4,
+  );
+  assert.equal(diagnosticsCalls, 1);
+  assert.equal(JSON.parse(output.out[0]!).outcomeQualifier, "unknown");
 });
 
 test("cancel and interrupt recover the stable target from command records", async () => {

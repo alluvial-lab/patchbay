@@ -403,6 +403,7 @@ function emitSubmissionFailure(
   }
   output.stdout([
     `outcome=${view.outcome}`,
+    `qualifier=${view.outcomeQualifier ?? "-"}`,
     `command=${view.commandId ?? "-"}`,
     `state=${view.operationState}`,
     `failure=${view.failureCode ?? "-"}`,

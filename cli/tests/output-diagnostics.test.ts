@@ -61,6 +61,24 @@ import { parseArguments, run, usage } from "../src/main.js";
 import { exitCodeForSubmission, printSubmissionResult, targetScopeView } from "../src/output.js";
 import { captureOutput, credentials, diagnosticsResponse, DOMAIN, session, snapshotResponse } from "./helpers.js";
 
+function assuranceCapability(action: ReconciliationAction) {
+  return create(AdapterCapabilitySummarySchema, {
+    assurance: create(AdapterAssuranceManifestSchema, {
+      contract: {
+        case: "v1",
+        value: create(AdapterAssuranceManifestV1Schema, {
+          deduplicationStrength: IdempotencyStrength.NONE,
+          continuationProofSupport: false,
+          cursorSupport: false,
+          generationFenceSupport: false,
+          reconciliationStrength: AdapterReconciliationStrength.NONE,
+          unprovenOutcomeAction: action,
+        }),
+      },
+    }),
+  });
+}
+
 async function credentialStore(): Promise<CredentialStore> {
   const directory = await mkdtemp(join(tmpdir(), "patchbay-cli-diagnostics-"));
   const store = new CredentialStore(join(directory, "credentials.json"));
@@ -121,16 +139,36 @@ test("SubmissionOutcome has stable script-facing exit codes", () => {
   assert.equal(exitCodeForSubmission(SubmissionOutcome.UNSPECIFIED), 1);
 });
 
-test("UNKNOWN output directs reconciliation through core command records", () => {
-  const output = captureOutput();
+test("UNKNOWN output consumes each generated action and defaults undeclared assurance conservatively", () => {
   const result = create(SubmissionResultSchema, {
     outcome: SubmissionOutcome.UNKNOWN,
     operationState: OperationState.UNSPECIFIED,
   });
 
-  assert.equal(printSubmissionResult(result, true, output), 4);
-  assert.equal(JSON.parse(output.out[0]!).outcome, "unknown");
-  assert.match(output.err.join("\n"), /reconcile via the core's command records/);
+  for (const [capability, qualifier] of [
+    [assuranceCapability(ReconciliationAction.NONE), "unknown"],
+    [assuranceCapability(ReconciliationAction.MANUAL_REQUIRED), "manual-required"],
+    [undefined, "manual-required"],
+  ] as const) {
+    const output = captureOutput();
+    assert.equal(printSubmissionResult(result, true, output, capability), 4);
+    assert.deepEqual(JSON.parse(output.out[0]!), {
+      outcome: "unknown",
+      outcomeQualifier: qualifier,
+      commandId: null,
+      operationState: "unspecified",
+      failureCode: null,
+      diagnosticMessage: null,
+      acceptedLsn: null,
+      deduplicated: false,
+    });
+    assert.match(output.err.join("\n"), new RegExp(`UNKNOWN \\(${qualifier}\\)`));
+    assert.match(output.err.join("\n"), /reconcile via the core's command records/);
+
+    const human = captureOutput();
+    assert.equal(printSubmissionResult(result, false, human, capability), 4);
+    assert.match(human.out[0]!, new RegExp(`outcome=unknown qualifier=${qualifier}`));
+  }
 });
 
 test("session-health emits canonical connectivity and activity as JSON", async () => {
@@ -426,6 +464,79 @@ test("diagnostic audit and adapter projections include safe diagnostic fields", 
   assert.ok(human.rows[0]?.includes("provider_pool=authoritative"));
   assert.ok(human.rows[0]?.includes("manual-required"));
   assert.doesNotMatch(JSON.stringify(audit.records[0]), /prompt|attachment|descriptor|BEARER/);
+});
+
+test("adapter diagnostics reject sentinel and unknown numerics across every assurance enum", () => {
+  type Capability = ReturnType<typeof assuranceCapability>;
+  const cases: ReadonlyArray<{
+    name: string;
+    mutate(capability: Capability): void;
+    expected: RegExp;
+  }> = [
+    {
+      name: "deduplication sentinel",
+      mutate(value) {
+        if (value.assurance?.contract.case === "v1") {
+          value.assurance.contract.value.deduplicationStrength = IdempotencyStrength.UNSPECIFIED;
+        }
+      },
+      expected: /deduplication strength/,
+    },
+    {
+      name: "deduplication unknown",
+      mutate(value) {
+        if (value.assurance?.contract.case === "v1") {
+          value.assurance.contract.value.deduplicationStrength = 99 as IdempotencyStrength;
+        }
+      },
+      expected: /deduplication strength/,
+    },
+    {
+      name: "reconciliation sentinel",
+      mutate(value) {
+        if (value.assurance?.contract.case === "v1") {
+          value.assurance.contract.value.reconciliationStrength = AdapterReconciliationStrength.UNSPECIFIED;
+        }
+      },
+      expected: /reconciliation strength/,
+    },
+    {
+      name: "reconciliation unknown",
+      mutate(value) {
+        if (value.assurance?.contract.case === "v1") {
+          value.assurance.contract.value.reconciliationStrength = 99 as AdapterReconciliationStrength;
+        }
+      },
+      expected: /reconciliation strength/,
+    },
+    {
+      name: "action sentinel",
+      mutate(value) {
+        if (value.assurance?.contract.case === "v1") {
+          value.assurance.contract.value.unprovenOutcomeAction = ReconciliationAction.UNSPECIFIED;
+        }
+      },
+      expected: /unproven-outcome action/,
+    },
+    {
+      name: "action unknown",
+      mutate(value) {
+        if (value.assurance?.contract.case === "v1") {
+          value.assurance.contract.value.unprovenOutcomeAction = 99 as ReconciliationAction;
+        }
+      },
+      expected: /unproven-outcome action/,
+    },
+  ];
+
+  for (const { name, mutate, expected } of cases) {
+    const capability = assuranceCapability(ReconciliationAction.NONE);
+    mutate(capability);
+    const page = create(AdapterStatusPageSchema, {
+      adapters: [create(AdapterStatusSchema, { capability })],
+    });
+    assert.throws(() => adapterStatusPageView(page), expected, name);
+  }
 });
 
 test("adapter diagnostics fail closed on a missing or incomplete assurance contract", () => {

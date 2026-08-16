@@ -8,6 +8,7 @@ import type { ControlClient } from "../core-client.js";
 import type { CredentialStore } from "../credentials.js";
 import type { CliOutput } from "../main.js";
 import { printSubmissionResult } from "../output.js";
+import { capabilityForUnknownSubmission } from "./adapter-status.js";
 import {
   operationBase,
   operationContext,
@@ -28,7 +29,8 @@ export interface InstructOptions extends OperationIdOptions {
 }
 
 export async function instructCommand(
-  client: Pick<ControlClient, "loadSnapshot" | "submit">,
+  client: Pick<ControlClient, "loadSnapshot" | "submit">
+    & Partial<Pick<ControlClient, "queryDiagnostics">>,
   store: CredentialStore,
   authorityDomainId: string,
   options: InstructOptions,
@@ -48,7 +50,14 @@ export async function instructCommand(
 
   printTargetBeforeIntent(identity, options.json, output);
   const result = await client.submit({ operation });
-  return printSubmissionResult(result, options.json, output);
+  const capability = await capabilityForUnknownSubmission(
+    client,
+    store,
+    authorityDomainId,
+    targetScope,
+    result,
+  );
+  return printSubmissionResult(result, options.json, output, capability);
 }
 
 export function printTargetBeforeIntent(

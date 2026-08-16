@@ -183,9 +183,11 @@ function composeCockpit(
   }
 
   async function submit(operation: Operation): Promise<void> {
+    const adapterId = operation.targetScope?.adapterId?.value;
     if (projection.model.lockdown.active || projection.model.lockdown.submitting) {
       submission = {
         state: LocalSubmissionState.SUBMIT_FAILED,
+        adapterId,
         error: projection.model.lockdown.active
           ? "Read-only during lockdown. New Operations are rejected until trusted bootstrap exit."
           : "Lockdown decision pending. Operations are disabled until the core confirms or denies entry.",
@@ -193,7 +195,7 @@ function composeCockpit(
       shell.update(projection.model);
       return;
     }
-    submission = { state: LocalSubmissionState.SUBMITTING };
+    submission = { state: LocalSubmissionState.SUBMITTING, adapterId };
     shell.update(projection.model);
     try {
       const result = await protocol.client.submit(create(SubmitRequestSchema, { operation }));
@@ -204,12 +206,14 @@ function composeCockpit(
             : result.outcome === SubmissionOutcome.UNKNOWN
               ? LocalSubmissionState.UNKNOWN
               : LocalSubmissionState.DRAFT,
+        adapterId,
         result,
       };
       shell.update(projection.model);
     } catch (error) {
       submission = {
         state: LocalSubmissionState.UNKNOWN,
+        adapterId,
         error: error instanceof Error ? error.message : String(error),
       };
       shell.update(projection.model);

@@ -2,16 +2,19 @@ import {
   FailureCode,
   OperationState,
   SubmissionOutcome,
+  type AdapterCapabilitySummary,
   type EventId,
   type SubmissionResult,
   type TargetScope,
 } from "@patchbay/contracts";
 import { TargetScopeKind } from "@patchbay/contracts";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
+import { submissionOutcomeQualifier } from "@patchbay/operator-domain";
 import type { CliOutput } from "./main.js";
 
 export interface SubmissionView {
   outcome: string;
+  outcomeQualifier: string | null;
   commandId: string | null;
   operationState: string;
   failureCode: string | null;
@@ -40,13 +43,15 @@ export function printSubmissionResult(
   result: SubmissionResult,
   json: boolean,
   output: CliOutput,
+  capability?: AdapterCapabilitySummary,
 ): number {
-  const view = submissionView(result);
+  const view = submissionView(result, capability);
   if (json) {
     output.stdout(JSON.stringify(view));
   } else {
     const fields = [
       `outcome=${view.outcome}`,
+      `qualifier=${view.outcomeQualifier ?? "-"}`,
       `command=${view.commandId ?? "-"}`,
       `state=${view.operationState}`,
       `failure=${view.failureCode ?? "-"}`,
@@ -57,15 +62,21 @@ export function printSubmissionResult(
     if (view.diagnosticMessage) output.stderr(view.diagnosticMessage);
   }
 
-  if (result.outcome === SubmissionOutcome.UNKNOWN) {
-    output.stderr("Submission outcome is UNKNOWN; reconcile via the core's command records.");
+  if (view.outcomeQualifier) {
+    output.stderr(
+      `Submission outcome is UNKNOWN (${view.outcomeQualifier}); reconcile via the core's command records.`,
+    );
   }
   return exitCodeForSubmission(result.outcome);
 }
 
-export function submissionView(result: SubmissionResult): SubmissionView {
+export function submissionView(
+  result: SubmissionResult,
+  capability?: AdapterCapabilitySummary,
+): SubmissionView {
   return {
     outcome: enumLabel(SubmissionOutcome, result.outcome),
+    outcomeQualifier: submissionOutcomeQualifier(result.outcome, capability) ?? null,
     commandId: result.commandId?.value || null,
     operationState: enumLabel(OperationState, result.operationState),
     failureCode:
