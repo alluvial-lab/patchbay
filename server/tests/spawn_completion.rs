@@ -19,10 +19,10 @@ use patchbay_contracts::patchbay::{
     PayloadContentType, PayloadEnvelope, PrincipalEnrollment, ReceiveRequest, ResourceId,
     ResourceIdentity, ResourceKind, Revocation, RuntimeGenerationRef, RuntimeSessionId,
     SessionActivityState, SessionConnectivityState, SessionRegistered, SessionStateEvent,
-    SpawnClaimAccepted, SpawnClaimEvent, SpawnExecutionEvidence, SpawnExecutionPhase,
-    SpawnGenerationClaim, SpawnPromotionCommitted, SpawnRequest, SpawnTargetSpec, StoredEventKind,
-    StoredEventPayload, SubmissionOutcome, SubmitRequest, TargetScope, TargetScopeKind, TimeWindow,
-    TypedCorrelation, VerifyOperatorPasswordRequest,
+    SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent, SpawnExecutionEvidence,
+    SpawnExecutionPhase, SpawnGenerationClaim, SpawnPromotionCommitted, SpawnRequest,
+    SpawnTargetSpec, StoredEventKind, StoredEventPayload, SubmissionOutcome, SubmitRequest,
+    TargetScope, TargetScopeKind, TimeWindow, TypedCorrelation, VerifyOperatorPasswordRequest,
 };
 use patchbay_core::{
     acceptance::SPAWN_REQUEST_SCHEMA,
@@ -2373,6 +2373,10 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
         "hot deferred success evidence must not present terminal success"
     );
     assert!(hot_deferred_inspection.terminal_event_id.is_none());
+    assert_eq!(
+        hot_deferred_inspection.spawn_claim_disposition,
+        SpawnClaimDisposition::Active as i32
+    );
 
     let diagnostics = control
         .projection_state()
@@ -2386,6 +2390,10 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
         "bounded deferred success evidence must not present terminal success"
     );
     assert!(deferred_inspection.terminal_event_id.is_none());
+    assert_eq!(
+        deferred_inspection.spawn_claim_disposition,
+        SpawnClaimDisposition::Active as i32
+    );
 
     report_session(&adapter_service, &token, 1, Some(correlation())).await;
     report_progress_for_claim(
@@ -2442,6 +2450,10 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
         "the atomic promotion source is the command terminal source"
     );
     assert_eq!(
+        hot_completed_inspection.spawn_claim_disposition,
+        SpawnClaimDisposition::Promoted as i32
+    );
+    assert_eq!(
         hot_completed_inspection.history.last().map(|entry| (
             entry.event_id.clone(),
             entry.state,
@@ -2468,6 +2480,10 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
     assert_eq!(
         bounded_completed.terminal_event_id,
         Some(promotion_event_id.clone())
+    );
+    assert_eq!(
+        bounded_completed.spawn_claim_disposition,
+        SpawnClaimDisposition::Promoted as i32
     );
 
     drop(deliveries);
@@ -2513,6 +2529,10 @@ async fn run_real_adapter_scoped_submit_case(generation_bump: bool) {
     assert_eq!(
         restarted_inspection.terminal_event_id,
         Some(promotion_event_id)
+    );
+    assert_eq!(
+        restarted_inspection.spawn_claim_disposition,
+        SpawnClaimDisposition::Promoted as i32
     );
 
     let restarted_auth = login_control(&restarted_control).await;

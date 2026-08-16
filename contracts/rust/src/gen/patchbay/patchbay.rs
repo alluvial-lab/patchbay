@@ -3697,6 +3697,8 @@ pub struct CommandInspection {
     pub history: ::prost::alloc::vec::Vec<CommandHistoryEntry>,
     #[prost(message, optional, tag="7")]
     pub audit: ::core::option::Option<AuditPage>,
+    #[prost(enumeration="SpawnClaimDisposition", tag="8")]
+    pub spawn_claim_disposition: i32,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CommandInspectionResult {

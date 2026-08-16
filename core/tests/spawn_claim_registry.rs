@@ -20,6 +20,7 @@ use patchbay_contracts::patchbay::{
     SpawnPriorWorkEffect, SpawnRequest, SpawnTargetSpec, StoredEventKind, StoredEventPayload,
     SupervisorPreLaunchFailureProof, TargetScope, TargetScopeKind,
 };
+use patchbay_core::diagnostics::DiagnosticsProjection;
 use patchbay_core::session::{
     allowed_spawn_claim_transition, encode_spawn_claim_event, encode_spawn_execution_evidence,
     rebuild_spawn_claims_from_log, SpawnClaimError, SpawnClaimQuery, SpawnClaimRegistry,
@@ -373,6 +374,74 @@ fn core_no_effect(
         exact_prior_liveness: prior_liveness_lsn.map(|_| runtime(7)),
         prior_liveness_event_id: prior_liveness_lsn.map(event_id),
     })
+}
+
+fn assert_inspection_disposition_hot_and_restart(
+    events: &[RecordedEvent],
+    command_id: &str,
+    expected: SpawnClaimDisposition,
+) {
+    let inspect = |projection: &DiagnosticsProjection| {
+        projection
+            .inspect_command(&command(command_id))
+            .expect("spawn command is inspectable")
+            .spawn_claim_disposition
+    };
+
+    let mut hot = DiagnosticsProjection::new(domain()).unwrap();
+    for event in events {
+        hot.observe(event).unwrap();
+    }
+    assert_eq!(inspect(&hot), expected as i32, "hot inspection disposition");
+
+    let mut restarted = DiagnosticsProjection::new(domain()).unwrap();
+    for event in events {
+        restarted.observe(event).unwrap();
+    }
+    assert_eq!(
+        inspect(&restarted),
+        expected as i32,
+        "restart inspection disposition"
+    );
+}
+
+#[test]
+fn command_inspection_projects_exact_claim_disposition_hot_and_restart() {
+    let accepted = accepted_event(1, fresh_accepted("spawn-inspection"));
+    assert_inspection_disposition_hot_and_restart(
+        std::slice::from_ref(&accepted),
+        "spawn-inspection",
+        SpawnClaimDisposition::Active,
+    );
+
+    for (change, expected) in [
+        (
+            disposition_event(
+                2,
+                "spawn-inspection",
+                SpawnClaimDisposition::Active,
+                SpawnClaimDisposition::PoisonedPendingReconciliation,
+                ambiguity(2),
+            ),
+            SpawnClaimDisposition::PoisonedPendingReconciliation,
+        ),
+        (
+            disposition_event(
+                2,
+                "spawn-inspection",
+                SpawnClaimDisposition::Active,
+                SpawnClaimDisposition::ReleasedNoExternalEffect,
+                core_no_effect(2, None),
+            ),
+            SpawnClaimDisposition::ReleasedNoExternalEffect,
+        ),
+    ] {
+        assert_inspection_disposition_hot_and_restart(
+            &[accepted.clone(), change],
+            "spawn-inspection",
+            expected,
+        );
+    }
 }
 
 fn attachment_event(lsn: u64, adapter: &str, generation: u64) -> RecordedEvent {

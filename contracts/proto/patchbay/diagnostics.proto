@@ -6,6 +6,7 @@ import "google/protobuf/timestamp.proto";
 import "patchbay/adapter.proto";
 import "patchbay/common.proto";
 import "patchbay/operations.proto";
+import "patchbay/sessions.proto";
 
 // Canonical security audit vocabulary. Values are outcome-bearing so a
 // producer cannot combine an event name with an unrelated outcome string.
@@ -174,6 +175,7 @@ message CommandInspection {
   EventId terminal_event_id = 5;
   repeated CommandHistoryEntry history = 6;
   AuditPage audit = 7;
+  SpawnClaimDisposition spawn_claim_disposition = 8;
 }
 
 message CommandInspectionResult {

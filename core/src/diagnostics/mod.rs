@@ -861,6 +861,10 @@ impl DiagnosticsProjection {
             terminal_event_id: timeline.terminal_event_id.clone(),
             history: timeline.history.clone(),
             audit: None,
+            spawn_claim_disposition: timeline
+                .claim_disposition
+                .unwrap_or(SpawnClaimDisposition::Unspecified)
+                as i32,
         })
     }
 

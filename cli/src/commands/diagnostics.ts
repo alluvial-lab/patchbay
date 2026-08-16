@@ -22,6 +22,7 @@ import {
   ResourceIdSchema,
   ResourceIdentitySchema,
   ResourceKindSchema,
+  SpawnClaimDisposition,
   TargetScopeKind,
   TargetScopeSchema,
   type AdapterStatusPage,
@@ -329,6 +330,9 @@ function inspectionView(inspection: CommandInspection) {
     acceptedEventId: eventIdView(inspection.acceptedEventId),
     currentState: enumLabel(OperationState, inspection.currentState),
     failureCode: inspection.failureCode === FailureCode.UNSPECIFIED ? null : enumLabel(FailureCode, inspection.failureCode),
+    spawnClaimDisposition: inspection.spawnClaimDisposition === SpawnClaimDisposition.UNSPECIFIED
+      ? null
+      : enumLabel(SpawnClaimDisposition, inspection.spawnClaimDisposition),
     terminalEventId: eventIdView(inspection.terminalEventId),
     history: inspection.history.map((entry) => ({
       eventId: eventIdView(entry.eventId),
@@ -502,6 +506,9 @@ export function inspectionTables(result: import("@patchbay/contracts").CommandIn
         ["KIND", command ? enumLabel(OperationKind, command.kind) : "-"],
         ["STATE", enumLabel(OperationState, inspection.currentState)],
         ["FAILURE", inspection.failureCode === FailureCode.UNSPECIFIED ? "-" : enumLabel(FailureCode, inspection.failureCode)],
+        ["CLAIM_DISPOSITION", inspection.spawnClaimDisposition === SpawnClaimDisposition.UNSPECIFIED
+          ? "-"
+          : enumLabel(SpawnClaimDisposition, inspection.spawnClaimDisposition)],
       ] },
       { title: "HISTORY", headers: ["LSN", "TIME", "STATE", "FAILURE", "CORRELATIONS"], rows: inspection.history.map((entry) => [
         entry.eventId?.lsn?.value.toString() ?? "-", timestampView(entry.occurredAt) ?? "-",

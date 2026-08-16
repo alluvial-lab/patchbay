@@ -361,6 +361,11 @@ async fn atomic_abandonment_clears_fence_retires_target_and_is_restart_idempoten
         .unwrap()
         .inspection
         .unwrap();
+    assert_eq!(
+        inspection.spawn_claim_disposition,
+        SpawnClaimDisposition::TargetAbandoned as i32,
+        "hot inspection exposes exact abandonment disposition"
+    );
     assert!(inspection.history.iter().any(|entry| {
         entry.event_id.as_ref() == Some(&appended.source_event_id)
             && entry.failure_code == FailureCode::ExecutionOutcomeUnknown as i32
@@ -412,6 +417,18 @@ async fn atomic_abandonment_clears_fence_retires_target_and_is_restart_idempoten
         .await
         .unwrap();
     let restarted_sessions = rebuild_from_log(&storage, &domain()).await.unwrap();
+    let mut restarted_diagnostics = DiagnosticsProjection::new(domain()).unwrap();
+    for event in &events {
+        restarted_diagnostics.observe(event).unwrap();
+    }
+    assert_eq!(
+        restarted_diagnostics
+            .inspect_command(&command())
+            .unwrap()
+            .spawn_claim_disposition,
+        SpawnClaimDisposition::TargetAbandoned as i32,
+        "restart inspection exposes exact abandonment disposition"
+    );
     assert_eq!(restarted_claims, claims);
     assert_eq!(restarted_sessions, sessions);
     let mut retired_targets = restarted_sessions.logical_targets().clone();

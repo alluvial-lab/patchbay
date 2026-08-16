@@ -19,6 +19,9 @@ import {
   AuditPageSchema,
   AuditRecordSchema,
   AuthorityDomainIdSchema,
+  CommandInspectionResultSchema,
+  CommandInspectionSchema,
+  CommandSummarySchema,
   EventIdSchema,
   FailureCode,
   GenerationSchema,
@@ -33,12 +36,20 @@ import {
   ResourceProjectionContractSchema,
   SchemaDescriptorSchema,
   SessionSchema,
+  SpawnClaimDisposition,
   SubmissionOutcome,
   SubmissionResultSchema,
 } from "@patchbay/contracts";
 import { adapterStatusCommand } from "../src/commands/adapter-status.js";
 import { auditQueryCommand } from "../src/commands/audit-query.js";
-import { adapterTables, auditPageView, adapterStatusPageView, parseAuditTarget } from "../src/commands/diagnostics.js";
+import {
+  adapterTables,
+  auditPageView,
+  adapterStatusPageView,
+  commandInspectionView,
+  inspectionTables,
+  parseAuditTarget,
+} from "../src/commands/diagnostics.js";
 import { sessionHealthCommand } from "../src/commands/session-health.js";
 import { CredentialStore } from "../src/credentials.js";
 import { parseArguments, run, usage } from "../src/main.js";
@@ -380,6 +391,30 @@ test("diagnostic audit and adapter projections include safe diagnostic fields", 
   assert.ok(human.headers.includes("RESOURCE_SNAPSHOTS"));
   assert.ok(human.rows[0]?.includes("provider_pool=authoritative"));
   assert.doesNotMatch(JSON.stringify(audit.records[0]), /prompt|attachment|descriptor|BEARER/);
+});
+
+test("inspect-command renders every canonical spawn claim disposition in JSON and text", () => {
+  const cases: Array<[SpawnClaimDisposition, string]> = [
+    [SpawnClaimDisposition.ACTIVE, "active"],
+    [SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION, "poisoned_pending_reconciliation"],
+    [SpawnClaimDisposition.RELEASED_NO_EXTERNAL_EFFECT, "released_no_external_effect"],
+    [SpawnClaimDisposition.PROMOTED, "promoted"],
+    [SpawnClaimDisposition.TARGET_ABANDONED, "target_abandoned"],
+  ];
+
+  for (const [disposition, label] of cases) {
+    const result = create(CommandInspectionResultSchema, {
+      found: true,
+      inspection: create(CommandInspectionSchema, {
+        command: create(CommandSummarySchema, { kind: OperationKind.SPAWN }),
+        currentState: OperationState.DELIVERED,
+        spawnClaimDisposition: disposition,
+      }),
+    });
+    assert.equal(commandInspectionView(result).inspection?.spawnClaimDisposition, label);
+    const commandRows = inspectionTables(result).sections[0]!.rows;
+    assert.deepEqual(commandRows.find(([field]) => field === "CLAIM_DISPOSITION"), ["CLAIM_DISPOSITION", label]);
+  }
 });
 
 test("diagnostics option grammar rejects cross-command and duplicate enum options", async () => {

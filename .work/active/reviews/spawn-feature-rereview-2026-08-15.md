@@ -86,3 +86,13 @@ Green verification does not close the finding because neither the diagnostic wir
 ## Recommendation
 
 **Return the feature with the narrow M1 operator-diagnostics scope above.** Preserve M2, M3, M4, and all already-passing core lifecycle rows. After adding explicit generated claim-disposition inspection and hot/bounded/restart CLI assertions, rerun the focused diagnostics probe and the required thorough convergence pass. Do not advance `research-handoff-spawn` to `done` on this pass.
+
+## r2 fixed — exact claim disposition inspection (2026-08-16)
+
+The remaining MATERIAL is fixed. `CommandInspection` now carries the generated `SpawnClaimDisposition` directly as field 8, and regenerated Rust/TypeScript contracts are committed from the proto source. `DiagnosticsProjection::inspect_command` copies the existing canonical claim-fold value rather than deriving it from command state or synthetic history failures. The CLI JSON projection emits canonical lower-snake-case `spawnClaimDisposition`, while text output adds `CLAIM_DISPOSITION`; non-spawn/absent claim state remains the generated `UNSPECIFIED` sentinel and renders as `null`/`-`, so no presentation state was invented.
+
+Hot and replay/restart inspection coverage now requires exact `active`, `poisoned_pending_reconciliation`, `released_no_external_effect`, `promoted`, and `target_abandoned` values. The promotion integration additionally checks active and promoted bounded-as-of inspection. CLI coverage enumerates all five canonical values in JSON and text. This bounded cross-language wire/projection/presentation change used direct reading rather than another exploratory dispatch; execution capability was `openai-codex/gpt-5.6-sol`, and the caller-selected thorough feature pass 3 remains the next independent convergence gate.
+
+Mutation testing replaced the inspection field population with `UNSPECIFIED`; `command_inspection_projects_exact_claim_disposition_hot_and_restart` failed immediately (`left: 0`, `right: 1`, exit 101). `git restore --worktree core/src/diagnostics/mod.rs` restored the staged fix, the focused test passed again, and no mutation was committed.
+
+Full verification passed: (1) `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`; (2) contract drift, vectors, models, and build; (3) operator-domain build/tests (27/27); (4) Pi-adapter tests (38/38); web-cockpit tests (141/141); and CLI tests (50/50) plus the real-core resource projection. No foundation assertion changed: this closes an omitted generated diagnostics field and exposes the claim lifecycle already required by the protocol and UX.
