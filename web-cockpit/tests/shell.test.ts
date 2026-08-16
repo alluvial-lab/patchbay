@@ -135,6 +135,33 @@ test("poisoned spawn claim warning renders alongside terminal outcome until disp
   assert.doesNotMatch(released.textContent!, /execution_outcome_unknown/);
 });
 
+test("poisoned spawn exposes permanent target abandonment and terminal disposition removes it", () => {
+  const dom = new JSDOM();
+  const command = runningCommand(session("spawn-abandon").identity, "spawn-abandon");
+  command.operation.kind = OperationKind.SPAWN;
+  command.state = OperationState.CANCELLED;
+  command.spawnLogicalTargetId = "logical-spawn-abandon";
+  command.spawnClaimDisposition = SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION;
+  let abandoned = "";
+  const actionable = renderOperationDelivery(dom.window.document, command, {
+    abandonSpawnTarget: (selected) => { abandoned = selected.spawnLogicalTargetId ?? ""; },
+  });
+  actionable
+    .querySelector<HTMLButtonElement>('[aria-label="Permanently abandon this managed target"]')!
+    .click();
+  assert.equal(abandoned, "logical-spawn-abandon");
+
+  command.spawnClaimDisposition = SpawnClaimDisposition.TARGET_ABANDONED;
+  const terminal = renderOperationDelivery(dom.window.document, command, {
+    abandonSpawnTarget: () => undefined,
+  });
+  assert.equal(
+    terminal.querySelector('[aria-label="Permanently abandon this managed target"]'),
+    null,
+  );
+  assert.match(terminal.textContent!, /Claim: target_abandoned/);
+});
+
 test("delivery reserves one action slot and exposes only state-valid actions", () => {
   const dom = new JSDOM();
   const states = [

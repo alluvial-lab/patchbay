@@ -2,9 +2,9 @@ use std::{sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
     ActorId, AuthorityDomainId, CommandId, ControlSurfacePrincipalRecord, ControlSurfaceRevocation,
-    ElicitationId, EventId, Generation, Grant, GrantId, Lsn, OperationKind, OperatorRecord,
-    OperatorSessionRevocation, Resource, ResourceSnapshot, ResourceViewRevision, Session,
-    SessionCheckpointTombstone, SessionSnapshot, StoredEventKind, StoredSessionCheckpoint,
+    ElicitationId, EventId, Generation, Grant, GrantId, LogicalTargetId, Lsn, OperationKind,
+    OperatorRecord, OperatorSessionRevocation, Resource, ResourceSnapshot, ResourceViewRevision,
+    Session, SessionCheckpointTombstone, SessionSnapshot, StoredEventKind, StoredSessionCheckpoint,
     TargetScope, TargetScopeKind, ViewRevision,
 };
 use patchbay_core::{
@@ -368,6 +368,60 @@ impl ProjectionState {
 
     pub async fn submit_guard(&self) -> MutexGuard<'_, ()> {
         self.decision_gate.acquire().await
+    }
+
+    /// Derive the canonical Grant-check scope for one exact logical-target
+    /// abandonment. Continuations retain their exact-prior session-management
+    /// scope; a fresh target with no prior uses its accepted adapter scope.
+    /// The caller holds the shared decision gate and samples time only after
+    /// this projection has caught up.
+    pub async fn spawn_target_abandonment_scope(
+        &self,
+        claim_operation_id: &CommandId,
+        logical_target_id: &LogicalTargetId,
+    ) -> Result<TargetScope, String> {
+        // Preserve aggregate publication lock order: target projection before
+        // claim projection. This method is always called under the decision gate.
+        let targets = self.target_resolver.inner.lock().await;
+        let claims = self.spawn_claims.lock().await;
+        let claim = claims
+            .claim_for_operation(claim_operation_id)
+            .ok_or_else(|| "spawn target abandonment references an unknown claim".to_owned())?;
+        if claim.claim.logical_target_id.as_ref() != Some(logical_target_id) {
+            return Err(
+                "spawn target abandonment logical target does not match the claim".to_owned(),
+            );
+        }
+        let target = targets
+            .sessions()
+            .logical_targets()
+            .get(logical_target_id)
+            .ok_or_else(|| {
+                "spawn target abandonment references an unknown logical target".to_owned()
+            })?;
+        if target.adapter_id != claim.adapter_id {
+            return Err(
+                "spawn target abandonment target adapter disagrees with the claim".to_owned(),
+            );
+        }
+        if let Some(prior) = claim.claim.expected_prior.as_ref() {
+            let external = prior.external_runtime.as_ref().ok_or_else(|| {
+                "spawn target abandonment claim has a malformed exact prior".to_owned()
+            })?;
+            return Ok(TargetScope {
+                kind: TargetScopeKind::RuntimeSession as i32,
+                adapter_id: external.adapter_id.clone(),
+                deployment_scope: external.deployment_scope.clone(),
+                runtime_session_id: external.runtime_session_id.clone(),
+                session_generation: external.generation,
+                ..TargetScope::default()
+            });
+        }
+        Ok(TargetScope {
+            kind: TargetScopeKind::Adapter as i32,
+            adapter_id: Some(claim.adapter_id.clone()),
+            ..TargetScope::default()
+        })
     }
 
     /// Materialize the authoritative live-session projection at its applied LSN.

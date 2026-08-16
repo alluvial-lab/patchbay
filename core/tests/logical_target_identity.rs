@@ -137,6 +137,57 @@ fn slot_transitions_are_exact_and_tombstones_retain_ownership() {
 }
 
 #[test]
+fn abandonment_retires_current_and_candidate_as_audit_only_without_revival() {
+    let logical = target("target-a");
+    let generation_one = external("pi", "machine-a", "runtime-a", 1);
+    let generation_two = external("pi", "machine-a", "runtime-b", 2);
+    let mut registry = registry();
+    registry
+        .create(logical.clone(), adapter("pi"), "machine-a".to_owned())
+        .unwrap();
+    registry
+        .assign_initial_current(&logical, generation_one.clone())
+        .unwrap();
+    registry
+        .reserve_candidate(&logical, generation_two.clone())
+        .unwrap();
+
+    registry.abandon(&logical, 9).unwrap();
+    let record = registry.get(&logical).unwrap();
+    assert_eq!(record.retired_at_lsn, Some(9));
+    assert!(record.current.is_none());
+    assert!(record.reserved_candidate.is_none());
+    assert_eq!(record.tombstones.len(), 2);
+    assert!(record
+        .tombstones
+        .values()
+        .all(|tombstone| tombstone.superseded_at_lsn == 9));
+    assert_eq!(registry.owner_of(&generation_one), Some(&logical));
+    assert_eq!(registry.owner_of(&generation_two), Some(&logical));
+
+    let retired = registry.clone();
+    assert_eq!(
+        registry.reserve_candidate(&logical, external("pi", "machine-a", "runtime-c", 3),),
+        Err(LogicalTargetError::RetiredTarget)
+    );
+    assert_eq!(registry, retired);
+    assert_eq!(
+        registry.assign_initial_current(&logical, external("pi", "machine-a", "runtime-c", 3),),
+        Err(LogicalTargetError::RetiredTarget)
+    );
+    assert_eq!(registry, retired);
+
+    let restored = LogicalTargetRegistry::from_checkpoint(
+        domain("authority-main"),
+        9,
+        registry.checkpoint_records(),
+    )
+    .unwrap();
+    assert_eq!(restored, registry);
+    assert_eq!(restored.owner_of(&generation_two), Some(&logical));
+}
+
+#[test]
 fn illegal_slot_transitions_are_rejected_without_mutation() {
     let logical = target("target-a");
     let generation_one = external("pi", "machine-a", "runtime-a", 1);
@@ -279,7 +330,7 @@ fn illegal_slot_transitions_are_rejected_without_mutation() {
     let before = retired.clone();
     assert_eq!(
         retired.assign_initial_current(&logical, generation_two.clone()),
-        Err(LogicalTargetError::RuntimeRefMismatch)
+        Err(LogicalTargetError::RetiredTarget)
     );
     assert_eq!(retired, before);
     assert_eq!(
@@ -427,6 +478,32 @@ async fn hot_fold_restart_replay_and_duplicate_rejection_are_identical() {
             LogicalTargetError::DuplicateNativeReference { .. }
         ))
     ));
+}
+
+#[test]
+fn legacy_checkpoint_shape_preserves_permanent_target_retirement() {
+    let authority = domain("authority-main");
+    let logical = target("target-a");
+    let generation_one = external("pi", "machine-a", "runtime-a", 1);
+    let mut original = LogicalTargetRegistry::new(authority.clone()).unwrap();
+    original
+        .create(logical.clone(), adapter("pi"), "machine-a".to_owned())
+        .unwrap();
+    original
+        .assign_initial_current(&logical, generation_one.clone())
+        .unwrap();
+    original
+        .tombstone_current(&current(&logical, &generation_one), 7)
+        .unwrap();
+    let mut legacy = original.checkpoint_records();
+    legacy[0].retired_at_lsn = None;
+
+    let mut recovered = LogicalTargetRegistry::from_checkpoint(authority, 7, legacy).unwrap();
+    assert_eq!(recovered.get(&logical).unwrap().retired_at_lsn, Some(7));
+    assert_eq!(
+        recovered.reserve_candidate(&logical, external("pi", "machine-a", "runtime-b", 2),),
+        Err(LogicalTargetError::RetiredTarget)
+    );
 }
 
 #[test]

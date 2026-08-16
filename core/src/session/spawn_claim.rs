@@ -1208,19 +1208,90 @@ fn validate_transition_evidence(
         (
             SpawnClaimDisposition::TargetAbandoned,
             Some(spawn_claim_disposition_changed::Evidence::TargetAbandonment(abandonment)),
-        ) => validate_referenced_event(
-            events,
-            domain,
-            record.accepted_lsn,
-            abandonment.abandonment_event_id.as_ref(),
-            event_lsn,
-            "target-abandonment evidence",
-        )
-        .map(|_| ()),
+        ) => validate_target_abandonment_decision(domain, record, abandonment, event_lsn),
         _ => Err(corrupt_log(
             "claim disposition is not paired with its exact closed-vocabulary evidence",
         )),
     }
+}
+
+fn validate_target_abandonment_decision(
+    domain: &AuthorityDomainId,
+    record: &SpawnClaimRecord,
+    abandonment: &patchbay_contracts::patchbay::SpawnClaimAbandonmentEvidence,
+    event_lsn: u64,
+) -> Result<(), SpawnClaimError> {
+    let expected_event_id = EventId {
+        authority_domain_id: Some(domain.clone()),
+        lsn: Some(Lsn { value: event_lsn }),
+    };
+    if abandonment.abandonment_event_id.as_ref() != Some(&expected_event_id) {
+        return Err(corrupt_log(
+            "target abandonment must self-identify the containing decision event",
+        ));
+    }
+    if abandonment.logical_target_id.as_ref() != record.claim.logical_target_id.as_ref() {
+        return Err(corrupt_log(
+            "target abandonment does not match the claim logical target",
+        ));
+    }
+    if abandonment
+        .authorizing_grant_id
+        .as_ref()
+        .is_none_or(|grant_id| grant_id.value.is_empty())
+        || OperationKind::try_from(abandonment.abandonment_authority_kind).ok()
+            != Some(OperationKind::SessionManagement)
+    {
+        return Err(corrupt_record(
+            "target abandonment has invalid session-management Grant provenance",
+        ));
+    }
+    let abandoned_by = abandonment.abandoned_by.as_ref().ok_or_else(|| {
+        corrupt_record("target abandonment is missing authenticated operator attribution")
+    })?;
+    if abandoned_by
+        .actor_id
+        .as_ref()
+        .is_none_or(|actor| actor.value.is_empty())
+        || abandoned_by
+            .endpoint_id
+            .as_ref()
+            .is_none_or(|endpoint| endpoint.value.is_empty())
+        || abandoned_by
+            .device_id
+            .as_ref()
+            .is_none_or(|device| device.value.is_empty())
+        || abandoned_by
+            .endpoint_generation
+            .is_none_or(|generation| generation.value == 0)
+    {
+        return Err(corrupt_record(
+            "target abandonment has incomplete authenticated operator attribution",
+        ));
+    }
+    if abandonment.reason_code.is_empty()
+        || abandonment.reason_code.len() > 64
+        || !abandonment
+            .reason_code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    {
+        return Err(corrupt_record(
+            "target abandonment reason_code must match [a-z0-9_]{1,64}",
+        ));
+    }
+    let abandoned_at = abandonment
+        .abandoned_at
+        .as_ref()
+        .ok_or_else(|| corrupt_record("target abandonment is missing its sampled decision time"))?;
+    if !(-62_135_596_800..=253_402_300_799).contains(&abandoned_at.seconds)
+        || !(0..1_000_000_000).contains(&abandoned_at.nanos)
+    {
+        return Err(corrupt_record(
+            "target abandonment has an invalid sampled decision time",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_embedded_promotion_history(

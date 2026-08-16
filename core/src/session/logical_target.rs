@@ -50,6 +50,9 @@ pub struct LogicalTargetRecord {
     pub current: Option<RuntimeGenerationRef>,
     pub reserved_candidate: Option<ExternalRuntimeRef>,
     pub tombstones: BTreeMap<ExternalRuntimeKey, LogicalTargetTombstone>,
+    /// Permanent logical-target retirement. Runtime identities remain owned by
+    /// this target through tombstones, but no current/candidate slot may revive.
+    pub retired_at_lsn: Option<u64>,
 }
 
 /// Reconciled production adapter for the consumer-owned generation-fence port.
@@ -255,6 +258,7 @@ impl LogicalTargetRegistry {
                 current: None,
                 reserved_candidate: None,
                 tombstones: BTreeMap::new(),
+                retired_at_lsn: None,
             },
         );
         Ok(())
@@ -268,6 +272,9 @@ impl LogicalTargetRegistry {
     ) -> Result<(), LogicalTargetError> {
         self.validate_external_for_target(logical_target_id, &external)?;
         let record = self.require_record(logical_target_id)?;
+        if record.retired_at_lsn.is_some() {
+            return Err(LogicalTargetError::RetiredTarget);
+        }
         if record.current.is_some() {
             return Err(LogicalTargetError::CurrentAlreadyAssigned);
         }
@@ -292,7 +299,7 @@ impl LogicalTargetRegistry {
         if record.reserved_candidate.is_some() {
             return Err(LogicalTargetError::CandidateAlreadyReserved);
         }
-        if record.current.is_none() && !record.tombstones.is_empty() {
+        if record.retired_at_lsn.is_some() {
             return Err(LogicalTargetError::RetiredTarget);
         }
         if record
@@ -345,6 +352,9 @@ impl LogicalTargetRegistry {
         }
         self.validate_external_for_target(logical_target_id, candidate)?;
         let record = self.require_record(logical_target_id)?;
+        if record.retired_at_lsn.is_some() {
+            return Err(LogicalTargetError::RetiredTarget);
+        }
         if record.reserved_candidate.as_ref() != Some(candidate) {
             return Err(LogicalTargetError::ReservedCandidateMismatch);
         }
@@ -415,6 +425,53 @@ impl LogicalTargetRegistry {
                 superseded_at_lsn: event_lsn,
             },
         );
+        record.retired_at_lsn = Some(event_lsn);
+        Ok(())
+    }
+
+    /// Permanently retire a logical target in one decision. Both the exact
+    /// current runtime and any staged candidate become audit-only tombstones;
+    /// reverse ownership is deliberately retained to fence late evidence and
+    /// prevent either identity from acquiring a second logical owner.
+    pub fn abandon(
+        &mut self,
+        logical_target_id: &LogicalTargetId,
+        event_lsn: u64,
+    ) -> Result<(), LogicalTargetError> {
+        if event_lsn == 0 {
+            return Err(LogicalTargetError::NonPositiveTombstoneLsn);
+        }
+        let record = self.require_record(logical_target_id)?;
+        if record.retired_at_lsn.is_some() {
+            return Err(LogicalTargetError::RetiredTarget);
+        }
+        let current = record
+            .current
+            .as_ref()
+            .and_then(|runtime| runtime.external_runtime.clone());
+        let candidate = record.reserved_candidate.clone();
+        let mut tombstones = Vec::new();
+        for external in current.into_iter().chain(candidate) {
+            let key = self.external_key(&external)?;
+            if record.tombstones.contains_key(&key) {
+                return Err(LogicalTargetError::RuntimeRefMismatch);
+            }
+            tombstones.push((key, external));
+        }
+
+        let record = self.require_record_mut(logical_target_id)?;
+        record.current = None;
+        record.reserved_candidate = None;
+        record.retired_at_lsn = Some(event_lsn);
+        for (key, external) in tombstones {
+            record.tombstones.insert(
+                key,
+                LogicalTargetTombstone {
+                    external_runtime_ref: external,
+                    superseded_at_lsn: event_lsn,
+                },
+            );
+        }
         Ok(())
     }
 
@@ -445,6 +502,7 @@ impl LogicalTargetRegistry {
                         }),
                     })
                     .collect(),
+                retired_at_lsn: record.retired_at_lsn.map(|value| Lsn { value }),
             })
             .collect()
     }
@@ -471,6 +529,7 @@ impl LogicalTargetRegistry {
             current: wire.current,
             reserved_candidate: wire.reserved_candidate,
             tombstones: BTreeMap::new(),
+            retired_at_lsn: wire.retired_at_lsn.map(|lsn| lsn.value),
         };
         if let Some(current) = record.current.as_ref() {
             validate_runtime_generation_ref(&logical_target_id, current)?;
@@ -525,6 +584,20 @@ impl LogicalTargetRegistry {
                 return Err(corrupt("duplicate tombstone external runtime"));
             }
         }
+        // Checkpoints written before `retired_at_lsn` existed encoded a
+        // permanently retired target as empty live slots plus retained
+        // tombstone ownership. Preserve that durable meaning on upgrade.
+        if record.retired_at_lsn.is_none()
+            && record.current.is_none()
+            && record.reserved_candidate.is_none()
+            && !record.tombstones.is_empty()
+        {
+            record.retired_at_lsn = record
+                .tombstones
+                .values()
+                .map(|tombstone| tombstone.superseded_at_lsn)
+                .max();
+        }
         let mut lineage: Vec<_> = record
             .tombstones
             .values()
@@ -540,12 +613,13 @@ impl LogicalTargetRegistry {
             })
             .collect();
         lineage.sort_unstable();
-        if lineage
-            .windows(2)
-            .any(|pair| pair[0].0 == pair[1].0 || pair[0].1 >= pair[1].1)
-        {
+        if lineage.windows(2).any(|pair| {
+            pair[0].0 == pair[1].0
+                || pair[0].1 > pair[1].1
+                || (pair[0].1 == pair[1].1 && record.retired_at_lsn != Some(pair[0].1))
+        }) {
             return Err(corrupt(
-                "tombstone lineage has duplicate generations or non-increasing promotion LSNs",
+                "tombstone lineage has duplicate generations or invalid decision LSN ordering",
             ));
         }
         if let Some(current_generation) = record
@@ -563,11 +637,24 @@ impl LogicalTargetRegistry {
                 ));
             }
         }
-        if record.current.is_none()
-            && record.reserved_candidate.is_some()
-            && !record.tombstones.is_empty()
-        {
-            return Err(corrupt("retired target retains a reserved candidate"));
+        if let Some(retired_at_lsn) = record.retired_at_lsn {
+            if retired_at_lsn == 0 || retired_at_lsn > checkpoint_lsn {
+                return Err(corrupt(
+                    "retired target LSN is outside the checkpoint prefix",
+                ));
+            }
+            if record.current.is_some() || record.reserved_candidate.is_some() {
+                return Err(corrupt(
+                    "retired target retains a current or candidate slot",
+                ));
+            }
+            if record
+                .tombstones
+                .values()
+                .any(|tombstone| tombstone.superseded_at_lsn > retired_at_lsn)
+            {
+                return Err(corrupt("retired target precedes one of its tombstones"));
+            }
         }
         Ok(record)
     }

@@ -5,6 +5,7 @@ import {
   FreshSpawnSchema,
   PayloadContentType,
   PayloadEnvelopeSchema,
+  SpawnClaimDisposition,
   SpawnContinuationSchema,
   SpawnRequestSchema,
   SpawnTargetSpecSchema,
@@ -55,6 +56,18 @@ export function continuationContextStatusName(status: ContinuationContextStatus)
       throw new Error("continuation context status is unspecified");
     default:
       throw new Error(`continuation context status is unknown: ${status}`);
+  }
+}
+
+export function spawnClaimDispositionName(disposition: SpawnClaimDisposition): string {
+  switch (disposition) {
+    case SpawnClaimDisposition.ACTIVE: return "active";
+    case SpawnClaimDisposition.RELEASED_NO_EXTERNAL_EFFECT: return "released_no_external_effect";
+    case SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION: return "poisoned_pending_reconciliation";
+    case SpawnClaimDisposition.PROMOTED: return "promoted";
+    case SpawnClaimDisposition.TARGET_ABANDONED: return "target_abandoned";
+    case SpawnClaimDisposition.UNSPECIFIED:
+    default: throw new Error(`unsupported spawn claim disposition ${disposition}`);
   }
 }
 

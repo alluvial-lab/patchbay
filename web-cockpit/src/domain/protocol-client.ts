@@ -64,6 +64,7 @@ export function csrfInterceptor(readToken: () => string | undefined): Intercepto
     // be sent and the web-server's CSRF guard rejects with 403.
     if (
       request.method.name === "Submit"
+      || request.method.name === "AbandonSpawnTarget"
       || request.method.name === "QueryDiagnostics"
       || request.method.name === "EnterSecurityLockdown"
       || request.method.name === "RevokeOperatorSession"

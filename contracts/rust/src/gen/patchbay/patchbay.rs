@@ -2050,10 +2050,26 @@ pub struct SpawnClaimPromotionEvidence {
     #[prost(message, optional, tag="2")]
     pub promoted_runtime: ::core::option::Option<RuntimeGenerationRef>,
 }
+/// Authenticated operator decision carried by the target-abandonment claim
+/// transition. Storage stamps abandonment_event_id to the containing event;
+/// the remaining fields are derived from one grant-checked control decision.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SpawnClaimAbandonmentEvidence {
     #[prost(message, optional, tag="1")]
     pub abandonment_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag="2")]
+    pub logical_target_id: ::core::option::Option<LogicalTargetId>,
+    #[prost(message, optional, tag="3")]
+    pub authorizing_grant_id: ::core::option::Option<GrantId>,
+    /// must be session-management
+    #[prost(enumeration="OperationKind", tag="4")]
+    pub abandonment_authority_kind: i32,
+    #[prost(message, optional, tag="5")]
+    pub abandoned_by: ::core::option::Option<ActorEndpointRef>,
+    #[prost(string, tag="6")]
+    pub reason_code: ::prost::alloc::string::String,
+    #[prost(message, optional, tag="7")]
+    pub abandoned_at: ::core::option::Option<::prost_types::Timestamp>,
 }
 /// One durable accepted spawn/continuation decision. The continuation's claim,
 /// compound authority, exact-N fence, and complete already-accepted-work
@@ -2160,6 +2176,10 @@ pub struct LogicalTargetProjectionRecord {
     pub reserved_candidate: ::core::option::Option<ExternalRuntimeRef>,
     #[prost(message, repeated, tag="6")]
     pub tombstones: ::prost::alloc::vec::Vec<LogicalTargetTombstone>,
+    /// Permanent target retirement. Current and candidate slots must both be
+    /// empty; their exact runtime identities remain as audit-only tombstones.
+    #[prost(message, optional, tag="7")]
+    pub retired_at_lsn: ::core::option::Option<Lsn>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LogicalTargetTombstone {
@@ -3832,6 +3852,7 @@ pub enum AuditEventKind {
     ControlSurfacePrincipalRevoked = 41,
     ControlSurfaceEndpointRevoked = 42,
     ControlSurfaceDeviceRevoked = 43,
+    SpawnTargetAbandoned = 44,
 }
 impl AuditEventKind {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -3884,6 +3905,7 @@ impl AuditEventKind {
             Self::ControlSurfacePrincipalRevoked => "AUDIT_EVENT_KIND_CONTROL_SURFACE_PRINCIPAL_REVOKED",
             Self::ControlSurfaceEndpointRevoked => "AUDIT_EVENT_KIND_CONTROL_SURFACE_ENDPOINT_REVOKED",
             Self::ControlSurfaceDeviceRevoked => "AUDIT_EVENT_KIND_CONTROL_SURFACE_DEVICE_REVOKED",
+            Self::SpawnTargetAbandoned => "AUDIT_EVENT_KIND_SPAWN_TARGET_ABANDONED",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -3933,6 +3955,7 @@ impl AuditEventKind {
             "AUDIT_EVENT_KIND_CONTROL_SURFACE_PRINCIPAL_REVOKED" => Some(Self::ControlSurfacePrincipalRevoked),
             "AUDIT_EVENT_KIND_CONTROL_SURFACE_ENDPOINT_REVOKED" => Some(Self::ControlSurfaceEndpointRevoked),
             "AUDIT_EVENT_KIND_CONTROL_SURFACE_DEVICE_REVOKED" => Some(Self::ControlSurfaceDeviceRevoked),
+            "AUDIT_EVENT_KIND_SPAWN_TARGET_ABANDONED" => Some(Self::SpawnTargetAbandoned),
             _ => None,
         }
     }
@@ -4139,6 +4162,34 @@ pub struct RevokeGrantResult {
     pub applied_policy: i32,
     #[prost(message, repeated, tag="5")]
     pub command_effects: ::prost::alloc::vec::Vec<GrantRevocationEffect>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AbandonSpawnTargetRequest {
+    #[prost(message, optional, tag="1")]
+    pub authority_domain_id: ::core::option::Option<AuthorityDomainId>,
+    #[prost(message, optional, tag="2")]
+    pub claim_operation_id: ::core::option::Option<CommandId>,
+    #[prost(message, optional, tag="3")]
+    pub logical_target_id: ::core::option::Option<LogicalTargetId>,
+    #[prost(string, tag="4")]
+    pub reason_code: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct AbandonSpawnTargetResult {
+    #[prost(bool, tag="1")]
+    pub changed: bool,
+    #[prost(bool, tag="2")]
+    pub already_abandoned: bool,
+    #[prost(message, optional, tag="3")]
+    pub abandonment_event_id: ::core::option::Option<EventId>,
+    #[prost(message, optional, tag="4")]
+    pub audit_event_id: ::core::option::Option<EventId>,
+    #[prost(enumeration="SpawnClaimDisposition", tag="5")]
+    pub disposition: i32,
+    #[prost(message, optional, tag="6")]
+    pub authorizing_grant_id: ::core::option::Option<GrantId>,
+    #[prost(message, optional, tag="7")]
+    pub logical_target_id: ::core::option::Option<LogicalTargetId>,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EnterSecurityLockdownRequest {

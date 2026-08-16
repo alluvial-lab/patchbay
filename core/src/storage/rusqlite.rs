@@ -34,11 +34,12 @@ use patchbay_contracts::patchbay::{
     spawn_claim_event, typed_correlation, AuditEventKind, AuditPage, AuditRecord,
     AuthorityDomainId, CommandId, CommandTransition, DescendantGrant, EventId,
     ExternalEffectDisposition, FailureCode, Generation, Grant, IdempotencyKey,
-    LogicalTargetCandidateReleased, Lsn, Observation, ObservationKind, OperationKind,
-    OperationState, QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason,
-    RuntimeEvidenceSourceAttachment, SessionReport, SessionStateEvent, SpawnClaimAccepted,
-    SpawnClaimAmbiguityEvidence, SpawnClaimDisposition, SpawnClaimDispositionChanged,
-    SpawnClaimEvent, SpawnClaimNoEffectRelease, SpawnExecutionEvidence, SpawnExecutionPhase,
+    LogicalTargetCandidateReleased, LogicalTargetId, Lsn, Observation, ObservationKind,
+    OperationKind, OperationState, QuarantinedRuntimeEvidence, RuntimeEvidenceQuarantineReason,
+    RuntimeEvidenceSourceAttachment, SessionReport, SessionStateEvent,
+    SpawnClaimAbandonmentEvidence, SpawnClaimAccepted, SpawnClaimAmbiguityEvidence,
+    SpawnClaimDisposition, SpawnClaimDispositionChanged, SpawnClaimEvent,
+    SpawnClaimNoEffectRelease, SpawnExecutionEvidence, SpawnExecutionPhase,
     SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
@@ -50,8 +51,8 @@ use super::port::{
     AuditedBatchAppend, AuditedDecisionAppend, AuditedDedupOutcome, CoreGenerationStore,
     DedupOutcome, GrantAppendOutcome, GrantIdentityKey, ObservationTransitionAppend,
     ObservationWriteRoute, RecordedEvent, SpawnClaimAppend, SpawnClaimDedupOutcome,
-    SpawnExecutionEvidenceAppend, SpawnPromotionAppend, Storage, StorageError, StoredSnapshot,
-    TargetKey,
+    SpawnExecutionEvidenceAppend, SpawnPromotionAppend, SpawnTargetAbandonmentAppend, Storage,
+    StorageError, StoredSnapshot, TargetKey,
 };
 
 pub const LATEST_SCHEMA_VERSION: u32 = 6;
@@ -1246,6 +1247,14 @@ enum WriterCommand {
         evidence: Box<SpawnExecutionEvidence>,
         reply: oneshot::Sender<Result<SpawnExecutionEvidenceAppend, StorageError>>,
     },
+    AppendSpawnTargetAbandonmentAudited {
+        authority_domain_id: String,
+        claim_operation_id: CommandId,
+        logical_target_id: LogicalTargetId,
+        evidence: Box<SpawnClaimAbandonmentEvidence>,
+        audit: AuditRecordDraft,
+        reply: oneshot::Sender<Result<SpawnTargetAbandonmentAppend, StorageError>>,
+    },
     AppendSpawnPromotionAudited {
         authority_domain_id: String,
         promotion: Box<SpawnPromotionCommitted>,
@@ -1548,6 +1557,24 @@ async fn writer_actor(
                     &mut db,
                     &authority_domain_id,
                     *evidence,
+                );
+                let _ = reply.send(result);
+            }
+            WriterCommand::AppendSpawnTargetAbandonmentAudited {
+                authority_domain_id,
+                claim_operation_id,
+                logical_target_id,
+                evidence,
+                audit,
+                reply,
+            } => {
+                let result = do_append_spawn_target_abandonment_audited(
+                    &mut db,
+                    &authority_domain_id,
+                    claim_operation_id,
+                    logical_target_id,
+                    *evidence,
+                    audit,
                 );
                 let _ = reply.send(result);
             }
@@ -3631,6 +3658,307 @@ fn map_spawn_execution_evidence_error(
     }
 }
 
+fn do_append_spawn_target_abandonment_audited(
+    db: &mut Connection,
+    authority_domain_id: &str,
+    claim_operation_id: CommandId,
+    logical_target_id: LogicalTargetId,
+    mut evidence: SpawnClaimAbandonmentEvidence,
+    mut audit: AuditRecordDraft,
+) -> Result<SpawnTargetAbandonmentAppend, StorageError> {
+    let conflict = |reason: &str| StorageError::SpawnTargetAbandonmentConflict {
+        command_id: claim_operation_id.value.clone(),
+        reason: reason.to_owned(),
+    };
+    let domain = AuthorityDomainId {
+        value: authority_domain_id.to_owned(),
+    };
+    if authority_domain_id.is_empty()
+        || claim_operation_id.value.is_empty()
+        || logical_target_id.value.is_empty()
+        || evidence.abandonment_event_id.is_some()
+        || evidence.logical_target_id.as_ref() != Some(&logical_target_id)
+    {
+        return Err(conflict("malformed abandonment identity"));
+    }
+    let abandoned_by = evidence
+        .abandoned_by
+        .as_ref()
+        .ok_or_else(|| conflict("missing authenticated operator attribution"))?;
+    if evidence
+        .authorizing_grant_id
+        .as_ref()
+        .is_none_or(|grant_id| grant_id.value.is_empty())
+        || OperationKind::try_from(evidence.abandonment_authority_kind).ok()
+            != Some(OperationKind::SessionManagement)
+        || evidence.abandoned_at.is_none()
+        || audit.kind != AuditEventKind::SpawnTargetAbandoned
+        || audit.actor_id != abandoned_by.actor_id
+        || audit.endpoint_id != abandoned_by.endpoint_id
+        || audit.device_id != abandoned_by.device_id
+        || audit.command_id.as_ref() != Some(&claim_operation_id)
+        || audit.grant_id != evidence.authorizing_grant_id
+        || audit.reason_code != evidence.reason_code
+        || audit.occurred_at != *evidence.abandoned_at.as_ref().expect("checked above")
+        || audit.source_event_id.is_some()
+    {
+        return Err(StorageError::InvalidAuditRecord(
+            "spawn target abandonment requires canonical authenticated audit framing".to_owned(),
+        ));
+    }
+    audit.validate(&domain)?;
+
+    let tx = db.transaction().map_err(map_write_err)?;
+    let events = recorded_events_in_transaction(&tx, authority_domain_id)?;
+    let (_, mut claims, previous_lsn) = replay_spawn_acceptance_prestate(&events, &domain)?;
+    let mut sessions = crate::session::SessionRegistry::new(domain.clone())
+        .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+    let mut session_cursor = 0;
+    for event in &events {
+        let validated = crate::storage::validate_next_replay_event(&domain, session_cursor, event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        sessions
+            .observe(event)
+            .map_err(|error| StorageError::CorruptRecord(error.to_string()))?;
+        session_cursor = validated.lsn;
+    }
+
+    let record = crate::session::SpawnClaimQuery::claim_for_operation(&claims, &claim_operation_id)
+        .cloned()
+        .ok_or_else(|| conflict("unknown claim"))?;
+    if record.claim.logical_target_id.as_ref() != Some(&logical_target_id) {
+        return Err(conflict("logical target does not match the durable claim"));
+    }
+    let expected_audit_scope = if let Some(prior) = record.claim.expected_prior.as_ref() {
+        let external = prior
+            .external_runtime
+            .as_ref()
+            .ok_or_else(|| conflict("claim has malformed prior runtime scope"))?;
+        patchbay_contracts::patchbay::TargetScope {
+            kind: patchbay_contracts::patchbay::TargetScopeKind::RuntimeSession as i32,
+            adapter_id: external.adapter_id.clone(),
+            deployment_scope: external.deployment_scope.clone(),
+            runtime_session_id: external.runtime_session_id.clone(),
+            session_generation: external.generation,
+            ..patchbay_contracts::patchbay::TargetScope::default()
+        }
+    } else {
+        patchbay_contracts::patchbay::TargetScope {
+            kind: patchbay_contracts::patchbay::TargetScopeKind::Adapter as i32,
+            adapter_id: Some(record.adapter_id.clone()),
+            ..patchbay_contracts::patchbay::TargetScope::default()
+        }
+    };
+    if audit.target_scope.as_ref() != Some(&expected_audit_scope) {
+        return Err(StorageError::InvalidAuditRecord(
+            "spawn target abandonment audit scope does not match the exact durable claim"
+                .to_owned(),
+        ));
+    }
+
+    if record.disposition == SpawnClaimDisposition::TargetAbandoned {
+        let mut matching = None;
+        for event in &events {
+            if event.payload.kind != StoredEventKind::SpawnClaim as i32 {
+                continue;
+            }
+            let envelope =
+                SpawnClaimEvent::decode(event.payload.payload.as_slice()).map_err(|error| {
+                    StorageError::CorruptRecord(format!(
+                        "cannot decode prior target abandonment: {error}"
+                    ))
+                })?;
+            let Some(spawn_claim_event::Mutation::DispositionChanged(change)) = envelope.mutation
+            else {
+                continue;
+            };
+            if change.claim_operation_id.as_ref() != Some(&claim_operation_id)
+                || SpawnClaimDisposition::try_from(change.to_disposition).ok()
+                    != Some(SpawnClaimDisposition::TargetAbandoned)
+            {
+                continue;
+            }
+            let Some(spawn_claim_disposition_changed::Evidence::TargetAbandonment(existing)) =
+                change.evidence.as_ref()
+            else {
+                return Err(StorageError::CorruptRecord(
+                    "durable target abandonment has no typed evidence".to_owned(),
+                ));
+            };
+            let existing = existing.clone();
+            let same_request = existing.logical_target_id == evidence.logical_target_id
+                && existing.abandoned_by == evidence.abandoned_by
+                && existing.reason_code == evidence.reason_code
+                && existing.abandonment_authority_kind == evidence.abandonment_authority_kind;
+            if !same_request || matching.is_some() {
+                return Err(conflict("prior abandonment is not an exact resubmission"));
+            }
+            matching = Some((event.event_id.clone(), change, existing));
+        }
+        let (source_event_id, change, existing) = matching.ok_or_else(|| {
+            StorageError::CorruptRecord(
+                "target-abandoned claim has no durable abandonment decision".to_owned(),
+            )
+        })?;
+        let source_lsn = source_event_id
+            .lsn
+            .as_ref()
+            .ok_or_else(|| {
+                StorageError::CorruptRecord("durable target abandonment has no LSN".to_owned())
+            })?
+            .value;
+        let audit_event = events.iter().find(|event| {
+            event.event_id.lsn.as_ref().map(|lsn| lsn.value) == source_lsn.checked_add(1)
+                && event.payload.kind == StoredEventKind::AuditRecord as i32
+        });
+        let audit_event = audit_event.ok_or_else(|| {
+            StorageError::CorruptRecord("target abandonment has no immediate audit".to_owned())
+        })?;
+        let durable_audit =
+            AuditRecord::decode(audit_event.payload.payload.as_slice()).map_err(|error| {
+                StorageError::CorruptRecord(format!(
+                    "cannot decode target-abandonment audit: {error}"
+                ))
+            })?;
+        if durable_audit.source_event_id.as_ref() != Some(&source_event_id)
+            || AuditEventKind::try_from(durable_audit.kind).ok()
+                != Some(AuditEventKind::SpawnTargetAbandoned)
+            || durable_audit.actor_id
+                != existing
+                    .abandoned_by
+                    .as_ref()
+                    .and_then(|by| by.actor_id.clone())
+            || durable_audit.endpoint_id
+                != existing
+                    .abandoned_by
+                    .as_ref()
+                    .and_then(|by| by.endpoint_id.clone())
+            || durable_audit.device_id
+                != existing
+                    .abandoned_by
+                    .as_ref()
+                    .and_then(|by| by.device_id.clone())
+            || durable_audit.command_id.as_ref() != Some(&claim_operation_id)
+            || durable_audit.grant_id != existing.authorizing_grant_id
+            || durable_audit.reason_code != existing.reason_code
+            || durable_audit.occurred_at != existing.abandoned_at
+        {
+            return Err(StorageError::CorruptRecord(
+                "target-abandonment audit disagrees with its decision".to_owned(),
+            ));
+        }
+        return Ok(SpawnTargetAbandonmentAppend {
+            source_event_id,
+            audit_event_id: audit_event.event_id.clone(),
+            change,
+            deduplicated: true,
+        });
+    }
+    if !matches!(
+        record.disposition,
+        SpawnClaimDisposition::Active | SpawnClaimDisposition::PoisonedPendingReconciliation
+    ) {
+        return Err(conflict("claim is not active or poisoned"));
+    }
+    let target = sessions
+        .logical_targets()
+        .get(&logical_target_id)
+        .ok_or_else(|| conflict("logical target does not exist"))?;
+    if target.retired_at_lsn.is_some() {
+        return Err(conflict("logical target is already retired"));
+    }
+    if target.current.as_ref() != record.claim.expected_prior.as_ref() {
+        return Err(conflict(
+            "logical-target current does not match the claim prior",
+        ));
+    }
+    if let Some(candidate) = target.reserved_candidate.as_ref() {
+        let expected_generation = record
+            .claim
+            .claimed_generation
+            .as_ref()
+            .map(|generation| generation.value);
+        if candidate.adapter_id.as_ref() != Some(&record.adapter_id)
+            || candidate.deployment_scope != target.deployment_scope
+            || candidate
+                .generation
+                .as_ref()
+                .map(|generation| generation.value)
+                != expected_generation
+        {
+            return Err(conflict(
+                "reserved candidate does not match the durable claim",
+            ));
+        }
+    }
+    let claimed_generation = record
+        .claim
+        .claimed_generation
+        .as_ref()
+        .map(|generation| generation.value)
+        .ok_or_else(|| conflict("claim has no generation"))?;
+    if claims.records().any(|other| {
+        other.claim.claim_operation_id.as_ref() != Some(&claim_operation_id)
+            && other.claim.logical_target_id.as_ref() == Some(&logical_target_id)
+            && matches!(
+                other.disposition,
+                SpawnClaimDisposition::Active
+                    | SpawnClaimDisposition::PoisonedPendingReconciliation
+            )
+            && other
+                .claim
+                .claimed_generation
+                .as_ref()
+                .is_some_and(|generation| generation.value > claimed_generation)
+    }) {
+        return Err(conflict("a live successor claim already exists"));
+    }
+
+    let source_lsn = previous_lsn.checked_add(1).ok_or_else(|| {
+        StorageError::CorruptRecord("spawn target abandonment LSN overflow".to_owned())
+    })?;
+    let source_event_id = event_id(domain.clone(), source_lsn);
+    evidence.abandonment_event_id = Some(source_event_id.clone());
+    let change = SpawnClaimDispositionChanged {
+        claim_operation_id: Some(claim_operation_id.clone()),
+        from_disposition: record.disposition as i32,
+        to_disposition: SpawnClaimDisposition::TargetAbandoned as i32,
+        evidence: Some(spawn_claim_disposition_changed::Evidence::TargetAbandonment(evidence)),
+    };
+    let source = crate::session::encode_spawn_claim_event(&SpawnClaimEvent {
+        authority_domain_id: Some(domain.clone()),
+        mutation: Some(spawn_claim_event::Mutation::DispositionChanged(
+            change.clone(),
+        )),
+    });
+    let candidate = RecordedEvent {
+        event_id: source_event_id.clone(),
+        payload: source.clone(),
+    };
+    claims
+        .observe(&candidate)
+        .map_err(|error| conflict(&format!("claim pre-state validation failed: {error}")))?;
+    sessions
+        .observe(&candidate)
+        .map_err(|error| conflict(&format!("target pre-state validation failed: {error}")))?;
+
+    let (actual_source_lsn, _) = insert_event(&tx, authority_domain_id, &source)?;
+    if actual_source_lsn as u64 != source_lsn {
+        return Err(StorageError::CorruptRecord(format!(
+            "SQLite assigned abandonment LSN {actual_source_lsn}, expected {source_lsn}"
+        )));
+    }
+    audit.source_event_id = Some(source_event_id.clone());
+    let audit_event_id = append_audit_in_transaction(&tx, authority_domain_id, audit)?;
+    tx.commit().map_err(map_write_err)?;
+    Ok(SpawnTargetAbandonmentAppend {
+        source_event_id,
+        audit_event_id,
+        change,
+        deduplicated: false,
+    })
+}
+
 fn do_append_spawn_successor_staged_idempotent(
     db: &mut Connection,
     authority_domain_id: &str,
@@ -4956,6 +5284,31 @@ impl Storage for RusqliteStorage {
             .send(WriterCommand::AppendSpawnExecutionEvidenceReconciled {
                 authority_domain_id: authority_domain_id.value.clone(),
                 evidence: Box::new(evidence),
+                reply: reply_tx,
+            })
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor closed".to_owned()))?;
+        reply_rx
+            .await
+            .map_err(|_| StorageError::Unavailable("writer actor dropped reply".to_owned()))?
+    }
+
+    async fn append_spawn_target_abandonment_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        claim_operation_id: CommandId,
+        logical_target_id: LogicalTargetId,
+        evidence: SpawnClaimAbandonmentEvidence,
+        audit: AuditRecordDraft,
+    ) -> Result<SpawnTargetAbandonmentAppend, StorageError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.writer_tx
+            .send(WriterCommand::AppendSpawnTargetAbandonmentAudited {
+                authority_domain_id: authority_domain_id.value.clone(),
+                claim_operation_id,
+                logical_target_id,
+                evidence: Box::new(evidence),
+                audit,
                 reply: reply_tx,
             })
             .await

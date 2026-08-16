@@ -8,6 +8,7 @@ import "patchbay/common.proto";
 import "patchbay/diagnostics.proto";
 import "patchbay/operations.proto";
 import "patchbay/security.proto";
+import "patchbay/sessions.proto";
 
 // The internal control-plane service the TS web server speaks to the Rust
 // core over gRPC/HTTP2. Browser-facing surfaces are a subset reachable
@@ -27,6 +28,10 @@ service ControlService {
   // Self-scoped grant attenuation. The request never carries issuer identity;
   // the compound issuer is verified from transport metadata.
   rpc RevokeGrant(RevokeGrantRequest) returns (RevokeGrantResult);
+  // Last-resort operator recovery for one active or poisoned managed-spawn
+  // claim. The core derives authority and durable attribution from the
+  // authenticated issuer; the request selects only the exact claim/target.
+  rpc AbandonSpawnTarget(AbandonSpawnTargetRequest) returns (AbandonSpawnTargetResult);
   rpc EnterSecurityLockdown(EnterSecurityLockdownRequest) returns (EnterSecurityLockdownResult);
   rpc LoadSecuritySnapshot(LoadSecuritySnapshotRequest) returns (LoadSecuritySnapshotResponse);
   // An already verified compound issuer may enroll another endpoint.
@@ -130,6 +135,23 @@ message RevokeGrantResult {
   EventId revocation_event_id = 3;
   GrantRevocationPolicy applied_policy = 4;
   repeated GrantRevocationEffect command_effects = 5;
+}
+
+message AbandonSpawnTargetRequest {
+  AuthorityDomainId authority_domain_id = 1;
+  CommandId claim_operation_id = 2;
+  LogicalTargetId logical_target_id = 3;
+  string reason_code = 4;
+}
+
+message AbandonSpawnTargetResult {
+  bool changed = 1;
+  bool already_abandoned = 2;
+  EventId abandonment_event_id = 3;
+  EventId audit_event_id = 4;
+  SpawnClaimDisposition disposition = 5;
+  GrantId authorizing_grant_id = 6;
+  LogicalTargetId logical_target_id = 7;
 }
 
 message EnterSecurityLockdownRequest {

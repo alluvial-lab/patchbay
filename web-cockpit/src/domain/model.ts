@@ -138,6 +138,8 @@ export interface CommandView {
   lsn: bigint;
   failureCode?: FailureCode;
   race?: string;
+  /** Stable managed target selected by the durable spawn claim. */
+  spawnLogicalTargetId?: string;
   /** Durable spawn-claim lifecycle, independent from the command lifecycle and failure. */
   spawnClaimDisposition?: SpawnClaimDisposition;
   /** Adapter-reported continuation outcome, folded only from promotion evidence. */
@@ -763,10 +765,16 @@ function foldSpawnClaim(model: PresentationModel, event: SpawnClaimEvent, lsn: b
       if (!operation) throw new Error("accepted spawn claim is missing its Operation");
       foldOperation(model, operation, lsn);
       const commandId = required(operation.commandId?.value, "accepted spawn claim command id");
+      const claim = event.mutation.value.claim;
+      const logicalTargetId = required(claim?.logicalTargetId?.value, "accepted spawn claim logical target id");
       const command = model.commands.get(commandId)!;
       model.commands.set(commandId, {
         ...command,
+        spawnLogicalTargetId: logicalTargetId,
         spawnClaimDisposition: SpawnClaimDisposition.ACTIVE,
+        target: claim?.expectedPrior
+          ? { kind: "runtime-session", identity: identityFromRuntimeRef(claim.expectedPrior) }
+          : command.target,
       });
       return;
     }
@@ -783,6 +791,28 @@ function foldSpawnClaim(model: PresentationModel, event: SpawnClaimEvent, lsn: b
         // Claim poison/release is retry-risk evidence, not a CommandState or command failure.
         spawnClaimDisposition: change.toDisposition,
       });
+      if (change.toDisposition === SpawnClaimDisposition.TARGET_ABANDONED) {
+        const targetId = change.evidence.case === "targetAbandonment"
+          ? required(change.evidence.value.logicalTargetId?.value, "abandoned logical target id")
+          : undefined;
+        if (!targetId || (command.spawnLogicalTargetId && command.spawnLogicalTargetId !== targetId)) {
+          throw new Error("target-abandoned claim has mismatched typed evidence");
+        }
+        model.sessions = new Map(
+          [...model.sessions].map(([key, session]) => [key, session.logicalTargetId === targetId
+            ? {
+                ...session,
+                connectivity: SessionConnectivityState.STALE,
+                activity: SessionActivityState.UNKNOWN,
+                activityDetail: undefined,
+                activityDetailProvenance: undefined,
+                tombstoned: true,
+                needsYou: false,
+                lastLsn: lsn,
+              }
+            : session]),
+        );
+      }
       return;
     }
     case undefined:

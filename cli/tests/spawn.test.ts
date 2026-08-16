@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import {
+  AbandonSpawnTargetResultSchema,
   AdapterIdSchema,
   CommandIdSchema,
   ContinuationContextStatus,
@@ -17,6 +18,7 @@ import {
   OperationState,
   RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
+  SpawnClaimDisposition,
   SpawnPromotionCommittedSchema,
   SpawnPromotionStagedEvidenceSchema,
   SpawnRequestSchema,
@@ -28,7 +30,11 @@ import {
   SubscribeEventSchema,
   type Operation,
 } from "@patchbay/contracts";
-import { restartCommand, spawnCommand } from "../src/commands/spawn.js";
+import {
+  abandonSpawnTargetCommand,
+  restartCommand,
+  spawnCommand,
+} from "../src/commands/spawn.js";
 import type { ControlClient } from "../src/core-client.js";
 import { CredentialStore } from "../src/credentials.js";
 import { captureOutput, credentials, DOMAIN, snapshotResponse } from "./helpers.js";
@@ -47,6 +53,48 @@ function accepted(commandId: string) {
     operationState: OperationState.ACCEPTED,
   });
 }
+
+test("spawn target abandonment uses the typed RPC and canonical disposition presentation", async () => {
+  let request: Parameters<ControlClient["abandonSpawnTarget"]>[0] | undefined;
+  const output = captureOutput();
+  const exit = await abandonSpawnTargetCommand(
+    {
+      async abandonSpawnTarget(candidate) {
+        request = candidate;
+        return create(AbandonSpawnTargetResultSchema, {
+          changed: true,
+          disposition: SpawnClaimDisposition.TARGET_ABANDONED,
+          logicalTargetId: { value: "logical-primary" },
+          abandonmentEventId: { authorityDomainId: { value: DOMAIN }, lsn: { value: 9n } },
+          auditEventId: { authorityDomainId: { value: DOMAIN }, lsn: { value: 10n } },
+          authorizingGrantId: { value: "abandon-grant" },
+        });
+      },
+    },
+    await store(),
+    DOMAIN,
+    {
+      claimOperationId: "spawn-restart",
+      logicalTargetId: "logical-primary",
+      reasonCode: "operator_recovery",
+      json: true,
+    },
+    output,
+  );
+  assert.equal(exit, 0);
+  assert.equal(request?.claimOperationId?.value, "spawn-restart");
+  assert.equal(request?.logicalTargetId?.value, "logical-primary");
+  assert.deepEqual(JSON.parse(output.out[0]!), {
+    changed: true,
+    alreadyAbandoned: false,
+    disposition: "target_abandoned",
+    claimOperationId: "spawn-restart",
+    logicalTargetId: "logical-primary",
+    abandonmentEventLsn: "9",
+    auditEventLsn: "10",
+    authorizingGrantId: "abandon-grant",
+  });
+});
 
 test("spawn submits the shared fresh SpawnRequest to one explicit adapter", async () => {
   let submitted: Operation | undefined;

@@ -2,6 +2,8 @@ import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { timestampFromMs } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
+  AbandonSpawnTargetRequestSchema,
+  AbandonSpawnTargetResultSchema,
   ActorEndpointRefSchema,
   AuditEventKind,
   EnterSecurityLockdownRequestSchema,
@@ -72,6 +74,25 @@ export function registerRpcRoutes(
           headers: coreHeaders(app, request, coreSecret),
         });
         return sendUnary(reply, toBinary(SubmissionResultSchema, output));
+      } catch (error) {
+        return sendRpcError(app, request, reply, error);
+      }
+    },
+  );
+
+  app.post(
+    "/patchbay.ControlService/AbandonSpawnTarget",
+    { preHandler: requireOperatorSession(app.sessions, guardOptions) },
+    async (request, reply) => {
+      try {
+        const input = fromBinary(
+          AbandonSpawnTargetRequestSchema,
+          decodeRequestFrame(request.body),
+        );
+        const output = await app.coreClient.abandonSpawnTarget(input, {
+          headers: coreHeaders(app, request, coreSecret),
+        });
+        return sendUnary(reply, toBinary(AbandonSpawnTargetResultSchema, output));
       } catch (error) {
         return sendRpcError(app, request, reply, error);
       }

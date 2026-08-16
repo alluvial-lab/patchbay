@@ -2,6 +2,7 @@ import { create, toBinary } from "@bufbuild/protobuf";
 import { Code, ConnectError, createClient, type CallOptions } from "@connectrpc/connect";
 import { createGrpcWebTransport } from "@connectrpc/connect-web";
 import {
+  AbandonSpawnTargetResultSchema,
   ControlService,
   EnterSecurityLockdownRequestSchema,
   EnterSecurityLockdownResultSchema,
@@ -43,6 +44,7 @@ import { hashPassword, SessionStore } from "../src/sessions.js";
 interface CoreCall {
   method:
     | "submit"
+    | "abandonSpawnTarget"
     | "enterSecurityLockdown"
     | "loadSecuritySnapshot"
     | "queryDiagnostics"
@@ -388,6 +390,38 @@ test("browser_local_state_not_authority: Connect-Web Submit forwards and stamps 
   }
 });
 
+test("Connect-Web target abandonment is authenticated, CSRF-protected, and core-authoritative", async () => {
+  const fixture = makeFixture();
+  const session = fixture.sessions.create(operatorActorId, "core-issued-session");
+  const { client, close } = await listen(fixture);
+  try {
+    await client.abandonSpawnTarget(
+      {
+        authorityDomainId: { value: config.authorityDomainId },
+        claimOperationId: { value: "spawn-a" },
+        logicalTargetId: { value: "logical-a" },
+        reasonCode: "operator_recovery",
+      },
+      {
+        headers: {
+          cookie: `${SESSION_COOKIE_NAME}=${session.sessionId}`,
+          [CSRF_HEADER_NAME]: session.csrfSecret,
+        },
+      },
+    );
+    const call = fixture.calls.find((candidate) => candidate.method === "abandonSpawnTarget");
+    assert.ok(call);
+    assert.equal(call.headers.get("x-patchbay-operator-id"), operatorActorId);
+    assert.equal(call.headers.get("x-patchbay-operator-session-id"), "core-issued-session");
+    assert.equal(
+      (call.request as { authorityDomainId?: { value: string } }).authorityDomainId?.value,
+      config.authorityDomainId,
+    );
+  } finally {
+    await close();
+  }
+});
+
 test("Connect-Web QueryDiagnostics shares Submit stamping and CSRF", async () => {
   const fixture = makeFixture();
   const session = fixture.sessions.create(operatorActorId, "core-issued-session");
@@ -566,6 +600,10 @@ function makeFixture(options: { submitError?: unknown; revokeError?: unknown; re
       calls.push({ method: "submit", request, headers: callHeaders(callOptions) });
       if (options.submitError !== undefined) throw options.submitError;
       return create(SubmissionResultSchema, { outcome: SubmissionOutcome.ACCEPTED });
+    },
+    async abandonSpawnTarget(request, callOptions) {
+      calls.push({ method: "abandonSpawnTarget", request, headers: callHeaders(callOptions) });
+      return create(AbandonSpawnTargetResultSchema, {});
     },
     async enterSecurityLockdown(request, callOptions) {
       calls.push({ method: "enterSecurityLockdown", request, headers: callHeaders(callOptions) });

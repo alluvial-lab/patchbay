@@ -60,6 +60,7 @@ import {
   SessionStateEventSchema,
   SecurityLockdownEventSchema,
   SessionStateSchema,
+  SpawnClaimAbandonmentEvidenceSchema,
   SpawnClaimAcceptedSchema,
   SpawnClaimDisposition,
   SpawnClaimDispositionChangedSchema,
@@ -512,6 +513,46 @@ test("spawn claim poison survives cancelled, expired, and failed command outcome
       "terminal command state must not erase durable external-effect ambiguity",
     );
   }
+});
+
+test("target abandonment retires the hot session and preserves canonical claim disposition", () => {
+  const commandId = "spawn-abandon";
+  let model = fold(
+    emptyPresentationModel(),
+    spawnClaimAcceptedEvent(1n, spawnClaimAccepted(commandId)),
+  );
+  const identity = {
+    adapterId: "pi",
+    deploymentScope: "machine-a",
+    runtimeSessionId: "runtime-a",
+    generation: 7n,
+  };
+  model.sessions.set(sessionKey(identity), {
+    identity,
+    logicalTargetId: `logical-${commandId}`,
+    label: {},
+    connectivity: SessionConnectivityState.STALE,
+    activity: SessionActivityState.UNKNOWN,
+    needsYou: false,
+    lastLsn: 1n,
+    tombstoned: false,
+    reconciled: true,
+  });
+  model = fold(
+    model,
+    spawnClaimDispositionEvent(
+      2n,
+      commandId,
+      SpawnClaimDisposition.ACTIVE,
+      SpawnClaimDisposition.TARGET_ABANDONED,
+    ),
+  );
+
+  assert.equal(
+    model.commands.get(commandId)?.spawnClaimDisposition,
+    SpawnClaimDisposition.TARGET_ABANDONED,
+  );
+  assert.equal(model.sessions.get(sessionKey(identity))?.tombstoned, true);
 });
 
 test("proved-none claim release clears retry risk without rewriting terminal command outcome", () => {
@@ -1041,6 +1082,16 @@ function spawnClaimDispositionEvent(
           claimOperationId: create(CommandIdSchema, { value: commandId }),
           fromDisposition,
           toDisposition,
+          evidence: toDisposition === SpawnClaimDisposition.TARGET_ABANDONED
+            ? {
+                case: "targetAbandonment",
+                value: create(SpawnClaimAbandonmentEvidenceSchema, {
+                  logicalTargetId: create(LogicalTargetIdSchema, {
+                    value: `logical-${commandId}`,
+                  }),
+                }),
+              }
+            : { case: undefined },
         }),
       },
     }),

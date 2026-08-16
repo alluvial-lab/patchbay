@@ -5,7 +5,7 @@ use patchbay_contracts::patchbay::{
     spawn_claim_event, spawn_request, AcceptedOperation, ActorEndpointRef, ActorId,
     AdapterCapability, AdapterId, AdapterRefusalBeforeDeliveryProof, AdapterRegistration,
     AdapterSnapshotSupport, AdapterTargetCategory, AuditEventKind, AuthorityDomainId, CommandId,
-    CommandTransition, ContinuationAuthorityProvenance, EndpointId, EventId,
+    CommandTransition, ContinuationAuthorityProvenance, DeviceId, EndpointId, EventId,
     ExternalEffectDisposition, ExternalRuntimeRef, FailureCode, FreshSpawn, Generation, GrantId,
     IdempotencyKey, LogicalTargetId, Lsn, NoExternalEffectProof, Observation, ObservationKind,
     Operation, OperationKind, OperationState, PayloadContentType, PayloadEnvelope,
@@ -339,6 +339,28 @@ fn promotion(lsn: u64, generation: u64) -> spawn_claim_disposition_changed::Evid
 fn abandonment(lsn: u64) -> spawn_claim_disposition_changed::Evidence {
     spawn_claim_disposition_changed::Evidence::TargetAbandonment(SpawnClaimAbandonmentEvidence {
         abandonment_event_id: Some(event_id(lsn)),
+        logical_target_id: Some(target()),
+        authorizing_grant_id: Some(GrantId {
+            value: "abandon-grant".to_owned(),
+        }),
+        abandonment_authority_kind: OperationKind::SessionManagement as i32,
+        abandoned_by: Some(ActorEndpointRef {
+            actor_id: Some(ActorId {
+                value: "operator".to_owned(),
+            }),
+            endpoint_id: Some(EndpointId {
+                value: "web".to_owned(),
+            }),
+            device_id: Some(DeviceId {
+                value: "device".to_owned(),
+            }),
+            endpoint_generation: Some(Generation { value: 1 }),
+        }),
+        reason_code: "operator_recovery".to_owned(),
+        abandoned_at: Some(prost_types::Timestamp {
+            seconds: 1_700_000_000,
+            nanos: 0,
+        }),
     })
 }
 
@@ -1638,7 +1660,7 @@ fn target_abandonment_clears_fence_but_permanently_consumes_generation() {
             "spawn-a",
             SpawnClaimDisposition::Active,
             SpawnClaimDisposition::TargetAbandoned,
-            abandonment(2),
+            abandonment(3),
         ))
         .unwrap();
     assert_eq!(

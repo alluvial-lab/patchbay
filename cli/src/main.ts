@@ -25,7 +25,11 @@ import { loginCommand } from "./commands/login.js";
 import { lockdownEnterCommand, lockdownExitCommand } from "./commands/lockdown.js";
 import { logoutCommand } from "./commands/logout.js";
 import { sessionHealthCommand } from "./commands/session-health.js";
-import { restartCommand, spawnCommand } from "./commands/spawn.js";
+import {
+  abandonSpawnTargetCommand,
+  restartCommand,
+  spawnCommand,
+} from "./commands/spawn.js";
 import { setupCommand } from "./commands/setup.js";
 import { resourceInspectCommand, resourceQueryCommand } from "./commands/resources.js";
 
@@ -57,6 +61,7 @@ const COMMAND_OPTION_GRAMMAR: Record<string, { flags: readonly string[]; values:
   "resource-inspect": { flags: ["json", "replay-events"], values: [] },
   spawn: { flags: ["json"], values: ["idempotency-key", "command-id", "deployment-authority-ref"] },
   restart: { flags: ["json"], values: ["idempotency-key", "command-id", "deployment-authority-ref"] },
+  "spawn-target-abandon": { flags: ["json"], values: ["reason-code"] },
   instruct: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   cancel: { flags: ["json"], values: ["idempotency-key", "command-id"] },
   interrupt: { flags: ["json"], values: ["idempotency-key", "command-id"] },
@@ -247,6 +252,21 @@ export async function run(
             json,
             idempotencyKey: parsed.options.get("idempotency-key"),
             commandId: parsed.options.get("command-id"),
+          },
+          output,
+        );
+
+      case "spawn-target-abandon":
+        requirePositionals(command, parsed.positionals, 2, 2);
+        return await abandonSpawnTargetCommand(
+          makeControlClient(config.coreAddr, config.coreSecret, store),
+          store,
+          config.authorityDomainId,
+          {
+            claimOperationId: parsed.positionals[0]!,
+            logicalTargetId: parsed.positionals[1]!,
+            reasonCode: parsed.options.get("reason-code") ?? "operator_recovery",
+            json,
           },
           output,
         );
@@ -521,6 +541,8 @@ export function usage(): string {
     "      Submit a fresh spawn Operation to one explicit adapter.",
     "  restart <target> [shape] [--deployment-authority-ref REF] [--idempotency-key K] [--command-id ID] [--json]",
     "      Submit restart as a new spawn Operation with the exact current managed continuation.",
+    "  spawn-target-abandon <claim-command-id> <logical-target-id> [--reason-code CODE] [--json]",
+    "      Permanently retire an unreconcilable managed target and consume its spawn claim.",
     "  instruct <target> <prompt|-> [--idempotency-key K] [--command-id ID] [--json]",
     "      Submit an instruction; '-' reads the prompt from stdin.",
     "  cancel <command-id> [--idempotency-key K] [--command-id ID] [--json]",

@@ -13,8 +13,9 @@ use patchbay_contracts::patchbay::{
     LogicalTargetProjectionRecord, RuntimeSessionId, SecurityLockdownEvent, SessionActivityChanged,
     SessionActivityState, SessionConnectivityChanged, SessionConnectivityState,
     SessionGenerationBumped, SessionModelChanged, SessionRegistered, SessionRelabeled,
-    SessionReportApplied, SessionReportSourceCursor, SessionState, SpawnClaimEvent,
-    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
+    SessionReportApplied, SessionReportSourceCursor, SessionState, SpawnClaimDisposition,
+    SpawnClaimDispositionChanged, SpawnClaimEvent, SpawnPromotionCommitted,
+    SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
@@ -614,7 +615,125 @@ impl SessionRegistry {
                     .expect("accepted spawn claim validated");
                 self.managed_lineages.insert(logical_target_id);
             }
-            spawn_claim_event::Mutation::DispositionChanged(_) => {}
+            spawn_claim_event::Mutation::DispositionChanged(change) => {
+                if SpawnClaimDisposition::try_from(change.to_disposition).ok()
+                    == Some(SpawnClaimDisposition::TargetAbandoned)
+                {
+                    self.observe_target_abandonment(change, event_lsn)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn observe_target_abandonment(
+        &mut self,
+        change: &SpawnClaimDispositionChanged,
+        event_lsn: u64,
+    ) -> Result<(), SessionError> {
+        let abandonment = match change.evidence.as_ref() {
+            Some(
+                patchbay_contracts::patchbay::spawn_claim_disposition_changed::Evidence::TargetAbandonment(
+                    abandonment,
+                ),
+            ) => abandonment,
+            _ => {
+                return Err(SessionError::CorruptLog(
+                    "target-abandoned claim transition has no typed abandonment decision"
+                        .to_owned(),
+                ))
+            }
+        };
+        let logical_target_id = abandonment
+            .logical_target_id
+            .as_ref()
+            .ok_or_else(|| {
+                SessionError::CorruptRecord(
+                    "target abandonment is missing logical_target_id".to_owned(),
+                )
+            })?
+            .clone();
+        let projected_target = self
+            .logical_targets
+            .get(&logical_target_id)
+            .ok_or_else(|| {
+                SessionError::CorruptLog(
+                    "target abandonment references an unknown logical target".to_owned(),
+                )
+            })?;
+        if projected_target.retired_at_lsn.is_some() {
+            return Err(SessionError::CorruptLog(
+                "logical target is already retired by another decision".to_owned(),
+            ));
+        }
+
+        let current_record = projected_target
+            .current
+            .as_ref()
+            .map(|current| {
+                let external = current.external_runtime.as_ref().ok_or_else(|| {
+                    SessionError::CorruptRecord(
+                        "logical-target current runtime is malformed".to_owned(),
+                    )
+                })?;
+                let identity = SessionIdentity {
+                    adapter_id: external.adapter_id.clone().ok_or_else(|| {
+                        SessionError::CorruptRecord(
+                            "logical-target current runtime has no adapter".to_owned(),
+                        )
+                    })?,
+                    deployment_scope: external.deployment_scope.clone(),
+                    runtime_session_id: external.runtime_session_id.clone().ok_or_else(|| {
+                        SessionError::CorruptRecord(
+                            "logical-target current runtime has no runtime id".to_owned(),
+                        )
+                    })?,
+                    session_generation: external.generation.ok_or_else(|| {
+                        SessionError::CorruptRecord(
+                            "logical-target current runtime has no generation".to_owned(),
+                        )
+                    })?,
+                };
+                self.get_session(&identity).cloned().ok_or_else(|| {
+                    SessionError::CorruptLog(
+                        "target abandonment current runtime is not the projected live session"
+                            .to_owned(),
+                    )
+                })
+            })
+            .transpose()?;
+        let tombstone_key = current_record.as_ref().map(|record| SessionTombstoneKey {
+            adapter_id: record.identity.adapter_id.clone(),
+            deployment_scope: record.identity.deployment_scope.clone(),
+            runtime_session_id: record.identity.runtime_session_id.clone(),
+            generation: record.identity.session_generation,
+        });
+        if tombstone_key.as_ref().is_some_and(|key| {
+            self.tombstones.contains_key(key) || self.managed_tombstone_owners.contains_key(key)
+        }) {
+            return Err(SessionError::CorruptLog(
+                "target abandonment duplicates current-runtime tombstone provenance".to_owned(),
+            ));
+        }
+
+        self.logical_targets
+            .abandon(&logical_target_id, event_lsn)?;
+        self.managed_lineages.insert(logical_target_id.clone());
+        if let Some(current_record) = current_record {
+            self.sessions.remove(&live_key(&current_record.identity));
+            let tombstone_key = tombstone_key.expect("current runtime has tombstone key");
+            self.tombstones.insert(
+                tombstone_key.clone(),
+                SessionTombstone {
+                    adapter_id: current_record.identity.adapter_id,
+                    deployment_scope: current_record.identity.deployment_scope,
+                    runtime_session_id: current_record.identity.runtime_session_id,
+                    superseded_generation: current_record.identity.session_generation,
+                    superseded_at_lsn: event_lsn,
+                },
+            );
+            self.managed_tombstone_owners
+                .insert(tombstone_key, logical_target_id);
         }
         Ok(())
     }

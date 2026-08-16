@@ -1,8 +1,9 @@
 use std::{collections::HashSet, pin::Pin, sync::Arc, time::Duration};
 
 use patchbay_contracts::patchbay::{
-    typed_correlation, ActorEndpointRef, ActorId, AuditEventKind, AuditRecord, AuthorityDomainId,
-    CommandTransition, ControlSurfaceRevocation, DiagnosticsResult,
+    spawn_claim_disposition_changed, typed_correlation, AbandonSpawnTargetRequest,
+    AbandonSpawnTargetResult, ActorEndpointRef, ActorId, AuditEventKind, AuditRecord,
+    AuthorityDomainId, CommandTransition, ControlSurfaceRevocation, DiagnosticsResult,
     EnrollControlSurfacePrincipalRequest, EnrollControlSurfacePrincipalResult,
     EnterSecurityLockdownRequest, EnterSecurityLockdownResult, EventId, FailureCode, Generation,
     GrantRevocationEffect, GrantRevocationPolicy, LoadSecuritySnapshotRequest,
@@ -13,9 +14,10 @@ use patchbay_contracts::patchbay::{
     RevokeAllOperatorSessionsResult, RevokeControlSurfaceEndpointRequest,
     RevokeControlSurfacePrincipalRequest, RevokeControlSurfaceResult, RevokeGrantRequest,
     RevokeGrantResult, RevokeOperatorSessionRequest, RevokeOperatorSessionResult,
-    SecurityLockdownEntered, StoredEventKind, SubmissionOutcome, SubmissionResult, SubmitRequest,
-    SubscribeEvent, SubscribeRequest, TargetScope, TargetScopeKind, TypedCorrelation,
-    VerifyOperatorPasswordRequest, VerifyOperatorPasswordResult,
+    SecurityLockdownEntered, SpawnClaimAbandonmentEvidence, SpawnClaimDisposition, StoredEventKind,
+    SubmissionOutcome, SubmissionResult, SubmitRequest, SubscribeEvent, SubscribeRequest,
+    TargetScope, TargetScopeKind, TypedCorrelation, VerifyOperatorPasswordRequest,
+    VerifyOperatorPasswordResult,
 };
 use patchbay_core::{
     acceptance::{
@@ -673,6 +675,144 @@ where
             revocation_event_id: Some(event_id),
             applied_policy: grant.revocation_policy as i32,
             command_effects: effects,
+        }))
+    }
+
+    async fn abandon_spawn_target(
+        &self,
+        request: Request<AbandonSpawnTargetRequest>,
+    ) -> Result<Response<AbandonSpawnTargetResult>, Status> {
+        let requested_domain = required_domain(request.get_ref().authority_domain_id.clone())?;
+        self.require_configured_domain(&requested_domain)?;
+        let claim_operation_id = request
+            .get_ref()
+            .claim_operation_id
+            .clone()
+            .filter(|id| !id.value.is_empty() && id.value.len() <= 256)
+            .ok_or_else(|| {
+                Status::invalid_argument("claim_operation_id must be non-empty and bounded")
+            })?;
+        let logical_target_id = request
+            .get_ref()
+            .logical_target_id
+            .clone()
+            .filter(|id| !id.value.is_empty() && id.value.len() <= 256)
+            .ok_or_else(|| {
+                Status::invalid_argument("logical_target_id must be non-empty and bounded")
+            })?;
+        validate_control_surface_reason(&request.get_ref().reason_code)?;
+        let _ = self
+            .issuer_from_request(&request, requested_domain.clone())
+            .await?;
+
+        let _decision_guard = self.decision_gate.acquire().await;
+        self.state
+            .catch_up(&self.storage, &requested_domain)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let issuer = self
+            .issuer_from_request(&request, requested_domain.clone())
+            .await?;
+        self.require_operations_open(&issuer).await?;
+        let authority_scope = self
+            .state
+            .spawn_target_abandonment_scope(&claim_operation_id, &logical_target_id)
+            .await
+            .map_err(Status::failed_precondition)?;
+        // One sampled instant is shared by Grant liveness, durable decision
+        // provenance, and audit. No wall-clock resampling can split authority
+        // from the committed abandonment decision.
+        let evaluated_at = self.clock.now();
+        let grant_id = match self
+            .state
+            .grant_check()
+            .check_at(
+                &requested_domain,
+                &issuer,
+                patchbay_contracts::patchbay::OperationKind::SessionManagement,
+                &authority_scope,
+                &evaluated_at,
+            )
+            .await
+        {
+            Ok(authorized) => authorized.grant_id,
+            Err(_) => {
+                let mut audit =
+                    AuditRecordDraft::new(evaluated_at, AuditEventKind::AuthorizationFailed);
+                audit.actor_id = issuer.verified_actor().cloned();
+                audit.endpoint_id = issuer.verified_endpoint().cloned();
+                audit.device_id = issuer.verified_device().cloned();
+                audit.command_id = Some(claim_operation_id);
+                audit.target_scope = Some(authority_scope);
+                audit.failure_code = Some(FailureCode::AuthorizationDenied);
+                audit.reason_code = "spawn_target_abandonment_authorization_denied".to_owned();
+                self.record_audit(audit).await?;
+                return Err(Status::permission_denied(
+                    "spawn target abandonment requires a live session-management Grant",
+                ));
+            }
+        }
+        .ok_or_else(|| {
+            Status::internal("target abandonment authorization omitted Grant provenance")
+        })?;
+        let request = request.into_inner();
+        let abandoned_by = issuer_to_endpoint_ref(&issuer);
+        let evidence = SpawnClaimAbandonmentEvidence {
+            abandonment_event_id: None,
+            logical_target_id: Some(logical_target_id.clone()),
+            authorizing_grant_id: Some(grant_id.clone()),
+            abandonment_authority_kind:
+                patchbay_contracts::patchbay::OperationKind::SessionManagement as i32,
+            abandoned_by: Some(abandoned_by.clone()),
+            reason_code: request.reason_code.clone(),
+            abandoned_at: Some(evaluated_at),
+        };
+        let mut audit = AuditRecordDraft::new(
+            evidence
+                .abandoned_at
+                .expect("abandonment decision time was just assigned"),
+            AuditEventKind::SpawnTargetAbandoned,
+        );
+        audit.actor_id = abandoned_by.actor_id;
+        audit.endpoint_id = abandoned_by.endpoint_id;
+        audit.device_id = abandoned_by.device_id;
+        audit.command_id = Some(claim_operation_id.clone());
+        audit.grant_id = Some(grant_id);
+        audit.target_scope = Some(authority_scope);
+        audit.reason_code = request.reason_code;
+        let appended = self
+            .storage
+            .append_spawn_target_abandonment_audited(
+                &requested_domain,
+                claim_operation_id,
+                logical_target_id,
+                evidence,
+                audit,
+            )
+            .await
+            .map_err(map_storage_error_to_status)?;
+        self.state
+            .catch_up(&self.storage, &requested_domain)
+            .await
+            .map_err(map_storage_error_to_status)?;
+        let durable = match appended.change.evidence.as_ref() {
+            Some(spawn_claim_disposition_changed::Evidence::TargetAbandonment(evidence)) => {
+                evidence
+            }
+            _ => {
+                return Err(Status::internal(
+                    "committed target abandonment omitted typed evidence",
+                ))
+            }
+        };
+        Ok(Response::new(AbandonSpawnTargetResult {
+            changed: !appended.deduplicated,
+            already_abandoned: appended.deduplicated,
+            abandonment_event_id: Some(appended.source_event_id),
+            audit_event_id: Some(appended.audit_event_id),
+            disposition: SpawnClaimDisposition::TargetAbandoned as i32,
+            authorizing_grant_id: durable.authorizing_grant_id.clone(),
+            logical_target_id: durable.logical_target_id.clone(),
         }))
     }
 
@@ -2806,6 +2946,11 @@ pub fn map_storage_error_to_status(error: StorageError) -> Status {
         StorageError::SpawnExecutionEvidenceConflict { command_id } => {
             Status::failed_precondition(format!(
                 "spawn execution evidence conflicts with claim {command_id}"
+            ))
+        }
+        StorageError::SpawnTargetAbandonmentConflict { command_id, reason } => {
+            Status::failed_precondition(format!(
+                "spawn target abandonment conflicts with claim {command_id}: {reason}"
             ))
         }
         StorageError::DuplicateNativeReference {

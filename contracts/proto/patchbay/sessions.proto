@@ -250,8 +250,17 @@ message SpawnClaimPromotionEvidence {
   RuntimeGenerationRef promoted_runtime = 2;
 }
 
+// Authenticated operator decision carried by the target-abandonment claim
+// transition. Storage stamps abandonment_event_id to the containing event;
+// the remaining fields are derived from one grant-checked control decision.
 message SpawnClaimAbandonmentEvidence {
   EventId abandonment_event_id = 1;
+  LogicalTargetId logical_target_id = 2;
+  GrantId authorizing_grant_id = 3;
+  OperationKind abandonment_authority_kind = 4; // must be session-management
+  ActorEndpointRef abandoned_by = 5;
+  string reason_code = 6;
+  google.protobuf.Timestamp abandoned_at = 7;
 }
 
 // One durable accepted spawn/continuation decision. The continuation's claim,
@@ -315,6 +324,9 @@ message LogicalTargetProjectionRecord {
   RuntimeGenerationRef current = 4;
   ExternalRuntimeRef reserved_candidate = 5;
   repeated LogicalTargetTombstone tombstones = 6;
+  // Permanent target retirement. Current and candidate slots must both be
+  // empty; their exact runtime identities remain as audit-only tombstones.
+  Lsn retired_at_lsn = 7;
 }
 
 message LogicalTargetTombstone {

@@ -22,10 +22,12 @@
 
 use patchbay_contracts::patchbay::{
     ActorId, AdapterDiagnosticDetail, AuditEventKind, AuditPage, AuthorityDomainId, CommandId,
-    CommandTransition, EndpointId, EventId, FailureCode, Generation, IdempotencyKey, Lsn,
-    Observation, ObservationKind, OperationKind, OperationState, QuarantinedRuntimeEvidence,
-    RuntimeEvidenceSourceAttachment, SessionReport, SpawnClaimAccepted, SpawnExecutionEvidence,
-    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventPayload, TargetScope,
+    CommandTransition, EndpointId, EventId, FailureCode, Generation, IdempotencyKey,
+    LogicalTargetId, Lsn, Observation, ObservationKind, OperationKind, OperationState,
+    QuarantinedRuntimeEvidence, RuntimeEvidenceSourceAttachment, SessionReport,
+    SpawnClaimAbandonmentEvidence, SpawnClaimAccepted, SpawnClaimDispositionChanged,
+    SpawnExecutionEvidence, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged,
+    StoredEventPayload, TargetScope,
 };
 use prost_types::Timestamp;
 
@@ -389,6 +391,15 @@ pub struct SpawnExecutionEvidenceAppend {
     pub deduplicated: bool,
 }
 
+/// Result of the dedicated atomic operator target-abandonment decision.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpawnTargetAbandonmentAppend {
+    pub source_event_id: EventId,
+    pub audit_event_id: EventId,
+    pub change: SpawnClaimDispositionChanged,
+    pub deduplicated: bool,
+}
+
 /// Errors at the storage boundary.
 ///
 /// This type is deliberately backend-neutral: it does not carry `rusqlite::Error`
@@ -471,6 +482,11 @@ pub enum StorageError {
     /// external runtime or arrives after a terminal claim disposition.
     #[error("spawn execution evidence conflicts with claim {command_id}")]
     SpawnExecutionEvidenceConflict { command_id: String },
+
+    /// The requested target-abandonment decision disagrees with durable claim,
+    /// target, successor, or prior abandonment state.
+    #[error("spawn target abandonment conflicts with claim {command_id}: {reason}")]
+    SpawnTargetAbandonmentConflict { command_id: String, reason: String },
 
     /// One exact external runtime is already reserved by another logical
     /// target. This is a protocol conflict, not corrupt storage: the first
@@ -848,6 +864,24 @@ pub trait Storage: Send + Sync {
         _authority_domain_id: &AuthorityDomainId,
         _evidence: SpawnExecutionEvidence,
     ) -> impl std::future::Future<Output = Result<SpawnExecutionEvidenceAppend, StorageError>> + Send
+    {
+        async { Err(StorageError::UnsupportedOperation) }
+    }
+
+    /// Atomically commit one authenticated operator target-abandonment source
+    /// plus its audit, or reconcile a semantic-exact retry to the original
+    /// pair. Implementations rebuild claim and logical-target pre-state inside
+    /// the transaction, require the claim to be active/poisoned and exact,
+    /// reject a live successor claim, stamp the self-referential evidence id,
+    /// and stage both claim and session folds before insertion.
+    fn append_spawn_target_abandonment_audited(
+        &self,
+        _authority_domain_id: &AuthorityDomainId,
+        _claim_operation_id: CommandId,
+        _logical_target_id: LogicalTargetId,
+        _evidence: SpawnClaimAbandonmentEvidence,
+        _audit: AuditRecordDraft,
+    ) -> impl std::future::Future<Output = Result<SpawnTargetAbandonmentAppend, StorageError>> + Send
     {
         async { Err(StorageError::UnsupportedOperation) }
     }

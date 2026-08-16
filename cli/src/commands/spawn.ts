@@ -8,6 +8,7 @@ import {
   OperationKind,
   RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
+  SpawnClaimDisposition,
   SpawnPromotionCommittedSchema,
   StoredEventKind,
   type Session,
@@ -18,6 +19,7 @@ import {
   continuationSpawnPayload,
   freshSpawnPayload,
   spawnAdapterTarget,
+  spawnClaimDispositionName,
 } from "@patchbay/operator-domain";
 import type { ControlClient } from "../core-client.js";
 import type { CredentialStore } from "../credentials.js";
@@ -47,6 +49,52 @@ export interface RestartOptions extends OperationIdOptions {
   shape: string;
   deploymentAuthorityRef?: string;
   json: boolean;
+}
+
+export interface AbandonSpawnTargetOptions {
+  claimOperationId: string;
+  logicalTargetId: string;
+  reasonCode: string;
+  json: boolean;
+}
+
+export async function abandonSpawnTargetCommand(
+  client: Pick<ControlClient, "abandonSpawnTarget">,
+  store: CredentialStore,
+  authorityDomainId: string,
+  options: AbandonSpawnTargetOptions,
+  output: CliOutput,
+): Promise<number> {
+  if (!options.claimOperationId || !options.logicalTargetId) {
+    throw new Error("claim operation id and logical target id are required");
+  }
+  if (!/^[a-z0-9_]{1,64}$/.test(options.reasonCode)) {
+    throw new Error("reason code must match [a-z0-9_]{1,64}");
+  }
+  await operationContext(store, authorityDomainId);
+  const result = await client.abandonSpawnTarget({
+    authorityDomainId: { value: authorityDomainId },
+    claimOperationId: { value: options.claimOperationId },
+    logicalTargetId: { value: options.logicalTargetId },
+    reasonCode: options.reasonCode,
+  });
+  if (result.disposition !== SpawnClaimDisposition.TARGET_ABANDONED) {
+    throw new Error("core returned a non-abandoned spawn claim disposition");
+  }
+  const view = {
+    changed: result.changed,
+    alreadyAbandoned: result.alreadyAbandoned,
+    disposition: spawnClaimDispositionName(result.disposition),
+    claimOperationId: options.claimOperationId,
+    logicalTargetId: result.logicalTargetId?.value ?? options.logicalTargetId,
+    abandonmentEventLsn: result.abandonmentEventId?.lsn?.value.toString(),
+    auditEventLsn: result.auditEventId?.lsn?.value.toString(),
+    authorizingGrantId: result.authorizingGrantId?.value,
+  };
+  output.stdout(options.json
+    ? JSON.stringify(view)
+    : `${view.disposition}: ${view.logicalTargetId} (claim ${view.claimOperationId})${view.alreadyAbandoned ? " already committed" : ""}`);
+  return 0;
 }
 
 export async function spawnCommand(

@@ -8,11 +8,11 @@
 //! second, non-atomic audit write path.
 
 use patchbay_contracts::patchbay::{
-    AcceptedOperation, AuditEventKind, AuthorityDomainId, CommandTransition, FailureCode,
-    Observation, ObservationKind, OperationKind, OperatorRecord, QuarantinedRuntimeEvidence,
-    Revocation, RuntimeEvidenceSourceAttachment, SecurityLockdownEvent, SessionReport,
-    SpawnClaimAccepted, SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind,
-    StoredEventPayload,
+    AcceptedOperation, AuditEventKind, AuthorityDomainId, CommandId, CommandTransition,
+    FailureCode, LogicalTargetId, Observation, ObservationKind, OperationKind, OperatorRecord,
+    QuarantinedRuntimeEvidence, Revocation, RuntimeEvidenceSourceAttachment, SecurityLockdownEvent,
+    SessionReport, SpawnClaimAbandonmentEvidence, SpawnClaimAccepted, SpawnPromotionCommitted,
+    SpawnSuccessorEvidenceStaged, StoredEventKind, StoredEventPayload,
 };
 use prost::Message;
 
@@ -20,7 +20,7 @@ use super::{
     AuditPageSpec, AuditRecordDraft, AuditedAppend, AuditedDecisionAppend, AuditedDedupOutcome,
     CoreGenerationStore, DedupOutcome, GrantAppendOutcome, GrantIdentityKey,
     ObservationTransitionAppend, RecordedEvent, SpawnClaimDedupOutcome, SpawnPromotionAppend,
-    Storage, StorageError, StoredSnapshot, TargetKey,
+    SpawnTargetAbandonmentAppend, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 use crate::time::{Clock, SystemClock};
 
@@ -674,6 +674,25 @@ where
                 accepted,
                 audit,
                 logical_payload,
+            )
+            .await
+    }
+
+    async fn append_spawn_target_abandonment_audited(
+        &self,
+        authority_domain_id: &AuthorityDomainId,
+        claim_operation_id: CommandId,
+        logical_target_id: LogicalTargetId,
+        evidence: SpawnClaimAbandonmentEvidence,
+        audit: AuditRecordDraft,
+    ) -> Result<SpawnTargetAbandonmentAppend, StorageError> {
+        self.inner
+            .append_spawn_target_abandonment_audited(
+                authority_domain_id,
+                claim_operation_id,
+                logical_target_id,
+                evidence,
+                audit,
             )
             .await
     }

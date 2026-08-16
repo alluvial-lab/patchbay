@@ -19,7 +19,7 @@ pub use port::{
     AuditedDecisionAppend, AuditedDedupOutcome, CoreGenerationStore, DedupOutcome,
     GrantAppendOutcome, GrantIdentityKey, ObservationTransitionAppend, RecordedEvent,
     SpawnClaimAppend, SpawnClaimDedupOutcome, SpawnExecutionEvidenceAppend, SpawnPromotionAppend,
-    Storage, StorageError, StoredSnapshot, TargetKey,
+    SpawnTargetAbandonmentAppend, Storage, StorageError, StoredSnapshot, TargetKey,
 };
 pub use prefix::{validate_next_replay_event, ReplayIntegrityError, ValidatedReplayEvent};
 pub use recovery::{recover, RecoveryState, ValidatedSnapshot};

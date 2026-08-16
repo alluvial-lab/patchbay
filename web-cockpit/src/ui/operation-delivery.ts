@@ -5,12 +5,15 @@ import {
   SpawnClaimDisposition,
 } from "@patchbay/contracts";
 
+import { spawnClaimDispositionName } from "@patchbay/operator-domain";
+
 import type { CommandView } from "../domain/model.js";
 import { renderIcon, type IconName } from "./icons.js";
 
 export interface OperationDeliveryActions {
   cancel?(command: CommandView): void | Promise<void>;
   interrupt?(command: CommandView): void | Promise<void>;
+  abandonSpawnTarget?(command: CommandView): void | Promise<void>;
 }
 
 export function renderOperationDelivery(
@@ -42,6 +45,14 @@ export function renderOperationDelivery(
   if (command.failureCode !== undefined) {
     wrapper.append(renderFailureBanner(document, command.failureCode));
   }
+  if (command.spawnClaimDisposition !== undefined) {
+    wrapper.append(textElement(
+      document,
+      "span",
+      "command-step__race",
+      `Claim: ${spawnClaimDispositionName(command.spawnClaimDisposition)}`,
+    ));
+  }
   if (
     command.spawnClaimDisposition === SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION
     && command.failureCode !== FailureCode.EXECUTION_OUTCOME_UNKNOWN
@@ -62,7 +73,11 @@ export function renderOperationDelivery(
     || command.state === OperationState.RUNNING
   );
   const interruptAvailable = actions?.interrupt && command.state === OperationState.RUNNING;
-  if (cancelAvailable || interruptAvailable) {
+  const abandonAvailable = actions?.abandonSpawnTarget
+    && command.spawnLogicalTargetId
+    && (command.spawnClaimDisposition === SpawnClaimDisposition.ACTIVE
+      || command.spawnClaimDisposition === SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION);
+  if (cancelAvailable || interruptAvailable || abandonAvailable) {
     actionSlot.classList.add("delivery-line__actions--available");
     actionSlot.setAttribute("role", "group");
     actionSlot.setAttribute("aria-label", "Operation actions");
@@ -82,6 +97,16 @@ export function renderOperationDelivery(
         "square",
         "Interrupt running operation",
         () => actions.interrupt!(command),
+        true,
+        lockdownActive,
+      ));
+    }
+    if (abandonAvailable) {
+      actionSlot.append(contextButton(
+        document,
+        "x",
+        "Permanently abandon this managed target",
+        () => actions.abandonSpawnTarget!(command),
         true,
         lockdownActive,
       ));

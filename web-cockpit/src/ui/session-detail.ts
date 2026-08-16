@@ -59,6 +59,7 @@ export interface SessionDetailActions {
   attach?(session: SessionView): void | Promise<void>;
   cancel?(command: SessionCommandActionView): void | Promise<void>;
   interrupt?(command: SessionCommandActionView): void | Promise<void>;
+  abandonSpawnTarget?(command: CommandView): void | Promise<void>;
 }
 
 export interface SubmissionFeedback {
@@ -625,16 +626,22 @@ function sessionDeliveryActions(
   adapter: AdapterView | undefined,
 ): OperationDeliveryActions | undefined {
   const capability = adapter?.status?.capability;
-  if (!capability?.cancellationSupport) return undefined;
-  const supportsCancel = capability.supportedOperationKinds.includes(OperationKind.CANCEL);
-  const supportsInterrupt = capability.supportedOperationKinds.includes(OperationKind.INTERRUPT);
+  const supportsCancel = capability?.cancellationSupport === true
+    && capability.supportedOperationKinds.includes(OperationKind.CANCEL);
+  const supportsInterrupt = capability?.cancellationSupport === true
+    && capability.supportedOperationKinds.includes(OperationKind.INTERRUPT);
   const cancel = actions?.cancel && supportsCancel
     ? (command: CommandView) => actions.cancel!(sessionActionCommand(command))
     : undefined;
   const interrupt = actions?.interrupt && supportsInterrupt
     ? (command: CommandView) => actions.interrupt!(sessionActionCommand(command))
     : undefined;
-  return cancel || interrupt ? { cancel, interrupt } : undefined;
+  const abandonSpawnTarget = actions?.abandonSpawnTarget
+    ? (command: CommandView) => actions.abandonSpawnTarget!(command)
+    : undefined;
+  return cancel || interrupt || abandonSpawnTarget
+    ? { cancel, interrupt, abandonSpawnTarget }
+    : undefined;
 }
 
 function sessionActionCommand(command: CommandView): SessionCommandActionView {

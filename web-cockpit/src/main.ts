@@ -1,6 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
+  AbandonSpawnTargetRequestSchema,
   ActorEndpointRefSchema,
   AuthorityDomainIdSchema,
   EnterSecurityLockdownRequestSchema,
@@ -318,6 +319,19 @@ function composeCockpit(
       },
       restart(session) {
         return submit(buildRestartOperation(authorityDomainId, session, nextIds()));
+      },
+      async abandonSpawnTarget(command) {
+        if (!command.spawnLogicalTargetId) {
+          throw new Error("managed logical target identity is unavailable; reconcile before abandonment");
+        }
+        await protocol.client.abandonSpawnTarget(
+          create(AbandonSpawnTargetRequestSchema, {
+            authorityDomainId,
+            claimOperationId: create(CommandIdSchema, { value: command.id }),
+            logicalTargetId: create(LogicalTargetIdSchema, { value: command.spawnLogicalTargetId }),
+            reasonCode: "operator_recovery",
+          }),
+        );
       },
       send(session, text) {
         return submit(buildInstructOperation(authorityDomainId, session, text, nextIds()));
