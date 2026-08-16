@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package patchbay;
+
+// Adapter-local profile for the control extension. The core may carry this
+// profile opaquely; it must never interpret or expose the path-bearing marker
+// payloads below.
+message PiControlExtensionProfile {
+  string profile_version = 1;
+  string handshake_command = 2;
+  string reload_command = 3;
+  string handshake_custom_type = 4;
+  string reload_request_custom_type = 5;
+  string reload_completion_custom_type = 6;
+  uint32 challenge_bytes = 7;
+  uint32 extension_epoch_bytes = 8;
+  uint32 supported_session_version = 9;
+}
+
+// Data stored inside a patchbay.control.handshake.v1 Pi custom entry. Raw cwd
+// and session paths are adapter-local evidence and are never core diagnostics.
+message PiControlHandshakeMarker {
+  string challenge = 1;
+  string launch_nonce = 2;
+  string extension_epoch = 3;
+  string cwd = 4;
+  string session_id = 5;
+  string session_file = 6;
+}
+
+message PiReloadRequestMarker {
+  string command_id = 1;
+  string nonce = 2;
+  string prior_extension_epoch = 3;
+  repeated PiReloadableResourceKind resources = 4;
+}
+
+message PiReloadCompletionMarker {
+  string command_id = 1;
+  string nonce = 2;
+  string request_entry_id = 3;
+  string prior_extension_epoch = 4;
+  string extension_epoch = 5;
+}
+
+enum PiReloadableResourceKind {
+  PI_RELOADABLE_RESOURCE_KIND_UNSPECIFIED = 0;
+  PI_RELOADABLE_RESOURCE_KIND_EXTENSION_ENTRYPOINT = 1;
+  PI_RELOADABLE_RESOURCE_KIND_SKILL = 2;
+  PI_RELOADABLE_RESOURCE_KIND_PROMPT = 3;
+  PI_RELOADABLE_RESOURCE_KIND_THEME = 4;
+  PI_RELOADABLE_RESOURCE_KIND_CONTEXT_FILE = 5;
+}
+
+// Redacted handshake failures. They intentionally cannot carry the challenged
+// cwd or session path values.
+enum PiControlHandshakeFailure {
+  PI_CONTROL_HANDSHAKE_FAILURE_UNSPECIFIED = 0;
+  PI_CONTROL_HANDSHAKE_FAILURE_COMMAND_MISSING = 1;
+  PI_CONTROL_HANDSHAKE_FAILURE_COMMAND_SOURCE_MISMATCH = 2;
+  PI_CONTROL_HANDSHAKE_FAILURE_PROMPT_REJECTED = 3;
+  PI_CONTROL_HANDSHAKE_FAILURE_MARKER_MISSING = 4;
+  PI_CONTROL_HANDSHAKE_FAILURE_MARKER_AMBIGUOUS = 5;
+  PI_CONTROL_HANDSHAKE_FAILURE_CHALLENGE_MISMATCH = 6;
+  PI_CONTROL_HANDSHAKE_FAILURE_LAUNCH_NONCE_MISMATCH = 7;
+  PI_CONTROL_HANDSHAKE_FAILURE_EXTENSION_EPOCH_MISMATCH = 8;
+  PI_CONTROL_HANDSHAKE_FAILURE_CWD_MISMATCH = 9;
+  PI_CONTROL_HANDSHAKE_FAILURE_SESSION_ID_MISMATCH = 10;
+  PI_CONTROL_HANDSHAKE_FAILURE_SESSION_FILE_MISMATCH = 11;
+  PI_CONTROL_HANDSHAKE_FAILURE_RPC_CROSS_CHECK_FAILED = 12;
+  PI_CONTROL_HANDSHAKE_FAILURE_MARKER_NOT_CURRENT_LEAF = 13;
+  PI_CONTROL_HANDSHAKE_FAILURE_BOUND_EXCEEDED = 14;
+}
+
+// Redacted adapter-local failure vocabulary. Values identify a failed
+// invariant without carrying cwd, session paths, entry content, or secrets.
+enum PiSessionIntegrityFailure {
+  PI_SESSION_INTEGRITY_FAILURE_UNSPECIFIED = 0;
+  PI_SESSION_INTEGRITY_FAILURE_PATH_MISSING = 1;
+  PI_SESSION_INTEGRITY_FAILURE_PATH_OUTSIDE_ALLOWED_ROOT = 2;
+  PI_SESSION_INTEGRITY_FAILURE_SYMLINK = 3;
+  PI_SESSION_INTEGRITY_FAILURE_NOT_REGULAR_FILE = 4;
+  PI_SESSION_INTEGRITY_FAILURE_EMPTY_FILE = 5;
+  PI_SESSION_INTEGRITY_FAILURE_FILE_TOO_LARGE = 6;
+  PI_SESSION_INTEGRITY_FAILURE_UNSTABLE_FILE = 7;
+  PI_SESSION_INTEGRITY_FAILURE_FRAMING_INVALID = 8;
+  PI_SESSION_INTEGRITY_FAILURE_JSON_INVALID = 9;
+  PI_SESSION_INTEGRITY_FAILURE_HEADER_INVALID = 10;
+  PI_SESSION_INTEGRITY_FAILURE_ENTRY_TYPE_UNSUPPORTED = 11;
+  PI_SESSION_INTEGRITY_FAILURE_ENTRY_SHAPE_INVALID = 12;
+  PI_SESSION_INTEGRITY_FAILURE_DUPLICATE_ENTRY_ID = 13;
+  PI_SESSION_INTEGRITY_FAILURE_PARENT_INVALID = 14;
+  PI_SESSION_INTEGRITY_FAILURE_TREE_INVALID = 15;
+  PI_SESSION_INTEGRITY_FAILURE_REFERENCE_INVALID = 16;
+  PI_SESSION_INTEGRITY_FAILURE_RPC_ENTRIES_MISMATCH = 17;
+  PI_SESSION_INTEGRITY_FAILURE_RPC_LEAF_MISMATCH = 18;
+  PI_SESSION_INTEGRITY_FAILURE_SEAL_IDENTITY_MISMATCH = 19;
+  PI_SESSION_INTEGRITY_FAILURE_SEALED_PREFIX_MISMATCH = 20;
+  PI_SESSION_INTEGRITY_FAILURE_CONTROL_MARKER_MISMATCH = 21;
+  PI_SESSION_INTEGRITY_FAILURE_IO = 22;
+}

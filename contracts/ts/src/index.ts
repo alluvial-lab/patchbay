@@ -8,6 +8,7 @@ export * from "./gen/patchbay/diagnostics_pb.js";
 export * from "./gen/patchbay/elicitations_pb.js";
 export * from "./gen/patchbay/observations_pb.js";
 export * from "./gen/patchbay/operations_pb.js";
+export * from "./gen/patchbay/pi_adapter_pb.js";
 export * from "./gen/patchbay/resources_pb.js";
 export * from "./gen/patchbay/sessions_pb.js";
 export * from "./gen/patchbay/security_pb.js";

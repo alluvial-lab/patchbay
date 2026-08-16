@@ -4274,4 +4274,265 @@ impl SnapshotViewKind {
         }
     }
 }
+/// Adapter-local profile for the control extension. The core may carry this
+/// profile opaquely; it must never interpret or expose the path-bearing marker
+/// payloads below.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiControlExtensionProfile {
+    #[prost(string, tag="1")]
+    pub profile_version: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub handshake_command: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub reload_command: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub handshake_custom_type: ::prost::alloc::string::String,
+    #[prost(string, tag="5")]
+    pub reload_request_custom_type: ::prost::alloc::string::String,
+    #[prost(string, tag="6")]
+    pub reload_completion_custom_type: ::prost::alloc::string::String,
+    #[prost(uint32, tag="7")]
+    pub challenge_bytes: u32,
+    #[prost(uint32, tag="8")]
+    pub extension_epoch_bytes: u32,
+    #[prost(uint32, tag="9")]
+    pub supported_session_version: u32,
+}
+/// Data stored inside a patchbay.control.handshake.v1 Pi custom entry. Raw cwd
+/// and session paths are adapter-local evidence and are never core diagnostics.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiControlHandshakeMarker {
+    #[prost(string, tag="1")]
+    pub challenge: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub launch_nonce: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub extension_epoch: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub cwd: ::prost::alloc::string::String,
+    #[prost(string, tag="5")]
+    pub session_id: ::prost::alloc::string::String,
+    #[prost(string, tag="6")]
+    pub session_file: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiReloadRequestMarker {
+    #[prost(string, tag="1")]
+    pub command_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub nonce: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub prior_extension_epoch: ::prost::alloc::string::String,
+    #[prost(enumeration="PiReloadableResourceKind", repeated, tag="4")]
+    pub resources: ::prost::alloc::vec::Vec<i32>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiReloadCompletionMarker {
+    #[prost(string, tag="1")]
+    pub command_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub nonce: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub request_entry_id: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub prior_extension_epoch: ::prost::alloc::string::String,
+    #[prost(string, tag="5")]
+    pub extension_epoch: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiReloadableResourceKind {
+    Unspecified = 0,
+    ExtensionEntrypoint = 1,
+    Skill = 2,
+    Prompt = 3,
+    Theme = 4,
+    ContextFile = 5,
+}
+impl PiReloadableResourceKind {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_RELOADABLE_RESOURCE_KIND_UNSPECIFIED",
+            Self::ExtensionEntrypoint => "PI_RELOADABLE_RESOURCE_KIND_EXTENSION_ENTRYPOINT",
+            Self::Skill => "PI_RELOADABLE_RESOURCE_KIND_SKILL",
+            Self::Prompt => "PI_RELOADABLE_RESOURCE_KIND_PROMPT",
+            Self::Theme => "PI_RELOADABLE_RESOURCE_KIND_THEME",
+            Self::ContextFile => "PI_RELOADABLE_RESOURCE_KIND_CONTEXT_FILE",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_RELOADABLE_RESOURCE_KIND_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_RELOADABLE_RESOURCE_KIND_EXTENSION_ENTRYPOINT" => Some(Self::ExtensionEntrypoint),
+            "PI_RELOADABLE_RESOURCE_KIND_SKILL" => Some(Self::Skill),
+            "PI_RELOADABLE_RESOURCE_KIND_PROMPT" => Some(Self::Prompt),
+            "PI_RELOADABLE_RESOURCE_KIND_THEME" => Some(Self::Theme),
+            "PI_RELOADABLE_RESOURCE_KIND_CONTEXT_FILE" => Some(Self::ContextFile),
+            _ => None,
+        }
+    }
+}
+/// Redacted handshake failures. They intentionally cannot carry the challenged
+/// cwd or session path values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiControlHandshakeFailure {
+    Unspecified = 0,
+    CommandMissing = 1,
+    CommandSourceMismatch = 2,
+    PromptRejected = 3,
+    MarkerMissing = 4,
+    MarkerAmbiguous = 5,
+    ChallengeMismatch = 6,
+    LaunchNonceMismatch = 7,
+    ExtensionEpochMismatch = 8,
+    CwdMismatch = 9,
+    SessionIdMismatch = 10,
+    SessionFileMismatch = 11,
+    RpcCrossCheckFailed = 12,
+    MarkerNotCurrentLeaf = 13,
+    BoundExceeded = 14,
+}
+impl PiControlHandshakeFailure {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_CONTROL_HANDSHAKE_FAILURE_UNSPECIFIED",
+            Self::CommandMissing => "PI_CONTROL_HANDSHAKE_FAILURE_COMMAND_MISSING",
+            Self::CommandSourceMismatch => "PI_CONTROL_HANDSHAKE_FAILURE_COMMAND_SOURCE_MISMATCH",
+            Self::PromptRejected => "PI_CONTROL_HANDSHAKE_FAILURE_PROMPT_REJECTED",
+            Self::MarkerMissing => "PI_CONTROL_HANDSHAKE_FAILURE_MARKER_MISSING",
+            Self::MarkerAmbiguous => "PI_CONTROL_HANDSHAKE_FAILURE_MARKER_AMBIGUOUS",
+            Self::ChallengeMismatch => "PI_CONTROL_HANDSHAKE_FAILURE_CHALLENGE_MISMATCH",
+            Self::LaunchNonceMismatch => "PI_CONTROL_HANDSHAKE_FAILURE_LAUNCH_NONCE_MISMATCH",
+            Self::ExtensionEpochMismatch => "PI_CONTROL_HANDSHAKE_FAILURE_EXTENSION_EPOCH_MISMATCH",
+            Self::CwdMismatch => "PI_CONTROL_HANDSHAKE_FAILURE_CWD_MISMATCH",
+            Self::SessionIdMismatch => "PI_CONTROL_HANDSHAKE_FAILURE_SESSION_ID_MISMATCH",
+            Self::SessionFileMismatch => "PI_CONTROL_HANDSHAKE_FAILURE_SESSION_FILE_MISMATCH",
+            Self::RpcCrossCheckFailed => "PI_CONTROL_HANDSHAKE_FAILURE_RPC_CROSS_CHECK_FAILED",
+            Self::MarkerNotCurrentLeaf => "PI_CONTROL_HANDSHAKE_FAILURE_MARKER_NOT_CURRENT_LEAF",
+            Self::BoundExceeded => "PI_CONTROL_HANDSHAKE_FAILURE_BOUND_EXCEEDED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_CONTROL_HANDSHAKE_FAILURE_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_CONTROL_HANDSHAKE_FAILURE_COMMAND_MISSING" => Some(Self::CommandMissing),
+            "PI_CONTROL_HANDSHAKE_FAILURE_COMMAND_SOURCE_MISMATCH" => Some(Self::CommandSourceMismatch),
+            "PI_CONTROL_HANDSHAKE_FAILURE_PROMPT_REJECTED" => Some(Self::PromptRejected),
+            "PI_CONTROL_HANDSHAKE_FAILURE_MARKER_MISSING" => Some(Self::MarkerMissing),
+            "PI_CONTROL_HANDSHAKE_FAILURE_MARKER_AMBIGUOUS" => Some(Self::MarkerAmbiguous),
+            "PI_CONTROL_HANDSHAKE_FAILURE_CHALLENGE_MISMATCH" => Some(Self::ChallengeMismatch),
+            "PI_CONTROL_HANDSHAKE_FAILURE_LAUNCH_NONCE_MISMATCH" => Some(Self::LaunchNonceMismatch),
+            "PI_CONTROL_HANDSHAKE_FAILURE_EXTENSION_EPOCH_MISMATCH" => Some(Self::ExtensionEpochMismatch),
+            "PI_CONTROL_HANDSHAKE_FAILURE_CWD_MISMATCH" => Some(Self::CwdMismatch),
+            "PI_CONTROL_HANDSHAKE_FAILURE_SESSION_ID_MISMATCH" => Some(Self::SessionIdMismatch),
+            "PI_CONTROL_HANDSHAKE_FAILURE_SESSION_FILE_MISMATCH" => Some(Self::SessionFileMismatch),
+            "PI_CONTROL_HANDSHAKE_FAILURE_RPC_CROSS_CHECK_FAILED" => Some(Self::RpcCrossCheckFailed),
+            "PI_CONTROL_HANDSHAKE_FAILURE_MARKER_NOT_CURRENT_LEAF" => Some(Self::MarkerNotCurrentLeaf),
+            "PI_CONTROL_HANDSHAKE_FAILURE_BOUND_EXCEEDED" => Some(Self::BoundExceeded),
+            _ => None,
+        }
+    }
+}
+/// Redacted adapter-local failure vocabulary. Values identify a failed
+/// invariant without carrying cwd, session paths, entry content, or secrets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiSessionIntegrityFailure {
+    Unspecified = 0,
+    PathMissing = 1,
+    PathOutsideAllowedRoot = 2,
+    Symlink = 3,
+    NotRegularFile = 4,
+    EmptyFile = 5,
+    FileTooLarge = 6,
+    UnstableFile = 7,
+    FramingInvalid = 8,
+    JsonInvalid = 9,
+    HeaderInvalid = 10,
+    EntryTypeUnsupported = 11,
+    EntryShapeInvalid = 12,
+    DuplicateEntryId = 13,
+    ParentInvalid = 14,
+    TreeInvalid = 15,
+    ReferenceInvalid = 16,
+    RpcEntriesMismatch = 17,
+    RpcLeafMismatch = 18,
+    SealIdentityMismatch = 19,
+    SealedPrefixMismatch = 20,
+    ControlMarkerMismatch = 21,
+    Io = 22,
+}
+impl PiSessionIntegrityFailure {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_SESSION_INTEGRITY_FAILURE_UNSPECIFIED",
+            Self::PathMissing => "PI_SESSION_INTEGRITY_FAILURE_PATH_MISSING",
+            Self::PathOutsideAllowedRoot => "PI_SESSION_INTEGRITY_FAILURE_PATH_OUTSIDE_ALLOWED_ROOT",
+            Self::Symlink => "PI_SESSION_INTEGRITY_FAILURE_SYMLINK",
+            Self::NotRegularFile => "PI_SESSION_INTEGRITY_FAILURE_NOT_REGULAR_FILE",
+            Self::EmptyFile => "PI_SESSION_INTEGRITY_FAILURE_EMPTY_FILE",
+            Self::FileTooLarge => "PI_SESSION_INTEGRITY_FAILURE_FILE_TOO_LARGE",
+            Self::UnstableFile => "PI_SESSION_INTEGRITY_FAILURE_UNSTABLE_FILE",
+            Self::FramingInvalid => "PI_SESSION_INTEGRITY_FAILURE_FRAMING_INVALID",
+            Self::JsonInvalid => "PI_SESSION_INTEGRITY_FAILURE_JSON_INVALID",
+            Self::HeaderInvalid => "PI_SESSION_INTEGRITY_FAILURE_HEADER_INVALID",
+            Self::EntryTypeUnsupported => "PI_SESSION_INTEGRITY_FAILURE_ENTRY_TYPE_UNSUPPORTED",
+            Self::EntryShapeInvalid => "PI_SESSION_INTEGRITY_FAILURE_ENTRY_SHAPE_INVALID",
+            Self::DuplicateEntryId => "PI_SESSION_INTEGRITY_FAILURE_DUPLICATE_ENTRY_ID",
+            Self::ParentInvalid => "PI_SESSION_INTEGRITY_FAILURE_PARENT_INVALID",
+            Self::TreeInvalid => "PI_SESSION_INTEGRITY_FAILURE_TREE_INVALID",
+            Self::ReferenceInvalid => "PI_SESSION_INTEGRITY_FAILURE_REFERENCE_INVALID",
+            Self::RpcEntriesMismatch => "PI_SESSION_INTEGRITY_FAILURE_RPC_ENTRIES_MISMATCH",
+            Self::RpcLeafMismatch => "PI_SESSION_INTEGRITY_FAILURE_RPC_LEAF_MISMATCH",
+            Self::SealIdentityMismatch => "PI_SESSION_INTEGRITY_FAILURE_SEAL_IDENTITY_MISMATCH",
+            Self::SealedPrefixMismatch => "PI_SESSION_INTEGRITY_FAILURE_SEALED_PREFIX_MISMATCH",
+            Self::ControlMarkerMismatch => "PI_SESSION_INTEGRITY_FAILURE_CONTROL_MARKER_MISMATCH",
+            Self::Io => "PI_SESSION_INTEGRITY_FAILURE_IO",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_SESSION_INTEGRITY_FAILURE_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_SESSION_INTEGRITY_FAILURE_PATH_MISSING" => Some(Self::PathMissing),
+            "PI_SESSION_INTEGRITY_FAILURE_PATH_OUTSIDE_ALLOWED_ROOT" => Some(Self::PathOutsideAllowedRoot),
+            "PI_SESSION_INTEGRITY_FAILURE_SYMLINK" => Some(Self::Symlink),
+            "PI_SESSION_INTEGRITY_FAILURE_NOT_REGULAR_FILE" => Some(Self::NotRegularFile),
+            "PI_SESSION_INTEGRITY_FAILURE_EMPTY_FILE" => Some(Self::EmptyFile),
+            "PI_SESSION_INTEGRITY_FAILURE_FILE_TOO_LARGE" => Some(Self::FileTooLarge),
+            "PI_SESSION_INTEGRITY_FAILURE_UNSTABLE_FILE" => Some(Self::UnstableFile),
+            "PI_SESSION_INTEGRITY_FAILURE_FRAMING_INVALID" => Some(Self::FramingInvalid),
+            "PI_SESSION_INTEGRITY_FAILURE_JSON_INVALID" => Some(Self::JsonInvalid),
+            "PI_SESSION_INTEGRITY_FAILURE_HEADER_INVALID" => Some(Self::HeaderInvalid),
+            "PI_SESSION_INTEGRITY_FAILURE_ENTRY_TYPE_UNSUPPORTED" => Some(Self::EntryTypeUnsupported),
+            "PI_SESSION_INTEGRITY_FAILURE_ENTRY_SHAPE_INVALID" => Some(Self::EntryShapeInvalid),
+            "PI_SESSION_INTEGRITY_FAILURE_DUPLICATE_ENTRY_ID" => Some(Self::DuplicateEntryId),
+            "PI_SESSION_INTEGRITY_FAILURE_PARENT_INVALID" => Some(Self::ParentInvalid),
+            "PI_SESSION_INTEGRITY_FAILURE_TREE_INVALID" => Some(Self::TreeInvalid),
+            "PI_SESSION_INTEGRITY_FAILURE_REFERENCE_INVALID" => Some(Self::ReferenceInvalid),
+            "PI_SESSION_INTEGRITY_FAILURE_RPC_ENTRIES_MISMATCH" => Some(Self::RpcEntriesMismatch),
+            "PI_SESSION_INTEGRITY_FAILURE_RPC_LEAF_MISMATCH" => Some(Self::RpcLeafMismatch),
+            "PI_SESSION_INTEGRITY_FAILURE_SEAL_IDENTITY_MISMATCH" => Some(Self::SealIdentityMismatch),
+            "PI_SESSION_INTEGRITY_FAILURE_SEALED_PREFIX_MISMATCH" => Some(Self::SealedPrefixMismatch),
+            "PI_SESSION_INTEGRITY_FAILURE_CONTROL_MARKER_MISMATCH" => Some(Self::ControlMarkerMismatch),
+            "PI_SESSION_INTEGRITY_FAILURE_IO" => Some(Self::Io),
+            _ => None,
+        }
+    }
+}
 // @@protoc_insertion_point(module)
