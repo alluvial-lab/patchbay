@@ -138,6 +138,8 @@ export interface CommandView {
   lsn: bigint;
   failureCode?: FailureCode;
   race?: string;
+  /** Durable spawn-claim lifecycle, independent from the command lifecycle and failure. */
+  spawnClaimDisposition?: SpawnClaimDisposition;
   /** Adapter-reported continuation outcome, folded only from promotion evidence. */
   continuationContextStatus?: ContinuationContextStatus;
   pendingControlRequest?: PendingControlRequest;
@@ -760,6 +762,12 @@ function foldSpawnClaim(model: PresentationModel, event: SpawnClaimEvent, lsn: b
       const operation = event.mutation.value.acceptedOperation?.operation;
       if (!operation) throw new Error("accepted spawn claim is missing its Operation");
       foldOperation(model, operation, lsn);
+      const commandId = required(operation.commandId?.value, "accepted spawn claim command id");
+      const command = model.commands.get(commandId)!;
+      model.commands.set(commandId, {
+        ...command,
+        spawnClaimDisposition: SpawnClaimDisposition.ACTIVE,
+      });
       return;
     }
     case "dispositionChanged": {
@@ -767,13 +775,14 @@ function foldSpawnClaim(model: PresentationModel, event: SpawnClaimEvent, lsn: b
       const commandId = required(change.claimOperationId?.value, "spawn claim command id");
       const command = model.commands.get(commandId);
       if (!command) return;
-      if (change.toDisposition === SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION) {
-        model.commands.set(commandId, {
-          ...command,
-          // Claim poison is retry-risk evidence, not a new CommandState.
-          failureCode: FailureCode.EXECUTION_OUTCOME_UNKNOWN,
-        });
+      if (change.toDisposition === SpawnClaimDisposition.UNSPECIFIED) {
+        throw new Error("spawn claim disposition change has unspecified target");
       }
+      model.commands.set(commandId, {
+        ...command,
+        // Claim poison/release is retry-risk evidence, not a CommandState or command failure.
+        spawnClaimDisposition: change.toDisposition,
+      });
       return;
     }
     case undefined:
@@ -814,6 +823,7 @@ function foldSpawnPromotion(
       state: OperationState.COMPLETED,
       lsn,
       failureCode: undefined,
+      spawnClaimDisposition: SpawnClaimDisposition.PROMOTED,
       continuationContextStatus: claim.expectedPrior ? continuationContextStatus : undefined,
       pendingControlRequest: undefined,
       history: [
@@ -861,7 +871,14 @@ function foldSpawnPromotion(
       model.sessions.set(candidateKey, { ...snapshotted, logicalTargetId });
     }
   }
-  const completed = model.commands.get(commandId)!;
+  let completed = model.commands.get(commandId)!;
+  if (completed.spawnClaimDisposition !== SpawnClaimDisposition.PROMOTED) {
+    completed = {
+      ...completed,
+      spawnClaimDisposition: SpawnClaimDisposition.PROMOTED,
+    };
+    model.commands.set(commandId, completed);
+  }
   if (!completed.target) {
     model.commands.set(commandId, {
       ...completed,

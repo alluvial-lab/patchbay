@@ -61,6 +61,9 @@ import {
   SecurityLockdownEventSchema,
   SessionStateSchema,
   SpawnClaimAcceptedSchema,
+  SpawnClaimDisposition,
+  SpawnClaimDispositionChangedSchema,
+  SpawnClaimEventSchema,
   SpawnGenerationClaimSchema,
   SpawnPromotionCommittedSchema,
   SpawnPromotionStagedEvidenceSchema,
@@ -141,11 +144,12 @@ test("spawn promotion folds the generated continuation context outcome", () => {
     activity: SessionActivityState.IDLE,
     continuationContextStatus: ContinuationContextStatus.NEW_CONTEXT,
   });
+  const accepted = create(SpawnClaimAcceptedSchema, {
+    acceptedOperation: create(AcceptedOperationSchema, { operation }),
+    claim,
+  });
   const promotion = create(SpawnPromotionCommittedSchema, {
-    acceptedClaim: create(SpawnClaimAcceptedSchema, {
-      acceptedOperation: create(AcceptedOperationSchema, { operation }),
-      claim,
-    }),
+    acceptedClaim: accepted,
     stagedSuccessor: create(SpawnPromotionStagedEvidenceSchema, {
       staged: create(SpawnSuccessorEvidenceStagedSchema, {
         exactClaim: claim,
@@ -157,19 +161,28 @@ test("spawn promotion folds the generated continuation context outcome", () => {
     promotedRuntime: promoted,
   });
 
-  const model = fold(
-    emptyPresentationModel(),
+  const events = [
+    spawnClaimAcceptedEvent(1n, accepted),
+    transitionEvent(2n, commandId.value, OperationState.ACCEPTED, OperationState.DELIVERED),
+    spawnClaimDispositionEvent(
+      3n,
+      commandId.value,
+      SpawnClaimDisposition.ACTIVE,
+      SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION,
+    ),
     stored(
-      1n,
+      4n,
       StoredEventKind.SPAWN_PROMOTION_COMMITTED,
       SpawnPromotionCommittedSchema,
       promotion,
     ),
-  );
-  assert.equal(
-    model.commands.get(commandId.value)?.continuationContextStatus,
-    ContinuationContextStatus.NEW_CONTEXT,
-  );
+  ];
+  const model = events.reduce(fold, emptyPresentationModel());
+  const command = model.commands.get(commandId.value)!;
+  assert.equal(command.continuationContextStatus, ContinuationContextStatus.NEW_CONTEXT);
+  assert.equal(command.state, OperationState.COMPLETED);
+  assert.equal(command.spawnClaimDisposition, SpawnClaimDisposition.PROMOTED);
+  assert.equal(command.failureCode, undefined);
 });
 
 test("fold is pure and registration exposes the stable identity tuple", () => {
@@ -458,6 +471,129 @@ test("partial, mixed, and legacy resource scopes never become command targets", 
     }),
   ];
   for (const scope of rejected) assert.equal(operationTargetFromScope(scope), undefined);
+});
+
+test("spawn claim poison survives cancelled, expired, and failed command outcomes", () => {
+  const terminalCases = [
+    ["spawn-cancelled", OperationState.CANCELLED, FailureCode.CANCELLED],
+    ["spawn-expired", OperationState.EXPIRED, FailureCode.EXPIRED],
+    ["spawn-failed", OperationState.FAILED, FailureCode.EXECUTION_FAILED],
+  ] as const;
+
+  for (const [commandId, terminalState, failureCode] of terminalCases) {
+    let model = fold(
+      emptyPresentationModel(),
+      spawnClaimAcceptedEvent(1n, spawnClaimAccepted(commandId)),
+    );
+    model = fold(
+      model,
+      transitionEvent(2n, commandId, OperationState.ACCEPTED, OperationState.DELIVERED),
+    );
+    model = fold(
+      model,
+      spawnClaimDispositionEvent(
+        3n,
+        commandId,
+        SpawnClaimDisposition.ACTIVE,
+        SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION,
+      ),
+    );
+    model = fold(
+      model,
+      transitionEvent(4n, commandId, OperationState.DELIVERED, terminalState, failureCode),
+    );
+
+    const command = model.commands.get(commandId)!;
+    assert.equal(command.state, terminalState);
+    assert.equal(command.failureCode, failureCode);
+    assert.equal(
+      command.spawnClaimDisposition,
+      SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION,
+      "terminal command state must not erase durable external-effect ambiguity",
+    );
+  }
+});
+
+test("proved-none claim release clears retry risk without rewriting terminal command outcome", () => {
+  const commandId = "spawn-proved-none";
+  let model = fold(
+    emptyPresentationModel(),
+    spawnClaimAcceptedEvent(1n, spawnClaimAccepted(commandId)),
+  );
+  model = fold(
+    model,
+    transitionEvent(2n, commandId, OperationState.ACCEPTED, OperationState.DELIVERED),
+  );
+  model = fold(
+    model,
+    spawnClaimDispositionEvent(
+      3n,
+      commandId,
+      SpawnClaimDisposition.ACTIVE,
+      SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION,
+    ),
+  );
+  model = fold(
+    model,
+    transitionEvent(4n, commandId, OperationState.DELIVERED, OperationState.CANCELLED, FailureCode.CANCELLED),
+  );
+  model = fold(
+    model,
+    spawnClaimDispositionEvent(
+      5n,
+      commandId,
+      SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION,
+      SpawnClaimDisposition.RELEASED_NO_EXTERNAL_EFFECT,
+    ),
+  );
+
+  const command = model.commands.get(commandId)!;
+  assert.equal(command.state, OperationState.CANCELLED);
+  assert.equal(command.failureCode, FailureCode.CANCELLED);
+  assert.equal(command.spawnClaimDisposition, SpawnClaimDisposition.RELEASED_NO_EXTERNAL_EFFECT);
+});
+
+test("reconnect replay retains poisoned claim retry risk after terminal command replay", () => {
+  const commandId = "spawn-reconnect-poison";
+  const replayEvents = [
+    spawnClaimAcceptedEvent(1n, spawnClaimAccepted(commandId)),
+    transitionEvent(2n, commandId, OperationState.ACCEPTED, OperationState.DELIVERED),
+    spawnClaimDispositionEvent(
+      3n,
+      commandId,
+      SpawnClaimDisposition.ACTIVE,
+      SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION,
+    ),
+    transitionEvent(
+      4n,
+      commandId,
+      OperationState.DELIVERED,
+      OperationState.CANCELLED,
+      FailureCode.CANCELLED,
+    ),
+  ];
+  const model = replaceFromSnapshots(
+    {
+      session: create(SessionSnapshotSchema, {
+        authorityDomainId: DOMAIN,
+        snapshotLsn: create(LsnSchema, { value: 4n }),
+        coreGeneration: CORE_GENERATION,
+      }),
+      resource: create(ResourceSnapshotSchema, {
+        authorityDomainId: DOMAIN,
+        snapshotLsn: create(LsnSchema, { value: 4n }),
+        coreGeneration: CORE_GENERATION,
+      }),
+    },
+    replayEvents,
+  );
+
+  const command = model.commands.get(commandId)!;
+  assert.equal(command.state, OperationState.CANCELLED);
+  assert.equal(command.failureCode, FailureCode.CANCELLED);
+  assert.equal(command.spawnClaimDisposition, SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION);
+  assert.equal(model.cursor, 4n);
+  assert.equal(model.reconciled, true);
 });
 
 test("first durable command terminal remains projected after a late terminal candidate", () => {
@@ -848,6 +984,69 @@ function tokenResourceObservation(lsn: bigint, schemaRef: string, payload: Recor
   );
 }
 
+function spawnClaimAccepted(commandId: string): MessageShape<typeof SpawnClaimAcceptedSchema> {
+  const id = create(CommandIdSchema, { value: commandId });
+  return create(SpawnClaimAcceptedSchema, {
+    acceptedOperation: create(AcceptedOperationSchema, {
+      operation: create(OperationSchema, {
+        commandId: id,
+        authorityDomainId: DOMAIN,
+        kind: OperationKind.SPAWN,
+        targetScope: create(TargetScopeSchema, {
+          kind: TargetScopeKind.ADAPTER,
+          adapterId,
+        }),
+        idempotencyKey: `key-${commandId}`,
+      }),
+    }),
+    claim: create(SpawnGenerationClaimSchema, {
+      authorityDomainId: DOMAIN,
+      claimOperationId: id,
+      logicalTargetId: create(LogicalTargetIdSchema, { value: `logical-${commandId}` }),
+      claimedGeneration: create(GenerationSchema, { value: 1n }),
+    }),
+  });
+}
+
+function spawnClaimAcceptedEvent(
+  lsn: bigint,
+  accepted: MessageShape<typeof SpawnClaimAcceptedSchema>,
+): SubscribeEvent {
+  return stored(
+    lsn,
+    StoredEventKind.SPAWN_CLAIM,
+    SpawnClaimEventSchema,
+    create(SpawnClaimEventSchema, {
+      authorityDomainId: DOMAIN,
+      mutation: { case: "accepted", value: accepted },
+    }),
+  );
+}
+
+function spawnClaimDispositionEvent(
+  lsn: bigint,
+  commandId: string,
+  fromDisposition: SpawnClaimDisposition,
+  toDisposition: SpawnClaimDisposition,
+): SubscribeEvent {
+  return stored(
+    lsn,
+    StoredEventKind.SPAWN_CLAIM,
+    SpawnClaimEventSchema,
+    create(SpawnClaimEventSchema, {
+      authorityDomainId: DOMAIN,
+      mutation: {
+        case: "dispositionChanged",
+        value: create(SpawnClaimDispositionChangedSchema, {
+          claimOperationId: create(CommandIdSchema, { value: commandId }),
+          fromDisposition,
+          toDisposition,
+        }),
+      },
+    }),
+  );
+}
+
 function operationEvent(lsn: bigint, commandId: string): SubscribeEvent {
   return stored(
     lsn,
@@ -918,6 +1117,7 @@ function transitionEvent(
   commandId: string,
   fromState: OperationState,
   toState: OperationState,
+  failureCode = FailureCode.UNSPECIFIED,
 ): SubscribeEvent {
   return stored(
     lsn,
@@ -927,6 +1127,7 @@ function transitionEvent(
       commandId: create(CommandIdSchema, { value: commandId }),
       fromState,
       toState,
+      failureCode,
     }),
   );
 }

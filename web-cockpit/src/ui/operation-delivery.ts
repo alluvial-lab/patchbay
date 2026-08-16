@@ -2,6 +2,7 @@ import {
   FailureCode,
   OperationKind,
   OperationState,
+  SpawnClaimDisposition,
 } from "@patchbay/contracts";
 
 import type { CommandView } from "../domain/model.js";
@@ -40,6 +41,14 @@ export function renderOperationDelivery(
 
   if (command.failureCode !== undefined) {
     wrapper.append(renderFailureBanner(document, command.failureCode));
+  }
+  if (
+    command.spawnClaimDisposition === SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION
+    && command.failureCode !== FailureCode.EXECUTION_OUTCOME_UNKNOWN
+  ) {
+    // Claim poison survives terminal CommandState changes and uses the canonical
+    // retry-risk warning without exposing adapter-private reconciliation evidence.
+    wrapper.append(renderFailureBanner(document, FailureCode.EXECUTION_OUTCOME_UNKNOWN));
   }
 
   // Keep an action slot in every state. Controls appear only when the

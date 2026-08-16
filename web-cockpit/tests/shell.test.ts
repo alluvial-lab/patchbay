@@ -30,6 +30,7 @@ import {
   RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
+  SpawnClaimDisposition,
   SubmissionOutcome,
   SubmissionResultSchema,
   TargetScopeKind,
@@ -104,6 +105,34 @@ test("shared Operation delivery renders lifecycle, failure, and contextual actio
   assert.match(delivery.textContent!, /Last transition: accepted → running/);
   delivery.querySelector<HTMLButtonElement>('[aria-label="Cancel running operation"]')!.click();
   assert.equal(cancelled, command.id);
+});
+
+test("poisoned spawn claim warning renders alongside terminal outcome until disposition releases", () => {
+  const dom = new JSDOM();
+  const command = runningCommand(session("spawn-poison").identity, "spawn-poisoned");
+  command.operation.kind = OperationKind.SPAWN;
+  command.state = OperationState.CANCELLED;
+  command.failureCode = FailureCode.CANCELLED;
+  command.spawnClaimDisposition = SpawnClaimDisposition.POISONED_PENDING_RECONCILIATION;
+  command.history = [
+    { state: OperationState.DELIVERED, lsn: 2n },
+    { state: OperationState.CANCELLED, lsn: 4n, failureCode: FailureCode.CANCELLED },
+  ];
+
+  const poisoned = renderOperationDelivery(dom.window.document, command);
+  assert.deepEqual(
+    [...poisoned.querySelectorAll<HTMLElement>(".failure-banner__term")].map((term) => term.textContent),
+    ["cancelled", "execution_outcome_unknown"],
+  );
+  assert.match(poisoned.textContent!, /Execution may have occurred; evaluate adapter idempotency before retrying/);
+
+  command.spawnClaimDisposition = SpawnClaimDisposition.RELEASED_NO_EXTERNAL_EFFECT;
+  const released = renderOperationDelivery(dom.window.document, command);
+  assert.deepEqual(
+    [...released.querySelectorAll<HTMLElement>(".failure-banner__term")].map((term) => term.textContent),
+    ["cancelled"],
+  );
+  assert.doesNotMatch(released.textContent!, /execution_outcome_unknown/);
 });
 
 test("delivery reserves one action slot and exposes only state-valid actions", () => {

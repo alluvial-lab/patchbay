@@ -155,3 +155,11 @@ No additional authority or data-integrity blocker was found in the implemented c
 6. rerun the same full suite and a fresh integrated rereview.
 
 Do not advance `research-handoff-spawn` to `done` on this pass.
+
+## M2 fixed — independent cockpit claim retry risk (2026-08-16)
+
+MATERIAL 2 is fixed in the web cockpit. `CommandView.spawnClaimDisposition` now retains the generated `SpawnClaimDisposition` independently from the command's `failureCode`; accepted claims initialize it, every durable disposition change updates it, and atomic promotion records `PROMOTED`. The delivery component renders the canonical `execution_outcome_unknown` warning while the disposition is `POISONED_PENDING_RECONCILIATION`, alongside any terminal command failure banner. A later proved-none release or promotion clears the warning through claim disposition rather than by reinterpreting `CommandState`. Only the generated disposition crosses into the presentation model; adapter-private evidence bytes remain unprojected.
+
+This is deliberately an enum projection rather than a new protocol or presentation state: claim lifecycle and command lifecycle remain separate sources of truth, and the existing canonical failure renderer supplies retry-risk copy. `docs/UX.md` already states this required separation and needed no wording change.
+
+Regression coverage now exercises poison→cancelled, poison→expired, poison→failed, proved-none release after terminality, post-poison promotion, and reconnect replay. The explicit mutation restoring poison into the overwritable `failureCode` field was killed by the poison→cancelled/expired/failed regression (`1 !== 3`, active rather than poisoned disposition); `git restore` then reinstated the fixed source before verification.
