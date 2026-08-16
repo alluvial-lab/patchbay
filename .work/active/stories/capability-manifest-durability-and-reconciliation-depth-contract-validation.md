@@ -1,7 +1,7 @@
 ---
 id: capability-manifest-durability-and-reconciliation-depth-contract-validation
 kind: story
-stage: review
+stage: implementing
 tags: [adapter, protocol, verification]
 parent: capability-manifest-durability-and-reconciliation-depth
 depends_on: []
