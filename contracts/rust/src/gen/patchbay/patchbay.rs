@@ -3828,8 +3828,6 @@ pub struct AdapterCapabilitySummary {
     pub cancellation_support: bool,
     #[prost(bool, tag="6")]
     pub session_replacement_support: bool,
-    #[prost(enumeration="IdempotencyStrength", tag="7")]
-    pub idempotency_strength: i32,
     #[prost(string, tag="8")]
     pub attachment_method_kind: ::prost::alloc::string::String,
     #[prost(enumeration="PayloadContentType", tag="9")]
@@ -3842,6 +3840,8 @@ pub struct AdapterCapabilitySummary {
     pub target_categories: ::prost::alloc::vec::Vec<i32>,
     #[prost(message, repeated, tag="13")]
     pub resource_capabilities: ::prost::alloc::vec::Vec<ResourceCapability>,
+    #[prost(message, optional, tag="14")]
+    pub assurance: ::core::option::Option<AdapterAssuranceManifest>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AdapterStatus {

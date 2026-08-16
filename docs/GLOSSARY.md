@@ -82,7 +82,11 @@ The lifecycle registry for an Elicitation. Initial state is `opened`; transition
 
 ## Adapter capability
 
-A declaration an adapter makes about the targets, Operations, and guarantees it supports: generated target categories; supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values); streaming, cancellation, and session-replacement support; a runtime-session snapshot tier; exact per-`ResourceKind` snapshot tiers and resource projection contracts; idempotency strength; attachment method; diagnostic reporting; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
+A declaration an adapter makes about the targets, Operations, and guarantees it supports: generated target categories; supported OperationKinds (and, for `spawn`, supported `target_spec.shape` values); streaming, cancellation, and session-replacement support; a runtime-session snapshot tier; exact per-`ResourceKind` snapshot tiers and resource projection contracts; one complete versioned assurance manifest; attachment method; diagnostic reporting; and known failure modes. Capability declarations are advisory for control-surface UX only — they are not an authority gate and not a delivery gate. The adapter is the authority on its own support, reported at delivery time.
+
+## Adapter assurance manifest
+
+The complete generated static-guarantee block inside an Adapter capability. Its frozen V1 declares deduplication strength, continuation-proof support, external cursor support, generation-fence support, reconciliation strength, and the action for an unproven outcome. Fresh declarations must encode every dimension; uncertainty is explicit false/none. Durable pre-assurance registration replay normalizes to the same conservative V1 consumer shape. The manifest is not installed/reachable state, authority, delivery evidence, or proof that an adapter's positive external-runtime claim is honest. `unproven_outcome_action` only presents the closed `unknown` or `manual-required` qualifier alongside an existing canonical unknown outcome.
 
 ## Adapter target category
 

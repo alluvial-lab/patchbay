@@ -199,19 +199,22 @@ message AdapterStatusQuery {
 }
 
 message AdapterCapabilitySummary {
+  reserved 7;
+  reserved "idempotency_strength";
+
   repeated OperationKind supported_operation_kinds = 1;
   repeated string supported_target_spec_shapes = 2;
   bool streaming_support = 3;
   AdapterSnapshotSupport session_snapshot_support = 4;
   bool cancellation_support = 5;
   bool session_replacement_support = 6;
-  IdempotencyStrength idempotency_strength = 7;
   string attachment_method_kind = 8;
   PayloadContentType attachment_descriptor_content_type = 9;
   repeated FailureCode known_failure_modes = 10;
   AdapterDiagnosticReportingCapability diagnostic_reporting = 11;
   repeated AdapterTargetCategory target_categories = 12;
   repeated ResourceCapability resource_capabilities = 13;
+  AdapterAssuranceManifest assurance = 14;
 }
 
 message AdapterStatus {

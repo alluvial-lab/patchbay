@@ -154,8 +154,9 @@ unknown submission outcome.
 - **`execution_outcome_unknown` requires retry judgment.** If the adapter
   stream is lost after a command reaches `running`, the core records
   `failed(execution_outcome_unknown)`: the action may already have executed.
-  Retry safety is determined by the adapter's `idempotency_strength`, not by
-  the `failed` state alone. Commands still at `accepted` or `delivered` remain
+  Retry safety combines this canonical failure with the adapter's
+  `assurance.v1.deduplication_strength`; neither `failed` nor capability alone
+  determines the decision. Commands still at `accepted` or `delivered` remain
   eligible for bounded redelivery because execution is not known to have
   started.
 

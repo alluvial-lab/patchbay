@@ -4,18 +4,23 @@ import {
   AdapterDiagnosticSeverity,
   AdapterDiagnosticState,
   AdapterIdSchema,
+  AdapterReconciliationStrength,
   AdapterStatusQuerySchema,
   AuthorityDomainIdSchema,
   DiagnosticsQuerySchema,
   FailureCode,
+  IdempotencyStrength,
   OperationKind,
   OperationSchema,
   OperationState,
   PayloadContentType,
   PayloadEnvelopeSchema,
+  ReconciliationAction,
   SubmissionOutcome,
   TargetScopeKind,
   TargetScopeSchema,
+  type AdapterAssuranceManifestV1,
+  type AdapterCapabilitySummary,
   type AuthorityDomainId,
   type AuditRecord,
   type Operation,
@@ -29,6 +34,40 @@ import {
   type PresentationModel,
   type SessionIdentity,
 } from "./model.js";
+
+export function adapterAssuranceV1(
+  capability: AdapterCapabilitySummary | undefined,
+): AdapterAssuranceManifestV1 | undefined {
+  const contract = capability?.assurance?.contract;
+  if (contract?.case !== "v1") return undefined;
+  const assurance = contract.value;
+  if (assurance.continuationProofSupport === undefined
+      || assurance.cursorSupport === undefined
+      || assurance.generationFenceSupport === undefined
+      || !knownNonSentinel(IdempotencyStrength, assurance.deduplicationStrength)
+      || !knownNonSentinel(AdapterReconciliationStrength, assurance.reconciliationStrength)
+      || !knownNonSentinel(ReconciliationAction, assurance.unprovenOutcomeAction)) {
+    return undefined;
+  }
+  return assurance;
+}
+
+export function unknownOutcomeQualifier(
+  capability: AdapterCapabilitySummary | undefined,
+): string | undefined {
+  const assurance = adapterAssuranceV1(capability);
+  if (!assurance) return undefined;
+  return assurance.unprovenOutcomeAction === ReconciliationAction.MANUAL_REQUIRED
+    ? "manual-required"
+    : "unknown";
+}
+
+function knownNonSentinel(
+  registry: Record<string | number, string | number>,
+  value: number,
+): boolean {
+  return value !== 0 && typeof registry[value] === "string";
+}
 
 export function adapterConnectionPresentation(
   state: AdapterDiagnosticState,

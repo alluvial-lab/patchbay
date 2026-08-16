@@ -2,16 +2,21 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import {
+  AdapterAssuranceManifestSchema,
+  AdapterAssuranceManifestV1Schema,
+  AdapterCapabilitySummarySchema,
   AdapterDiagnosticDetailSchema,
   AdapterDiagnosticPayloadSchema,
   AdapterDiagnosticSeverity,
   AdapterDiagnosticState,
+  AdapterReconciliationStrength,
   AdapterStatusPageSchema,
   AdapterStatusSchema,
   AuditRecordSchema,
   AuthorityDomainIdSchema,
   EventIdSchema,
   GenerationSchema,
+  IdempotencyStrength,
   OperationState,
   DiagnosticsQuerySchema,
   FailureCode,
@@ -23,9 +28,11 @@ import {
   TargetScopeKind,
   TargetScopeSchema,
   QueryDiagnosticsResponseSchema,
+  ReconciliationAction,
   SubmissionOutcome,
 } from "@patchbay/contracts";
 import {
+  adapterAssuranceV1,
   adapterConnectionPresentation,
   buildAdapterStatusQueryOperation,
   foldAdapterDiagnosticObservation,
@@ -44,6 +51,32 @@ test("adapter status query uses generated diagnostics payload and explicit recen
   const decoded = requirePayload(operation.payload?.payload);
   assert.equal(decoded.query.case, "adapters");
   assert.equal(decoded.query.value.recentDiagnosticLimit, 20);
+});
+
+test("adapter diagnostics narrow the generated assurance oneof and fail closed", () => {
+  const capability = create(AdapterCapabilitySummarySchema, {
+    assurance: create(AdapterAssuranceManifestSchema, {
+      contract: {
+        case: "v1",
+        value: create(AdapterAssuranceManifestV1Schema, {
+          deduplicationStrength: IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
+          continuationProofSupport: false,
+          cursorSupport: false,
+          generationFenceSupport: false,
+          reconciliationStrength: AdapterReconciliationStrength.NONE,
+          unprovenOutcomeAction: ReconciliationAction.MANUAL_REQUIRED,
+        }),
+      },
+    }),
+  });
+  assert.equal(
+    adapterAssuranceV1(capability)?.deduplicationStrength,
+    IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
+  );
+  assert.equal(adapterAssuranceV1(create(AdapterCapabilitySummarySchema)), undefined);
+  if (capability.assurance?.contract.case !== "v1") assert.fail("fixture assurance V1");
+  capability.assurance.contract.value.cursorSupport = undefined;
+  assert.equal(adapterAssuranceV1(capability), undefined);
 });
 
 test("live diagnostics merge by source LSN and never changes adapter connectivity", () => {

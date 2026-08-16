@@ -4,8 +4,11 @@ import test from "node:test";
 
 import { create } from "@bufbuild/protobuf";
 import {
+  AdapterAssuranceManifestSchema,
+  AdapterAssuranceManifestV1Schema,
   AdapterCapabilitySummarySchema,
   AdapterIdSchema,
+  AdapterReconciliationStrength,
   AdapterStatusSchema,
   AuthorityDomainIdSchema,
   CommandIdSchema,
@@ -14,6 +17,7 @@ import {
   ExternalRuntimeRefSchema,
   FailureCode,
   GenerationSchema,
+  IdempotencyStrength,
   LocalSubmissionState,
   LogicalTargetIdSchema,
   OperationKind,
@@ -22,6 +26,7 @@ import {
   PayloadContentType,
   PayloadEnvelopeSchema,
   QuestionContractSchema,
+  ReconciliationAction,
   ResourceFreshnessState,
   ResponseContractKind,
   RuntimeGenerationRefSchema,
@@ -61,6 +66,7 @@ import {
   operationKindLabel,
   operationStateName,
   renderOperationDelivery,
+  retrySafetyPresentation,
 } from "../src/ui/operation-delivery.js";
 import { renderInstructionCard, renderSessionDetail } from "../src/ui/session-detail.js";
 import { renderSessionRow } from "../src/ui/session-list.js";
@@ -133,6 +139,69 @@ test("poisoned spawn claim warning renders alongside terminal outcome until disp
     ["cancelled"],
   );
   assert.doesNotMatch(released.textContent!, /execution_outcome_unknown/);
+});
+
+test("retry safety combines canonical failure with generated assurance and never capability alone", () => {
+  const dom = new JSDOM();
+  const command = failedCommand(session("retry-matrix").identity);
+  command.failureCode = FailureCode.EXECUTION_OUTCOME_UNKNOWN;
+
+  for (const [strength, modifier, label] of [
+    [IdempotencyStrength.END_TO_END, "safe", "safe to retry"],
+    [IdempotencyStrength.AT_PATCHBAY_BOUNDARY, "maybe", "retry may double-execute"],
+    [IdempotencyStrength.NONE, "unsafe", "retry will double-execute"],
+  ] as const) {
+    const capability = assuranceCapability(strength, ReconciliationAction.MANUAL_REQUIRED);
+    const rendered = renderOperationDelivery(
+      dom.window.document,
+      command,
+      undefined,
+      false,
+      capability,
+    );
+    const indicator = rendered.querySelector<HTMLElement>(".retry-safety-indicator");
+    assert.equal(indicator?.classList.contains(`retry-safety-indicator--${modifier}`), true);
+    assert.match(indicator?.textContent ?? "", new RegExp(label));
+    assert.match(rendered.textContent ?? "", /Outcome qualifier: manual-required/);
+  }
+
+  const unknownQualified = renderOperationDelivery(
+    dom.window.document,
+    command,
+    undefined,
+    false,
+    assuranceCapability(
+      IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
+      ReconciliationAction.NONE,
+    ),
+  );
+  assert.match(unknownQualified.textContent ?? "", /Outcome qualifier: unknown/);
+  assert.doesNotMatch(unknownQualified.textContent ?? "", /manual-required/);
+
+  const maximal = assuranceCapability(
+    IdempotencyStrength.END_TO_END,
+    ReconciliationAction.MANUAL_REQUIRED,
+  );
+  assert.equal(
+    retrySafetyPresentation(FailureCode.CANCELLED, maximal),
+    undefined,
+    "capability alone cannot create a retry decision",
+  );
+  const noFailure = runningCommand(session("capability-alone").identity);
+  const rendered = renderOperationDelivery(
+    dom.window.document,
+    noFailure,
+    undefined,
+    false,
+    maximal,
+  );
+  assert.equal(rendered.querySelector(".retry-safety-indicator"), null);
+
+  const preExecution = retrySafetyPresentation(
+    FailureCode.TARGET_OFFLINE,
+    assuranceCapability(IdempotencyStrength.NONE, ReconciliationAction.NONE),
+  );
+  assert.equal(preExecution?.modifier, "safe");
 });
 
 test("poisoned spawn exposes permanent target abandonment and terminal disposition removes it", () => {
@@ -1072,6 +1141,10 @@ function withAdapterCapabilities(
     adapterId: "pi",
     status: create(AdapterStatusSchema, {
       capability: create(AdapterCapabilitySummarySchema, {
+        ...assuranceCapability(
+          IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
+          ReconciliationAction.MANUAL_REQUIRED,
+        ),
         cancellationSupport,
         supportedOperationKinds,
       }),
@@ -1080,6 +1153,27 @@ function withAdapterCapabilities(
     recentDiagnostics: [],
   });
   return model;
+}
+
+function assuranceCapability(
+  deduplicationStrength: IdempotencyStrength,
+  unprovenOutcomeAction: ReconciliationAction,
+) {
+  return create(AdapterCapabilitySummarySchema, {
+    assurance: create(AdapterAssuranceManifestSchema, {
+      contract: {
+        case: "v1",
+        value: create(AdapterAssuranceManifestV1Schema, {
+          deduplicationStrength,
+          continuationProofSupport: false,
+          cursorSupport: false,
+          generationFenceSupport: false,
+          reconciliationStrength: AdapterReconciliationStrength.NONE,
+          unprovenOutcomeAction,
+        }),
+      },
+    }),
+  });
 }
 
 function runningCommand(

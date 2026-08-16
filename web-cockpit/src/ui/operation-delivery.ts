@@ -1,12 +1,18 @@
 import {
   FailureCode,
+  IdempotencyStrength,
   OperationKind,
   OperationState,
   SpawnClaimDisposition,
+  type AdapterCapabilitySummary,
 } from "@patchbay/contracts";
 
 import { spawnClaimDispositionName } from "@patchbay/operator-domain";
 
+import {
+  adapterAssuranceV1,
+  unknownOutcomeQualifier,
+} from "../domain/adapter-diagnostics.js";
 import type { CommandView } from "../domain/model.js";
 import { renderIcon, type IconName } from "./icons.js";
 
@@ -21,6 +27,7 @@ export function renderOperationDelivery(
   command: CommandView,
   actions?: OperationDeliveryActions,
   lockdownActive = false,
+  capability?: AdapterCapabilitySummary,
 ): HTMLElement {
   const wrapper = document.createElement("div");
   wrapper.className = "delivery-line";
@@ -43,7 +50,7 @@ export function renderOperationDelivery(
   if (command.race) wrapper.append(textElement(document, "span", "command-step__race", command.race));
 
   if (command.failureCode !== undefined) {
-    wrapper.append(renderFailureBanner(document, command.failureCode));
+    wrapper.append(renderFailureBanner(document, command.failureCode, undefined, capability));
   }
   if (command.spawnClaimDisposition !== undefined) {
     wrapper.append(textElement(
@@ -59,7 +66,12 @@ export function renderOperationDelivery(
   ) {
     // Claim poison survives terminal CommandState changes and uses the canonical
     // retry-risk warning without exposing adapter-private reconciliation evidence.
-    wrapper.append(renderFailureBanner(document, FailureCode.EXECUTION_OUTCOME_UNKNOWN));
+    wrapper.append(renderFailureBanner(
+      document,
+      FailureCode.EXECUTION_OUTCOME_UNKNOWN,
+      undefined,
+      capability,
+    ));
   }
 
   // Keep an action slot in every state. Controls appear only when the
@@ -159,9 +171,61 @@ export function renderFailureBanner(
   document: Document,
   failureCode: FailureCode,
   diagnostic?: string,
+  capability?: AdapterCapabilitySummary,
 ): HTMLElement {
   const term = failureCodeName(failureCode);
-  return renderFailureText(document, term, diagnostic || failureMessage(failureCode));
+  const banner = renderFailureText(document, term, diagnostic || failureMessage(failureCode));
+  if (failureCode === FailureCode.EXECUTION_OUTCOME_UNKNOWN) {
+    const qualifier = unknownOutcomeQualifier(capability);
+    if (qualifier) {
+      banner.append(textElement(
+        document,
+        "span",
+        "command-step__race",
+        `Outcome qualifier: ${qualifier}`,
+      ));
+    }
+  }
+  const retry = retrySafetyPresentation(failureCode, capability);
+  if (retry) {
+    const indicator = textElement(
+      document,
+      "span",
+      `retry-safety-indicator retry-safety-indicator--${retry.modifier}`,
+      retry.label,
+    );
+    indicator.setAttribute("role", "status");
+    banner.append(indicator);
+  }
+  return banner;
+}
+
+export function retrySafetyPresentation(
+  failureCode: FailureCode,
+  capability: AdapterCapabilitySummary | undefined,
+) {
+  if (failureCode === FailureCode.TARGET_OFFLINE
+      || failureCode === FailureCode.ADAPTER_UNAVAILABLE
+      || failureCode === FailureCode.DELIVERY_REJECTED) {
+    return { modifier: "safe", label: "safe to retry — execution did not start" };
+  }
+  if (failureCode !== FailureCode.EXECUTION_OUTCOME_UNKNOWN
+      && failureCode !== FailureCode.EXECUTION_FAILED) {
+    return undefined;
+  }
+  const assurance = adapterAssuranceV1(capability);
+  if (!assurance) return undefined;
+  switch (assurance.deduplicationStrength) {
+    case IdempotencyStrength.END_TO_END:
+      return { modifier: "safe", label: "safe to retry — adapter declares end-to-end deduplication" };
+    case IdempotencyStrength.AT_PATCHBAY_BOUNDARY:
+      return { modifier: "maybe", label: "retry may double-execute — deduplication stops at Patchbay" };
+    case IdempotencyStrength.NONE:
+      return { modifier: "unsafe", label: "retry will double-execute if the original executed" };
+    case IdempotencyStrength.UNSPECIFIED:
+    default:
+      return undefined;
+  }
 }
 
 export function renderFailureText(document: Document, term: string, message: string): HTMLElement {

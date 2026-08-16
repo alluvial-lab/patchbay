@@ -8,20 +8,54 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import {
   AdapterControlService,
+  AdapterReconciliationStrength,
+  AdapterSnapshotSupport,
+  AdapterTargetCategory,
   AttachResultSchema,
   AuthorityDomainIdSchema,
   EventIdSchema,
+  FailureCode,
   GenerationSchema,
+  IdempotencyStrength,
   LsnSchema,
   ObservationResultSchema,
+  ReconciliationAction,
   SessionActivityState,
   SessionConnectivityState,
   type SessionReport,
 } from "@patchbay/contracts";
-import { PatchbayCoreClient, type SessionIdentity } from "../src/core_client.js";
+import {
+  PatchbayCoreClient,
+  piCapabilityManifest,
+  type SessionIdentity,
+} from "../src/core_client.js";
 import type { SessionReportOrder } from "../src/session_report_sequencer.js";
 
 const attachmentTokenHeader = "x-patchbay-adapter-attachment-token";
+
+test("Pi manifest declares one complete conservative assurance V1", () => {
+  const manifest = piCapabilityManifest();
+  assert.equal(manifest.idempotencyStrength, IdempotencyStrength.UNSPECIFIED);
+  assert.deepEqual(manifest.targetCategories, [AdapterTargetCategory.RUNTIME_SESSION]);
+  assert.equal(manifest.sessionSnapshotSupport, AdapterSnapshotSupport.PARTIAL);
+  assert.equal(manifest.sessionReplacementSupport, true);
+  assert.equal(manifest.assurance?.contract.case, "v1");
+  if (manifest.assurance?.contract.case !== "v1") assert.fail("Pi assurance V1 is required");
+  assert.deepEqual(manifest.assurance.contract.value, {
+    $typeName: "patchbay.AdapterAssuranceManifestV1",
+    deduplicationStrength: IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
+    continuationProofSupport: false,
+    cursorSupport: false,
+    generationFenceSupport: false,
+    reconciliationStrength: AdapterReconciliationStrength.NONE,
+    unprovenOutcomeAction: ReconciliationAction.MANUAL_REQUIRED,
+  });
+  assert.deepEqual(manifest.knownFailureModes, [
+    FailureCode.UNSUPPORTED_COMMAND,
+    FailureCode.EXECUTION_FAILED,
+    FailureCode.EXECUTION_OUTCOME_UNKNOWN,
+  ]);
+});
 
 test("PatchbayCoreClient reattach retry reuses the exact immutable session report cursor", async () => {
   const attachGenerations: bigint[] = [];

@@ -11,6 +11,7 @@ import {
   PayloadContentType,
   SessionActivityState,
   SpawnRequestSchema,
+  type AdapterCapabilitySummary,
   type SubmissionResult,
 } from "@patchbay/contracts";
 
@@ -273,11 +274,18 @@ function renderTimeline(
         entry.command,
         deliveryActions,
         options,
+        adapter?.status?.capability,
       );
       if (rendered) timeline.append(rendered);
       else if (entry.observation.role === "tool") hiddenToolCalls += 1;
     } else if (entry.type === "command") {
-      timeline.append(renderCommandMessage(document, entry.command, deliveryActions, options.lockdownActive));
+      timeline.append(renderCommandMessage(
+        document,
+        entry.command,
+        deliveryActions,
+        options.lockdownActive,
+        adapter?.status?.capability,
+      ));
     } else if (entry.type === "elicitation") {
       if (!options.elicitation) continue;
       const card = renderElicitation(document, entry.elicitation, {
@@ -356,6 +364,7 @@ function renderObservation(
   command: CommandView | undefined,
   deliveryActions: OperationDeliveryActions | undefined,
   options: SessionDetailOptions,
+  capability: AdapterCapabilitySummary | undefined,
 ): HTMLElement | undefined {
   if (observation.role === "tool" && options.showToolCalls === false) return undefined;
   const message = document.createElement("article");
@@ -373,6 +382,7 @@ function renderObservation(
       deliveryActions,
       options.lockdownActive,
       observation.markdown,
+      capability,
     ));
   } else {
     const body = document.createElement("div");
@@ -403,6 +413,7 @@ export function renderInstructionCard(
   actions?: OperationDeliveryActions,
   lockdownActive = false,
   observedMarkdown?: string,
+  capability?: AdapterCapabilitySummary,
 ): HTMLElement {
   const card = document.createElement("div");
   card.className = "instruction-card";
@@ -429,7 +440,7 @@ export function renderInstructionCard(
   );
   const delivery = document.createElement("div");
   delivery.className = "instruction-card__delivery";
-  delivery.append(renderOperationDelivery(document, command, actions, lockdownActive));
+  delivery.append(renderOperationDelivery(document, command, actions, lockdownActive, capability));
   card.append(header, body, meta);
   if (isSpawnContinuation(command)) {
     const context = command.continuationContextStatus;
@@ -476,10 +487,18 @@ function renderCommandMessage(
   command: CommandView,
   actions: OperationDeliveryActions | undefined,
   lockdownActive = false,
+  capability?: AdapterCapabilitySummary,
 ): HTMLElement {
   const message = document.createElement("article");
   message.className = "msg msg--operator msg--action";
-  message.append(renderInstructionCard(document, command, actions, lockdownActive));
+  message.append(renderInstructionCard(
+    document,
+    command,
+    actions,
+    lockdownActive,
+    undefined,
+    capability,
+  ));
   return message;
 }
 

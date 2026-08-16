@@ -1,13 +1,15 @@
 use patchbay_contracts::patchbay::{
-    AcceptedOperation, ActorEndpointRef, AdapterCapability, AdapterDiagnosticDetail,
-    AdapterDiagnosticSeverity, AdapterDiagnosticState, AdapterId, AdapterRegistration,
-    AdapterSnapshotSupport, AdapterTargetCategory, AuditEventKind, AuditRecord, AuthorityDomainId,
-    CommandId, CommandTransition, EventId, FailureCode, Generation, GrantId, GrantRevocationEffect,
-    Observation, ObservationKind, Operation, OperationKind, OperationState, PayloadContentType,
-    PayloadEnvelope, ResourceCapability, ResourceKind, ResourceProjectionContract, Revocation,
-    RuntimeSessionId, SchemaDescriptor, SecurityLockdownEntered, SecurityLockdownExited,
-    SessionActivityState, SessionConnectivityChanged, SessionConnectivityState, SessionRegistered,
-    SessionState, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+    adapter_assurance_manifest, AcceptedOperation, ActorEndpointRef, AdapterAssuranceManifestV1,
+    AdapterCapability, AdapterDiagnosticDetail, AdapterDiagnosticSeverity, AdapterDiagnosticState,
+    AdapterId, AdapterReconciliationStrength, AdapterRegistration, AdapterSnapshotSupport,
+    AdapterTargetCategory, AuditEventKind, AuditRecord, AuthorityDomainId, CommandId,
+    CommandTransition, EventId, FailureCode, Generation, GrantId, GrantRevocationEffect,
+    IdempotencyStrength, Observation, ObservationKind, Operation, OperationKind, OperationState,
+    PayloadContentType, PayloadEnvelope, ReconciliationAction, ResourceCapability, ResourceKind,
+    ResourceProjectionContract, Revocation, RuntimeSessionId, SchemaDescriptor,
+    SecurityLockdownEntered, SecurityLockdownExited, SessionActivityState,
+    SessionConnectivityChanged, SessionConnectivityState, SessionRegistered, SessionState,
+    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
 };
 use patchbay_core::{
     acceptance::CommandIndex,
@@ -80,6 +82,7 @@ fn registration_event(domain: &AuthorityDomainId, lsn: u64, adapter_id: &str) ->
         }),
         authority_domain_id: Some(domain.clone()),
         adapter_generation: Some(Generation { value: 1 }),
+        capability: Some(AdapterCapability::default()),
         ..AdapterRegistration::default()
     };
     event(
@@ -465,7 +468,8 @@ fn multi_effect_revocation_is_atomic_in_command_and_diagnostics_projections() {
 }
 
 #[test]
-fn adapter_projection_redacts_descriptor_and_restart_is_unknown() {
+#[allow(deprecated)]
+fn adapter_projection_uses_canonical_assurance_and_redacts_raw_fields() {
     let domain = AuthorityDomainId {
         value: "main".to_owned(),
     };
@@ -480,6 +484,7 @@ fn adapter_projection_redacts_descriptor_and_restart_is_unknown() {
         adapter_generation: Some(Generation { value: 3 }),
         capability: Some(AdapterCapability {
             session_snapshot_support: AdapterSnapshotSupport::Authoritative as i32,
+            idempotency_strength: 777,
             attachment_method: Some(patchbay_contracts::patchbay::AttachmentMethod {
                 kind: "local".to_owned(),
                 descriptor: b"sentinel-secret".to_vec(),
@@ -541,6 +546,23 @@ fn adapter_projection_redacts_descriptor_and_restart_is_unknown() {
     );
     let summary = page.adapters[0].capability.as_ref().unwrap();
     assert_eq!(summary.attachment_method_kind, "local");
+    let assurance = summary.assurance.as_ref().expect("canonical assurance");
+    let Some(adapter_assurance_manifest::Contract::V1(assurance_v1)) = assurance.contract.as_ref()
+    else {
+        panic!("diagnostics assurance must use V1");
+    };
+    assert_eq!(
+        assurance_v1,
+        &AdapterAssuranceManifestV1 {
+            deduplication_strength: IdempotencyStrength::None as i32,
+            continuation_proof_support: Some(false),
+            cursor_support: Some(false),
+            generation_fence_support: Some(false),
+            reconciliation_strength: AdapterReconciliationStrength::None as i32,
+            unproven_outcome_action: ReconciliationAction::None as i32,
+        },
+        "unknown replay-only deduplication input must normalize through the validated view"
+    );
     assert_eq!(
         summary.session_snapshot_support,
         AdapterSnapshotSupport::Authoritative as i32
@@ -576,6 +598,14 @@ fn adapter_projection_redacts_descriptor_and_restart_is_unknown() {
             .schema_ref,
         "pool.projection.v1"
     );
+    assert!(
+        !summary
+            .encode_to_vec()
+            .windows(b"sentinel-secret".len())
+            .any(|window| window == b"sentinel-secret"),
+        "diagnostics must not carry attachment descriptors or opaque profile bytes"
+    );
+    let expected_assurance = summary.assurance;
     projection.reset_adapter_liveness();
     let restarted = projection
         .adapter_page(
@@ -587,10 +617,12 @@ fn adapter_projection_redacts_descriptor_and_restart_is_unknown() {
         restarted.adapters[0].state,
         AdapterDiagnosticState::Unknown as i32
     );
-    assert!(!restarted.adapters[0]
+    let restarted_capability = restarted.adapters[0]
         .capability
         .as_ref()
-        .unwrap()
+        .expect("capability survives runtime-state changes");
+    assert_eq!(restarted_capability.assurance, expected_assurance);
+    assert!(!restarted_capability
         .attachment_method_kind
         .contains("sentinel-secret"));
 }

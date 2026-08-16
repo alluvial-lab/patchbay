@@ -358,7 +358,13 @@ function renderResourceOperations(
     const row = document.createElement("div");
     row.className = "resource-operation";
     row.append(textElement(document, "strong", "", `${operationKindLabel(command.operation.kind)} · ${command.id}`));
-    row.append(renderOperationDelivery(document, command, undefined, model.lockdown.active));
+    row.append(renderOperationDelivery(
+      document,
+      command,
+      undefined,
+      model.lockdown.active,
+      model.adapters.get(resource.identity.adapterId)?.status?.capability,
+    ));
     section.append(row);
   }
   return section;

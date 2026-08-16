@@ -3,6 +3,7 @@ import { timestampFromDate, type Timestamp } from "@bufbuild/protobuf/wkt";
 import {
   AdapterDiagnosticSeverity,
   AdapterDiagnosticState,
+  AdapterReconciliationStrength,
   AdapterSnapshotSupport,
   AdapterTargetCategory,
   AuditEventKind,
@@ -19,12 +20,16 @@ import {
   PayloadContentType,
   PayloadEnvelopeSchema,
   PayloadContentType as PayloadContentTypeRegistry,
+  ReconciliationAction,
   ResourceIdSchema,
   ResourceIdentitySchema,
   ResourceKindSchema,
   SpawnClaimDisposition,
   TargetScopeKind,
   TargetScopeSchema,
+  type AdapterAssuranceManifest,
+  type AdapterCapabilitySummary,
+  type AdapterStatus,
   type AdapterStatusPage,
   type AuditRecord,
   type CommandInspection,
@@ -420,39 +425,7 @@ export function adapterStatusPageView(page: AdapterStatusPage) {
       state: enumLabel(AdapterDiagnosticState, adapter.state),
       attachEventId: eventIdView(adapter.attachEventId),
       attachedAt: timestampView(adapter.attachedAt),
-      capability: adapter.capability ? {
-        supportedOperationKinds: adapter.capability.supportedOperationKinds.map((value) => enumLabel(OperationKind, value)),
-        supportedTargetSpecShapes: [...adapter.capability.supportedTargetSpecShapes],
-        streamingSupport: adapter.capability.streamingSupport,
-        sessionSnapshotSupport: enumLabel(AdapterSnapshotSupport, adapter.capability.sessionSnapshotSupport),
-        cancellationSupport: adapter.capability.cancellationSupport,
-        sessionReplacementSupport: adapter.capability.sessionReplacementSupport,
-        idempotencyStrength: enumLabel(IdempotencyStrength, adapter.capability.idempotencyStrength),
-        attachmentMethodKind: adapter.capability.attachmentMethodKind || null,
-        attachmentDescriptorContentType: enumLabel(PayloadContentTypeRegistry, adapter.capability.attachmentDescriptorContentType),
-        knownFailureModes: adapter.capability.knownFailureModes.map((value) => enumLabel(FailureCode, value)),
-        diagnosticReporting: adapter.capability.diagnosticReporting ? {
-          diagnosticCodes: [...adapter.capability.diagnosticReporting.diagnosticCodes],
-        } : null,
-        targetCategories: adapter.capability.targetCategories.map((value) =>
-          enumLabel(AdapterTargetCategory, value)
-        ),
-        resourceCapabilities: adapter.capability.resourceCapabilities.map((resource) => ({
-          resourceKind: resource.resourceKind?.value || null,
-          snapshotSupport: enumLabel(AdapterSnapshotSupport, resource.snapshotSupport),
-          projectionContract: resource.projectionContract ? {
-            targetCategory: enumLabel(AdapterTargetCategory, resource.projectionContract.targetCategory),
-            payloadSchema: resource.projectionContract.payloadSchema ? {
-              schemaRef: resource.projectionContract.payloadSchema.schemaRef,
-              contentType: enumLabel(PayloadContentTypeRegistry, resource.projectionContract.payloadSchema.contentType),
-            } : null,
-            projectionSchema: resource.projectionContract.projectionSchema ? {
-              schemaRef: resource.projectionContract.projectionSchema.schemaRef,
-              contentType: enumLabel(PayloadContentTypeRegistry, resource.projectionContract.projectionSchema.contentType),
-            } : null,
-          } : null,
-        })),
-      } : null,
+      capability: adapter.capability ? adapterCapabilityView(adapter.capability) : null,
       lastLifecycleRecord: adapter.lastLifecycleRecord ? auditRecordView(adapter.lastLifecycleRecord) : null,
       recentDiagnostics: adapter.recentDiagnostics.map(auditRecordView),
       liveSessionCount: adapter.liveSessionCount,
@@ -462,6 +435,92 @@ export function adapterStatusPageView(page: AdapterStatusPage) {
     })),
     page: { hasMore: page.hasMore, nextAfterAdapterId: page.nextAfterAdapterId || null },
   };
+}
+
+function adapterCapabilityView(capability: AdapterCapabilitySummary) {
+  return {
+    supportedOperationKinds: capability.supportedOperationKinds.map((value) => enumLabel(OperationKind, value)),
+    supportedTargetSpecShapes: [...capability.supportedTargetSpecShapes],
+    streamingSupport: capability.streamingSupport,
+    sessionSnapshotSupport: enumLabel(AdapterSnapshotSupport, capability.sessionSnapshotSupport),
+    cancellationSupport: capability.cancellationSupport,
+    sessionReplacementSupport: capability.sessionReplacementSupport,
+    assurance: adapterAssuranceView(capability.assurance),
+    attachmentMethodKind: capability.attachmentMethodKind || null,
+    attachmentDescriptorContentType: enumLabel(PayloadContentTypeRegistry, capability.attachmentDescriptorContentType),
+    knownFailureModes: capability.knownFailureModes.map((value) => enumLabel(FailureCode, value)),
+    diagnosticReporting: capability.diagnosticReporting ? {
+      diagnosticCodes: [...capability.diagnosticReporting.diagnosticCodes],
+    } : null,
+    targetCategories: capability.targetCategories.map((value) =>
+      enumLabel(AdapterTargetCategory, value)
+    ),
+    resourceCapabilities: capability.resourceCapabilities.map((resource) => ({
+      resourceKind: resource.resourceKind?.value || null,
+      snapshotSupport: enumLabel(AdapterSnapshotSupport, resource.snapshotSupport),
+      projectionContract: resource.projectionContract ? {
+        targetCategory: enumLabel(AdapterTargetCategory, resource.projectionContract.targetCategory),
+        payloadSchema: resource.projectionContract.payloadSchema ? {
+          schemaRef: resource.projectionContract.payloadSchema.schemaRef,
+          contentType: enumLabel(PayloadContentTypeRegistry, resource.projectionContract.payloadSchema.contentType),
+        } : null,
+        projectionSchema: resource.projectionContract.projectionSchema ? {
+          schemaRef: resource.projectionContract.projectionSchema.schemaRef,
+          contentType: enumLabel(PayloadContentTypeRegistry, resource.projectionContract.projectionSchema.contentType),
+        } : null,
+      } : null,
+    })),
+  };
+}
+
+function adapterAssuranceView(manifest: AdapterAssuranceManifest | undefined) {
+  if (manifest?.contract.case !== "v1") {
+    throw new Error("adapter diagnostics assurance is missing the supported V1 contract");
+  }
+  const assurance = manifest.contract.value;
+  if (assurance.continuationProofSupport === undefined
+      || assurance.cursorSupport === undefined
+      || assurance.generationFenceSupport === undefined) {
+    throw new Error("adapter diagnostics assurance V1 is incomplete");
+  }
+  const deduplicationStrength = requiredGeneratedEnumLabel(
+    IdempotencyStrength,
+    assurance.deduplicationStrength,
+    "deduplication strength",
+  );
+  const reconciliationStrength = requiredGeneratedEnumLabel(
+    AdapterReconciliationStrength,
+    assurance.reconciliationStrength,
+    "reconciliation strength",
+  );
+  const unprovenOutcomeAction = requiredGeneratedEnumLabel(
+    ReconciliationAction,
+    assurance.unprovenOutcomeAction,
+    "unproven-outcome action",
+  );
+  return {
+    contract: "v1",
+    deduplicationStrength,
+    continuationProofSupport: assurance.continuationProofSupport,
+    cursorSupport: assurance.cursorSupport,
+    generationFenceSupport: assurance.generationFenceSupport,
+    reconciliationStrength,
+    unprovenOutcomeAction,
+    unknownOutcomeQualifier: assurance.unprovenOutcomeAction === ReconciliationAction.MANUAL_REQUIRED
+      ? "manual-required"
+      : "unknown",
+  };
+}
+
+function requiredGeneratedEnumLabel(
+  registry: Record<number, string>,
+  value: number,
+  name: string,
+): string {
+  if (value === 0 || typeof registry[value] !== "string") {
+    throw new Error(`adapter diagnostics assurance has unknown or unspecified ${name}`);
+  }
+  return enumLabel(registry, value);
 }
 
 export function auditTable(page: import("@patchbay/contracts").AuditPage): HumanDiagnosticsView {
@@ -526,23 +585,48 @@ export function adapterTables(page: AdapterStatusPage): HumanDiagnosticsView {
   return {
     sections: [{
       title: "ADAPTERS",
-      headers: ["ADAPTER", "ENDPOINT", "GENERATION", "STATE", "LIVE", "STALE", "OFFLINE", "FAILED", "TARGETS", "SESSION_SNAPSHOT", "RESOURCE_SNAPSHOTS", "IDEMPOTENCY", "ATTACHED_AT"],
-      rows: page.adapters.map((adapter) => [
-        adapter.adapterId?.value ?? "-", adapter.endpointId?.value ?? "-", adapter.adapterGeneration?.value.toString() ?? "-",
-        enumLabel(AdapterDiagnosticState, adapter.state), String(adapter.liveSessionCount), String(adapter.staleSessionCount),
-        String(adapter.offlineSessionCount), String(adapter.failedSessionCount),
-        adapter.capability ? adapter.capability.targetCategories.map((value) => enumLabel(AdapterTargetCategory, value)).join(",") || "-" : "-",
-        adapter.capability ? enumLabel(AdapterSnapshotSupport, adapter.capability.sessionSnapshotSupport) : "-",
-        adapter.capability ? adapter.capability.resourceCapabilities.map((resource) => `${resource.resourceKind?.value || "?"}=${enumLabel(AdapterSnapshotSupport, resource.snapshotSupport)}`).join(",") || "-" : "-",
-        adapter.capability ? enumLabel(IdempotencyStrength, adapter.capability.idempotencyStrength) : "-",
-        timestampView(adapter.attachedAt) ?? "-",
-      ]),
+      headers: ["ADAPTER", "ENDPOINT", "GENERATION", "STATE", "LIVE", "STALE", "OFFLINE", "FAILED", "TARGETS", "SESSION_SNAPSHOT", "RESOURCE_SNAPSHOTS", "DEDUPLICATION", "CONTINUATION_PROOF", "CURSOR", "GENERATION_FENCE", "RECONCILIATION", "UNKNOWN_OUTCOME", "ATTACHED_AT"],
+      rows: page.adapters.map(adapterTableRow),
     }],
     notices: [
       ...(page.adapters.length === 0 ? ["No adapters matched the query."] : []),
       ...(page.hasMore ? [`More adapters available; rerun with --after-adapter-id ${page.nextAfterAdapterId || "<cursor>"}.`] : []),
     ],
   };
+}
+
+function adapterTableRow(adapter: AdapterStatus): string[] {
+  const assurance = adapter.capability
+    ? adapterAssuranceView(adapter.capability.assurance)
+    : undefined;
+  return [
+    adapter.adapterId?.value ?? "-",
+    adapter.endpointId?.value ?? "-",
+    adapter.adapterGeneration?.value.toString() ?? "-",
+    enumLabel(AdapterDiagnosticState, adapter.state),
+    String(adapter.liveSessionCount),
+    String(adapter.staleSessionCount),
+    String(adapter.offlineSessionCount),
+    String(adapter.failedSessionCount),
+    adapter.capability
+      ? adapter.capability.targetCategories.map((value) => enumLabel(AdapterTargetCategory, value)).join(",") || "-"
+      : "-",
+    adapter.capability
+      ? enumLabel(AdapterSnapshotSupport, adapter.capability.sessionSnapshotSupport)
+      : "-",
+    adapter.capability
+      ? adapter.capability.resourceCapabilities.map((resource) =>
+        `${resource.resourceKind?.value || "?"}=${enumLabel(AdapterSnapshotSupport, resource.snapshotSupport)}`
+      ).join(",") || "-"
+      : "-",
+    assurance?.deduplicationStrength ?? "-",
+    assurance ? String(assurance.continuationProofSupport) : "-",
+    assurance ? String(assurance.cursorSupport) : "-",
+    assurance ? String(assurance.generationFenceSupport) : "-",
+    assurance?.reconciliationStrength ?? "-",
+    assurance?.unknownOutcomeQualifier ?? "-",
+    timestampView(adapter.attachedAt) ?? "-",
+  ];
 }
 
 function formatTarget(value: unknown): string {

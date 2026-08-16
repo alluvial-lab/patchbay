@@ -1038,6 +1038,156 @@ async fn invalid_assurance_attach_and_redeclaration_publish_no_registration_or_t
 }
 
 #[tokio::test]
+async fn assurance_values_survive_attach_replay_redeclaration_and_generation_replacement() {
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let storage = RusqliteStorage::open_in_memory().expect("storage opens");
+    let service =
+        AdapterControlServiceImpl::new(storage.clone(), domain.clone(), evidence_verifier())
+            .await
+            .expect("service initializes");
+
+    let first_assurance = declared_assurance(
+        IdempotencyStrength::AtPatchbayBoundary,
+        false,
+        false,
+        false,
+        AdapterReconciliationStrength::None,
+        ReconciliationAction::ManualRequired,
+    );
+    let mut first = registration(domain.clone());
+    first.capability.as_mut().expect("capability").assurance = Some(first_assurance);
+    let first_response = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(first),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("fresh assurance attaches");
+    let first_token = attachment_token(&first_response);
+    assert_eq!(
+        service
+            .adapters
+            .lock()
+            .await
+            .get(&adapter_id())
+            .expect("attached record")
+            .validated_capability
+            .assurance()
+            .to_wire_v1(),
+        first_assurance
+    );
+
+    let redeclared_assurance = declared_assurance(
+        IdempotencyStrength::EndToEnd,
+        true,
+        true,
+        true,
+        AdapterReconciliationStrength::Authoritative,
+        ReconciliationAction::ManualRequired,
+    );
+    let mut redeclared = registration(domain.clone());
+    redeclared
+        .capability
+        .as_mut()
+        .expect("capability")
+        .assurance = Some(redeclared_assurance);
+    let redeclared_response = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(redeclared),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("same-generation assurance redeclaration attaches");
+    let redeclared_token = attachment_token(&redeclared_response);
+    assert!(service
+        .authenticate_request(&authenticated_with_attachment_token((), &first_token))
+        .await
+        .is_err());
+    assert_eq!(
+        service
+            .adapters
+            .lock()
+            .await
+            .get(&adapter_id())
+            .expect("redeclared record")
+            .validated_capability
+            .assurance()
+            .to_wire_v1(),
+        redeclared_assurance
+    );
+
+    let replacement_assurance = declared_assurance(
+        IdempotencyStrength::None,
+        false,
+        false,
+        false,
+        AdapterReconciliationStrength::Bounded,
+        ReconciliationAction::None,
+    );
+    let mut replacement = registration(domain.clone());
+    replacement.adapter_generation = Some(Generation { value: 2 });
+    replacement
+        .capability
+        .as_mut()
+        .expect("capability")
+        .assurance = Some(replacement_assurance);
+    let replacement_response = service
+        .attach(Request::new(AttachRequest {
+            registration: Some(replacement),
+            attachment_evidence: EVIDENCE.as_bytes().to_vec(),
+        }))
+        .await
+        .expect("newer-generation assurance replacement attaches");
+    let replacement_token = attachment_token(&replacement_response);
+    assert!(service
+        .authenticate_request(&authenticated_with_attachment_token((), &redeclared_token))
+        .await
+        .is_err());
+    assert_eq!(
+        service
+            .authenticate_request(&authenticated_with_attachment_token((), &replacement_token))
+            .await
+            .expect("replacement token is current"),
+        adapter_id()
+    );
+
+    let replayed = adapter::rebuild_from_log(&storage, &domain)
+        .await
+        .expect("assurance registration prefix replays");
+    let record = replayed
+        .get(&adapter_id())
+        .expect("replayed adapter record");
+    assert_eq!(
+        record.registration.adapter_generation,
+        Some(Generation { value: 2 })
+    );
+    assert_eq!(
+        record.validated_capability.assurance().to_wire_v1(),
+        replacement_assurance
+    );
+    assert_eq!(
+        storage
+            .read_after(&domain, Lsn { value: 0 })
+            .await
+            .expect("events read")
+            .iter()
+            .filter(|event| {
+                Observation::decode(event.payload.payload.as_slice())
+                    .ok()
+                    .and_then(|observation| observation.payload)
+                    .is_some_and(|payload| {
+                        payload.schema_ref == adapter::ADAPTER_REGISTRATION_SCHEMA
+                    })
+            })
+            .count(),
+        3,
+        "each accepted attach/redeclaration/replacement appends one canonical registration"
+    );
+}
+
+#[tokio::test]
 async fn authenticated_resource_report_uses_manifest_admission_and_durable_projection() {
     let storage = RusqliteStorage::open_in_memory().expect("storage opens");
     let domain = AuthorityDomainId {
@@ -5791,21 +5941,39 @@ fn delivery_acknowledgement(
     }
 }
 
-fn current_assurance() -> AdapterAssuranceManifest {
+fn declared_assurance(
+    deduplication_strength: IdempotencyStrength,
+    continuation_proof_support: bool,
+    cursor_support: bool,
+    generation_fence_support: bool,
+    reconciliation_strength: AdapterReconciliationStrength,
+    unproven_outcome_action: ReconciliationAction,
+) -> AdapterAssuranceManifest {
     AdapterAssuranceManifest {
         contract: Some(
             patchbay_contracts::patchbay::adapter_assurance_manifest::Contract::V1(
                 AdapterAssuranceManifestV1 {
-                    deduplication_strength: IdempotencyStrength::None as i32,
-                    continuation_proof_support: Some(false),
-                    cursor_support: Some(false),
-                    generation_fence_support: Some(false),
-                    reconciliation_strength: AdapterReconciliationStrength::None as i32,
-                    unproven_outcome_action: ReconciliationAction::None as i32,
+                    deduplication_strength: deduplication_strength as i32,
+                    continuation_proof_support: Some(continuation_proof_support),
+                    cursor_support: Some(cursor_support),
+                    generation_fence_support: Some(generation_fence_support),
+                    reconciliation_strength: reconciliation_strength as i32,
+                    unproven_outcome_action: unproven_outcome_action as i32,
                 },
             ),
         ),
     }
+}
+
+fn current_assurance() -> AdapterAssuranceManifest {
+    declared_assurance(
+        IdempotencyStrength::None,
+        false,
+        false,
+        false,
+        AdapterReconciliationStrength::None,
+        ReconciliationAction::None,
+    )
 }
 
 fn current_capability() -> AdapterCapability {

@@ -17,6 +17,7 @@ use prost_types::Timestamp;
 
 use crate::{
     acceptance::{CommandIndex, TargetBinding, TargetNotFound, TargetResolver},
+    adapter::{AdapterRecord, CapabilityValidationContext, ValidatedAdapterCapability},
     session::{effective_connectivity, SessionRegistry},
     storage::{AuditPageSpec, RecordedEvent, StorageError, TargetKey},
 };
@@ -103,7 +104,7 @@ pub struct DiagnosticsProjection {
     /// Canonical command projection retained so generated promotion envelopes
     /// use the same exact pre-state validation and terminal fold as acceptance.
     command_index: CommandIndex,
-    adapters: HashMap<AdapterId, (AdapterRegistration, EventId)>,
+    adapters: HashMap<AdapterId, AdapterRecord>,
     /// Lifecycle state observed since the current process started. Historical
     /// lifecycle records are deliberately not copied into this map: they are
     /// evidence, not proof of current attachment after a restart.
@@ -672,8 +673,22 @@ impl DiagnosticsProjection {
         let adapter_id = registration.adapter_id.clone().ok_or_else(|| {
             DiagnosticsError::CorruptEvent("adapter registration has no adapter id".to_owned())
         })?;
-        self.adapters
-            .insert(adapter_id.clone(), (registration, event.event_id.clone()));
+        let capability = registration.capability.as_ref().ok_or_else(|| {
+            DiagnosticsError::CorruptEvent("adapter registration has no capability".to_owned())
+        })?;
+        let validated_capability = ValidatedAdapterCapability::try_from_wire(
+            capability,
+            CapabilityValidationContext::Replay,
+        )
+        .map_err(|error| DiagnosticsError::CorruptEvent(error.to_string()))?;
+        self.adapters.insert(
+            adapter_id.clone(),
+            AdapterRecord {
+                registration,
+                validated_capability,
+                attach_event_id: event.event_id.clone(),
+            },
+        );
         self.current_process_adapters
             .insert(adapter_id, AdapterDiagnosticState::Attached);
         Ok(())
@@ -712,7 +727,6 @@ impl DiagnosticsProjection {
         self.current_process_adapters.insert(adapter_id, state);
     }
 
-    #[allow(deprecated)] // Compatibility projection is replaced by canonical assurance carriage.
     pub fn adapter_page(
         &self,
         query: &AdapterStatusQuery,
@@ -747,7 +761,8 @@ impl DiagnosticsProjection {
         let adapters =
             records
                 .into_iter()
-                .map(|(adapter_id, (registration, attach_event_id))| {
+                .map(|(adapter_id, record)| {
+                    let registration = &record.registration;
                     let capability = registration.capability.as_ref().map(|capability| {
                         AdapterCapabilitySummary {
                             supported_operation_kinds: capability.supported_operation_kinds.clone(),
@@ -758,7 +773,6 @@ impl DiagnosticsProjection {
                             session_snapshot_support: capability.session_snapshot_support,
                             cancellation_support: capability.cancellation_support,
                             session_replacement_support: capability.session_replacement_support,
-                            idempotency_strength: capability.idempotency_strength,
                             attachment_method_kind: capability
                                 .attachment_method
                                 .as_ref()
@@ -771,6 +785,7 @@ impl DiagnosticsProjection {
                             diagnostic_reporting: capability.diagnostic_reporting.clone(),
                             target_categories: capability.target_categories.clone(),
                             resource_capabilities: capability.resource_capabilities.clone(),
+                            assurance: Some(record.validated_capability.assurance().to_wire_v1()),
                         }
                     });
                     let recent_diagnostics = if recent_limit == 0 {
@@ -833,7 +848,7 @@ impl DiagnosticsProjection {
                         endpoint_id: registration.endpoint_id.clone(),
                         adapter_generation: registration.adapter_generation,
                         state: state as i32,
-                        attach_event_id: Some(attach_event_id.clone()),
+                        attach_event_id: Some(record.attach_event_id.clone()),
                         attached_at: registration.attached_at,
                         capability,
                         last_lifecycle_record: self.lifecycle.get(adapter_id).cloned(),

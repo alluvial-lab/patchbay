@@ -14,9 +14,12 @@ import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import {
   ActorIdSchema,
+  AdapterAssuranceManifestSchema,
+  AdapterAssuranceManifestV1Schema,
   AdapterCapabilitySchema,
   AdapterControlService,
   AdapterIdSchema,
+  AdapterReconciliationStrength,
   AdapterRegistrationSchema,
   AdapterSnapshotSupport,
   AdapterTargetCategory,
@@ -30,6 +33,7 @@ import {
   GrantRevocationPolicy,
   GrantSchema,
   LoadSecuritySnapshotRequestSchema,
+  IdempotencyStrength,
   LsnSchema,
   ObservationRequestSchema,
   OperationKind,
@@ -46,6 +50,7 @@ import {
   ResourceSnapshotSchema,
   ResourceStateUpsertSchema,
   ResourceViewReportSchema,
+  ReconciliationAction,
   SchemaDescriptorSchema,
   SnapshotViewKind,
   StoredEventKind,
@@ -170,6 +175,19 @@ async function reportResources() {
       capability: create(AdapterCapabilitySchema, {
         targetCategories: [AdapterTargetCategory.OPERATIONAL_RESOURCE],
         resourceCapabilities: resources,
+        assurance: create(AdapterAssuranceManifestSchema, {
+          contract: {
+            case: "v1",
+            value: create(AdapterAssuranceManifestV1Schema, {
+              deduplicationStrength: IdempotencyStrength.NONE,
+              continuationProofSupport: false,
+              cursorSupport: false,
+              generationFenceSupport: false,
+              reconciliationStrength: AdapterReconciliationStrength.NONE,
+              unprovenOutcomeAction: ReconciliationAction.NONE,
+            }),
+          },
+        }),
         attachmentMethod: create(AttachmentMethodSchema, {
           kind: "configured-local-material",
           descriptorContentType: PayloadContentType.BINARY,

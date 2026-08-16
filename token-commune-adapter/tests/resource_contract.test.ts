@@ -3,7 +3,14 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { AdapterSnapshotSupport, AdapterTargetCategory, IdempotencyStrength, PayloadContentType } from "@patchbay/contracts";
+import {
+  AdapterReconciliationStrength,
+  AdapterSnapshotSupport,
+  AdapterTargetCategory,
+  IdempotencyStrength,
+  PayloadContentType,
+  ReconciliationAction,
+} from "@patchbay/contracts";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import ajvFormatsModule from "ajv-formats";
 import { loadTokenCommuneAdapterConfig } from "../src/config.js";
@@ -129,7 +136,18 @@ test("manifest pins the two literal resource kinds and four literal schema descr
   assert.equal(manifest.cancellationSupport, false);
   assert.equal(manifest.sessionReplacementSupport, false);
   assert.equal(manifest.sessionSnapshotSupport, AdapterSnapshotSupport.UNSPECIFIED);
-  assert.equal(manifest.idempotencyStrength, IdempotencyStrength.NONE);
+  assert.equal(manifest.idempotencyStrength, IdempotencyStrength.UNSPECIFIED);
+  assert.equal(manifest.assurance?.contract.case, "v1");
+  if (manifest.assurance?.contract.case !== "v1") assert.fail("token-commune assurance V1 is required");
+  assert.deepEqual(manifest.assurance.contract.value, {
+    $typeName: "patchbay.AdapterAssuranceManifestV1",
+    deduplicationStrength: IdempotencyStrength.NONE,
+    continuationProofSupport: false,
+    cursorSupport: false,
+    generationFenceSupport: false,
+    reconciliationStrength: AdapterReconciliationStrength.NONE,
+    unprovenOutcomeAction: ReconciliationAction.NONE,
+  });
   assert.equal(manifest.attachmentMethod?.kind, "configured-local-material");
   assert.equal(manifest.attachmentMethod?.descriptor.byteLength, 0);
   assert.equal(manifest.attachmentMethod?.descriptorContentType, PayloadContentType.BINARY);

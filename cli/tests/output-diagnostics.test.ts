@@ -5,11 +5,14 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 import { create, fromBinary } from "@bufbuild/protobuf";
 import {
+  AdapterAssuranceManifestSchema,
+  AdapterAssuranceManifestV1Schema,
   AdapterCapabilitySummarySchema,
   AdapterDiagnosticDetailSchema,
   AdapterDiagnosticReportingCapabilitySchema,
   AdapterDiagnosticSeverity,
   AdapterDiagnosticState,
+  AdapterReconciliationStrength,
   AdapterSnapshotSupport,
   AdapterStatusPageSchema,
   AdapterTargetCategory,
@@ -26,11 +29,13 @@ import {
   FailureCode,
   GenerationSchema,
   GrantIdSchema,
+  IdempotencyStrength,
   LsnSchema,
   OperationKind,
   OperationState,
   PayloadContentType,
   QueryDiagnosticsResponseSchema,
+  ReconciliationAction,
   ResourceCapabilitySchema,
   ResourceKindSchema,
   ResourceProjectionContractSchema,
@@ -349,6 +354,19 @@ test("diagnostic audit and adapter projections include safe diagnostic fields", 
     adapters: [create(AdapterStatusSchema, {
       capability: create(AdapterCapabilitySummarySchema, {
         sessionSnapshotSupport: AdapterSnapshotSupport.PARTIAL,
+        assurance: create(AdapterAssuranceManifestSchema, {
+          contract: {
+            case: "v1",
+            value: create(AdapterAssuranceManifestV1Schema, {
+              deduplicationStrength: IdempotencyStrength.AT_PATCHBAY_BOUNDARY,
+              continuationProofSupport: false,
+              cursorSupport: false,
+              generationFenceSupport: false,
+              reconciliationStrength: AdapterReconciliationStrength.NONE,
+              unprovenOutcomeAction: ReconciliationAction.MANUAL_REQUIRED,
+            }),
+          },
+        }),
         diagnosticReporting: create(AdapterDiagnosticReportingCapabilitySchema, {
           diagnosticCodes: ["heartbeat_lag"],
         }),
@@ -375,6 +393,16 @@ test("diagnostic audit and adapter projections include safe diagnostic fields", 
   const projected = adapterStatusPageView(page).adapters[0]!;
   assert.deepEqual(projected.capability?.diagnosticReporting, { diagnosticCodes: ["heartbeat_lag"] });
   assert.equal(projected.capability?.sessionSnapshotSupport, "partial");
+  assert.deepEqual(projected.capability?.assurance, {
+    contract: "v1",
+    deduplicationStrength: "at_patchbay_boundary",
+    continuationProofSupport: false,
+    cursorSupport: false,
+    generationFenceSupport: false,
+    reconciliationStrength: "none",
+    unprovenOutcomeAction: "manual_required",
+    unknownOutcomeQualifier: "manual-required",
+  });
   assert.deepEqual(projected.capability?.targetCategories, ["runtime_session", "operational_resource"]);
   assert.deepEqual(projected.capability?.resourceCapabilities, [{
     resourceKind: "provider_pool",
@@ -389,8 +417,48 @@ test("diagnostic audit and adapter projections include safe diagnostic fields", 
   const human = adapterTables(page).sections[0]!;
   assert.ok(human.headers.includes("SESSION_SNAPSHOT"));
   assert.ok(human.headers.includes("RESOURCE_SNAPSHOTS"));
+  assert.ok(human.headers.includes("DEDUPLICATION"));
+  assert.ok(human.headers.includes("CONTINUATION_PROOF"));
+  assert.ok(human.headers.includes("CURSOR"));
+  assert.ok(human.headers.includes("GENERATION_FENCE"));
+  assert.ok(human.headers.includes("RECONCILIATION"));
+  assert.ok(human.headers.includes("UNKNOWN_OUTCOME"));
   assert.ok(human.rows[0]?.includes("provider_pool=authoritative"));
+  assert.ok(human.rows[0]?.includes("manual-required"));
   assert.doesNotMatch(JSON.stringify(audit.records[0]), /prompt|attachment|descriptor|BEARER/);
+});
+
+test("adapter diagnostics fail closed on a missing or incomplete assurance contract", () => {
+  const missing = create(AdapterStatusPageSchema, {
+    adapters: [create(AdapterStatusSchema, {
+      capability: create(AdapterCapabilitySummarySchema),
+    })],
+  });
+  assert.throws(
+    () => adapterStatusPageView(missing),
+    /assurance is missing the supported V1 contract/,
+  );
+
+  const incomplete = create(AdapterStatusPageSchema, {
+    adapters: [create(AdapterStatusSchema, {
+      capability: create(AdapterCapabilitySummarySchema, {
+        assurance: create(AdapterAssuranceManifestSchema, {
+          contract: {
+            case: "v1",
+            value: create(AdapterAssuranceManifestV1Schema, {
+              deduplicationStrength: IdempotencyStrength.NONE,
+              continuationProofSupport: false,
+              cursorSupport: undefined,
+              generationFenceSupport: false,
+              reconciliationStrength: AdapterReconciliationStrength.NONE,
+              unprovenOutcomeAction: ReconciliationAction.NONE,
+            }),
+          },
+        }),
+      }),
+    })],
+  });
+  assert.throws(() => adapterStatusPageView(incomplete), /assurance V1 is incomplete/);
 });
 
 test("inspect-command renders every canonical spawn claim disposition in JSON and text", () => {

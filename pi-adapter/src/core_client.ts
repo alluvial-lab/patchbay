@@ -429,7 +429,7 @@ function operationStateName(state: OperationState): string {
   return OperationState[state] ?? String(state);
 }
 
-function piCapabilityManifest() {
+export function piCapabilityManifest() {
   return create(AdapterCapabilitySchema, {
     supportedOperationKinds: [
       OperationKind.ATTACH,
