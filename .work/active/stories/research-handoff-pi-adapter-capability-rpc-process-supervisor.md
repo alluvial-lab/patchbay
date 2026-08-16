@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-rpc-process-supervisor
 kind: story
-stage: review
+stage: implementing
 tags: [adapter, protocol, security]
 parent: research-handoff-pi-adapter-capability
 depends_on: [research-handoff-pi-adapter-capability-control-session-integrity, research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-continuation-payload-authority-contract, research-handoff-spawn-claim-registry-contract, research-handoff-spawn-crash-external-effect-evidence-contract, research-handoff-spawn-runtime-evidence-promotion-contract, research-handoff-spawn-idempotency-duplicate-handling, research-handoff-spawn-restart-continuation-orchestration, deployment-authority-workspace-scoped-revocable-keys]
