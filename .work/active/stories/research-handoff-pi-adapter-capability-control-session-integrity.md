@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-control-session-integrity
 kind: story
-stage: review
+stage: implementing
 tags: [adapter, protocol, security, verification]
 parent: research-handoff-pi-adapter-capability
 depends_on: [research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-continuation-payload-authority-contract]
