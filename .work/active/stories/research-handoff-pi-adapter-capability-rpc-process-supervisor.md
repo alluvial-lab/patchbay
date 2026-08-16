@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-rpc-process-supervisor
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, security]
 parent: research-handoff-pi-adapter-capability
 depends_on: [research-handoff-pi-adapter-capability-control-session-integrity, research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-continuation-payload-authority-contract, research-handoff-spawn-claim-registry-contract, research-handoff-spawn-crash-external-effect-evidence-contract, research-handoff-spawn-runtime-evidence-promotion-contract, research-handoff-spawn-idempotency-duplicate-handling, research-handoff-spawn-restart-continuation-orchestration, deployment-authority-workspace-scoped-revocable-keys]
@@ -128,6 +128,20 @@ Production implements `ManagedPiRuntimePort` only with RPC. Tests may use `Agent
 - Full verification (2026-08-16): Rust group `cargo fmt --all -- --check && cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`; contracts group `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build && npm run check:presentation && npm run test:presentation` (59 vectors, 19 promoted, 29 implementation checks, 38 mutation witnesses); operator-domain group `cd operator-domain && npm test` (28/28); Pi-adapter group `cd pi-adapter && npm test && npm run test:mutations` (95/95; 15/15 mutations); plus `cd web-cockpit && npm test` (144/144), `cd cli && npm test` (53/53 plus real-core resource projection), and `cd token-commune-adapter && npm test` (63/63). All passed; `git diff --check` passed.
 - Simplification: semantic journal order and replay eligibility derive from one conditional phase-chain validator instead of scattered presence checks. Supervisor failure recovery carries one typed N-state/effect/fence disposition rather than reconstructing live/idle in the catch block.
 - Discrepancies from design: none. Rationale for treating the control-handshake wrapper timeout as possibly written: the wrapped RPC has already started, so the wrapper cannot prove stdin observed none of the request even if its shorter response deadline wins.
+- Adjacent issues parked: none.
+
+## Implementation notes — Pi Unit 3 r3 fix round
+
+- Execution capability: `openai-codex/gpt-5.6-sol` (caller-selected for the fail-closed journal evidence boundary); direct-read implementation with no subagent attempt because this is a delegated Pi-chain worker.
+- Review weight: `thorough` (caller-selected). The story returns to `review` for the autopilot's required fresh-context pass 4.
+- Repeated-phase semantics: identical effect claims remain idempotent. `proved_none → may_exist` is legitimate late worse-news and now atomically replaces the last same-phase record while retaining poison; it never creates a second durable semantic phase. `may_exist → proved_none` and every other changed same-phase claim reject as weakening or contradictory. The read validator now rejects every durable repeated phase, including a hand-written `quiescing_prior/proved_none → quiescing_prior/may_exist` pair, through both single-claim and startup-fold reads.
+- Rationale: the pass-3 review explicitly requires preserving monotonic strengthening without storing a duplicate phase. Whole-file fsync+rename replacement preserves that evidence transition and the existing journal's one-record-per-semantic-phase invariant without adding another transition type.
+- Files changed: `pi-adapter/src/spawn_journal.ts`; `pi-adapter/tests/spawn_supervisor.test.ts`; this story. No Protobuf file was edited.
+- Tests added: a four-row effect-claim monotonicity table covers no-effect-to-may-exist strengthening, may-exist-to-no-effect rejection, and identical idempotence in both dispositions while asserting one durable phase and poison state. A direct-file corruption probe asserts `reconcile` and `reconcileAll` both reject the formerly accepted stronger duplicate.
+- Mutation evidence: a manual mutant re-enabled `may_exist → proved_none` replacement and cleared poison; the focused monotonicity test failed with `Missing expected rejection`, so the downgrade mutant was killed. `git restore` removed the mutant, the fixed source was restored byte-for-byte, and the clean focused run accepted `proved_none → may_exist` while rejecting the downgrade. The registered Pi Unit 3 suite remained **15/15 killed**; no mutation was committed.
+- Full verification (2026-08-16): Rust group `cargo fmt --all -- --check && cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings`; contracts group `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build && npm run check:presentation && npm run test:presentation` (59 vectors, 19 promoted, 29 implementation checks, 38 mutation witnesses); operator-domain group `cd operator-domain && npm test` (28/28); Pi-adapter group `cd pi-adapter && npm test && npm run test:mutations` (97/97; 15/15 mutations). All four groups passed. `cd web-cockpit && npm test` (144/144), `cd cli && npm test` (53/53 plus the real-core resource projection), and `cd token-commune-adapter && npm test` (63/63) also passed. `git diff --check` passed.
+- Simplification: the read validator no longer carries a special duplicate-phase exception or a redundant launch-attempt counter; one observed-phase set rejects every repeated durable phase.
+- Discrepancies from design: none. The review's required direction resolves the apparent repetition ambiguity by allowing strengthening at the write API as replacement, never as a repeated durable record.
 - Adjacent issues parked: none.
 
 ## Ordering constraint

@@ -222,7 +222,7 @@ export class FileSpawnEffectJournal implements SpawnEffectJournal {
         return;
       }
       if (record.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED && state.phases.some(
-        (phase) => phase.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED,
+        (candidate) => candidate.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED,
       )) {
         throw new Error("spawn journal records at most one launch attempt per claim");
       }
@@ -231,6 +231,20 @@ export class FileSpawnEffectJournal implements SpawnEffectJournal {
         externalEffectDisposition: record.externalEffectDisposition,
         recordedAt: record.recordedAt,
       });
+      if (duplicate) {
+        if (
+          previous.externalEffectDisposition !== ExternalEffectDisposition.PROVED_NONE ||
+          record.externalEffectDisposition !== ExternalEffectDisposition.MAY_EXIST
+        ) {
+          throw new Error("spawn journal repeated phase effect claim cannot weaken or contradict");
+        }
+        await this.#writeStored(record.claimOperationId, Object.freeze({
+          ...state,
+          phases: Object.freeze([...state.phases.slice(0, -1), phase]),
+          poisoned: true,
+        }));
+        return;
+      }
       await this.#writeStored(record.claimOperationId, Object.freeze({
         ...state,
         phases: Object.freeze([...state.phases, phase]),
@@ -539,7 +553,6 @@ function validatePhaseChain(
   let expectedIndex = 0;
   let previous: StoredPhase | undefined;
   let poisoned = false;
-  let launchAttempts = 0;
 
   for (const phase of phases) {
     if (
@@ -550,34 +563,22 @@ function validatePhaseChain(
       throw new Error("spawn journal phase is malformed");
     }
     validateTimestamp(phase.recordedAt);
-    if (phase.phase === previous?.phase) {
-      if (
-        phase.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED ||
-        previous.externalEffectDisposition !== ExternalEffectDisposition.PROVED_NONE ||
-        phase.externalEffectDisposition !== ExternalEffectDisposition.MAY_EXIST
-      ) {
-        throw new Error("spawn journal phase is duplicated or contradictory");
-      }
-    } else {
-      if (phase.phase !== expected[expectedIndex]) {
-        throw new Error("spawn journal semantic phase chain is missing or reordered");
-      }
-      expectedIndex += 1;
-      observed.add(phase.phase);
-      if (phase.phase === SpawnExecutionPhase.LAUNCH_ATTEMPTED) launchAttempts += 1;
-      if (
-        previous?.externalEffectDisposition === ExternalEffectDisposition.MAY_EXIST &&
-        previous.phase !== SpawnExecutionPhase.LAUNCH_ATTEMPTED
-      ) {
-        throw new Error("spawn journal continues after an ambiguous pre-launch phase");
-      }
+    if (observed.has(phase.phase)) {
+      throw new Error("spawn journal phase is duplicated or contradictory");
     }
+    if (phase.phase !== expected[expectedIndex]) {
+      throw new Error("spawn journal semantic phase chain is missing or reordered");
+    }
+    if (
+      previous?.externalEffectDisposition === ExternalEffectDisposition.MAY_EXIST &&
+      previous.phase !== SpawnExecutionPhase.LAUNCH_ATTEMPTED
+    ) {
+      throw new Error("spawn journal continues after an ambiguous pre-launch phase");
+    }
+    expectedIndex += 1;
+    observed.add(phase.phase);
     poisoned ||= phase.externalEffectDisposition === ExternalEffectDisposition.MAY_EXIST;
     previous = phase;
-  }
-
-  if (launchAttempts > 1) {
-    throw new Error("spawn journal records at most one launch attempt per claim");
   }
   return Object.freeze({
     launchAttempted: observed.has(SpawnExecutionPhase.LAUNCH_ATTEMPTED),

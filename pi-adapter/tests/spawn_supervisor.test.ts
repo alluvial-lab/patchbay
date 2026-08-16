@@ -460,19 +460,156 @@ async function seedRecoverableJournal(
   return runtime;
 }
 
+interface MutableStoredJournal {
+  phases: Array<{
+    phase: SpawnExecutionPhase;
+    externalEffectDisposition: ExternalEffectDisposition;
+    recordedAt: string;
+  }>;
+  poisoned: boolean;
+}
+
 async function mutateStoredJournal(
   directory: string,
-  mutate: (stored: { phases: Array<{ phase: SpawnExecutionPhase }> }) => void,
+  mutate: (stored: MutableStoredJournal) => void,
 ): Promise<void> {
   const [name] = await readdir(directory);
   assert.ok(name);
   const path = join(directory, name);
-  const stored = JSON.parse(await readFile(path, "utf8")) as {
-    phases: Array<{ phase: SpawnExecutionPhase }>;
-  };
+  const stored = JSON.parse(await readFile(path, "utf8")) as MutableStoredJournal;
   mutate(stored);
   await writeFile(path, `${JSON.stringify(stored)}\n`);
 }
+
+test("repeated journal phase effect claims follow the monotonicity table", async () => {
+  const initialAt = "2026-08-16T12:00:00.000Z";
+  const repeatedAt = "2026-08-16T12:00:01.000Z";
+  const cases = [
+    {
+      name: "no-effect to may-exist strengthens",
+      initial: ExternalEffectDisposition.PROVED_NONE,
+      repeated: ExternalEffectDisposition.MAY_EXIST,
+      accepted: true,
+      expected: ExternalEffectDisposition.MAY_EXIST,
+      expectedAt: repeatedAt,
+      poisoned: true,
+    },
+    {
+      name: "may-exist to no-effect downgrades",
+      initial: ExternalEffectDisposition.MAY_EXIST,
+      repeated: ExternalEffectDisposition.PROVED_NONE,
+      accepted: false,
+      expected: ExternalEffectDisposition.MAY_EXIST,
+      expectedAt: initialAt,
+      poisoned: true,
+    },
+    {
+      name: "identical no-effect is idempotent",
+      initial: ExternalEffectDisposition.PROVED_NONE,
+      repeated: ExternalEffectDisposition.PROVED_NONE,
+      accepted: true,
+      expected: ExternalEffectDisposition.PROVED_NONE,
+      expectedAt: initialAt,
+      poisoned: false,
+    },
+    {
+      name: "identical may-exist is idempotent",
+      initial: ExternalEffectDisposition.MAY_EXIST,
+      repeated: ExternalEffectDisposition.MAY_EXIST,
+      accepted: true,
+      expected: ExternalEffectDisposition.MAY_EXIST,
+      expectedAt: initialAt,
+      poisoned: true,
+    },
+  ] as const;
+
+  for (const candidate of cases) {
+    const fixture = await journalFixture();
+    const commandId = `phase-monotonicity-${candidate.name.replaceAll(" ", "-")}`;
+    const accepted = acceptedSpawn({
+      commandId,
+      generation: 8n,
+      continuation: runtimeRef(`prior-${commandId}`, 7n),
+    });
+    try {
+      await fixture.journal.beginClaim({
+        exactClaim: accepted.claim!,
+        launchNonce: "n".repeat(43),
+        targetFingerprint: "a".repeat(64),
+        createdAt: initialAt,
+      });
+      await fixture.journal.recordPhase({
+        claimOperationId: commandId,
+        phase: SpawnExecutionPhase.QUIESCING_PRIOR,
+        externalEffectDisposition: candidate.initial,
+        recordedAt: initialAt,
+      });
+      const repeat = fixture.journal.recordPhase({
+        claimOperationId: commandId,
+        phase: SpawnExecutionPhase.QUIESCING_PRIOR,
+        externalEffectDisposition: candidate.repeated,
+        recordedAt: repeatedAt,
+      });
+      if (candidate.accepted) await repeat;
+      else await assert.rejects(repeat, /effect claim cannot weaken or contradict/);
+
+      const state = await fixture.journal.reconcile(commandId);
+      assert.equal(state?.phases.length, 1, candidate.name);
+      assert.equal(
+        state?.phases[0]?.externalEffectDisposition,
+        candidate.expected,
+        candidate.name,
+      );
+      assert.equal(state?.phases[0]?.recordedAt, candidate.expectedAt, candidate.name);
+      assert.equal(state?.poisoned, candidate.poisoned, candidate.name);
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test("direct journal reads reject a durable repeated phase with a stronger effect claim", async () => {
+  const fixture = await journalFixture();
+  const commandId = "phase-duplicate-direct-read";
+  const accepted = acceptedSpawn({
+    commandId,
+    generation: 8n,
+    continuation: runtimeRef("prior-phase-duplicate-direct-read", 7n),
+  });
+  try {
+    await fixture.journal.beginClaim({
+      exactClaim: accepted.claim!,
+      launchNonce: "n".repeat(43),
+      targetFingerprint: "a".repeat(64),
+      createdAt: "2026-08-16T12:00:00.000Z",
+    });
+    await fixture.journal.recordPhase({
+      claimOperationId: commandId,
+      phase: SpawnExecutionPhase.QUIESCING_PRIOR,
+      externalEffectDisposition: ExternalEffectDisposition.PROVED_NONE,
+      recordedAt: "2026-08-16T12:00:00.000Z",
+    });
+    await mutateStoredJournal(fixture.directory, (stored) => {
+      stored.phases.push({
+        phase: SpawnExecutionPhase.QUIESCING_PRIOR,
+        externalEffectDisposition: ExternalEffectDisposition.MAY_EXIST,
+        recordedAt: "2026-08-16T12:00:01.000Z",
+      });
+      stored.poisoned = true;
+    });
+
+    await assert.rejects(
+      fixture.journal.reconcile(commandId),
+      /spawn journal phase is duplicated or contradictory/,
+    );
+    await assert.rejects(
+      fixture.journal.reconcileAll(),
+      /spawn journal phase is duplicated or contradictory/,
+    );
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
 
 test("local staged reconciler replays the exact durable projection after restart promotion", async () => {
   const runtime = runtimeRef("pi-local-recovery", 1n);
