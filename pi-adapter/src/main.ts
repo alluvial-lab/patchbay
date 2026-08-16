@@ -4,11 +4,15 @@ import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  AdapterIdSchema,
   CommandIdSchema,
+  ExternalRuntimeRefSchema,
   FailureCode,
   GenerationSchema,
+  LogicalTargetIdSchema,
   OperationKind,
   OperationSchema,
+  RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
   SessionActivityState,
   SessionConnectivityState,
@@ -49,9 +53,12 @@ import {
   type ManagedPiRuntimePort,
 } from "./pi_process.js";
 import { FileSpawnEffectJournal } from "./spawn_journal.js";
+import { FilePiCursorStore } from "./cursor_store.js";
+import { PiEntryReconciler } from "./entry_reconciler.js";
+import { classifyPiSessionMaterialization } from "./session_file.js";
 import {
   ClaimAwareSpawnSupervisor,
-  LocalStagedPiReconciler,
+  CursorBackedPiReconciler,
   type ManagedPiTargetConfig,
   type SpawnSupervisorCorePort,
 } from "./spawn_supervisor.js";
@@ -59,7 +66,6 @@ import {
   SessionRegistry,
   type RuntimeSessionEntry,
 } from "./session_registry.js";
-import { projectSessionEntries } from "./transcript_projection.js";
 import type { TranscriptEvent } from "./transcript_event.js";
 import {
   nextSessionReportSequence,
@@ -95,6 +101,7 @@ export interface AdapterProcessOptions {
   deploymentAuthorityResolver?: DeploymentAuthorityResolver;
   managedTargets?: readonly ManagedPiTargetConfig[];
   spawnJournalDirectory?: string;
+  cursorStoreDirectory?: string;
   managedRuntimePort?: ManagedPiRuntimePort;
 }
 
@@ -116,6 +123,7 @@ export class AdapterProcess {
   readonly #activeCommands = new Map<string, { readonly commandId: string; readonly operation: Operation }>();
   readonly #replacementResolvedCommands = new Set<string>();
   readonly #runtimePort: ManagedPiRuntimePort;
+  readonly #entryReconciler: PiEntryReconciler;
   readonly #spawnSupervisor: ClaimAwareSpawnSupervisor;
   readonly #pendingObservations = new Set<Promise<void>>();
   // Per-session report chains: transcript events (hundreds of deltas per turn)
@@ -153,6 +161,16 @@ export class AdapterProcess {
       this.#core.setDiagnostics(this.#diagnostics);
     }
     this.#runtimePort = options.managedRuntimePort ?? new RpcManagedPiRuntimePort();
+    this.#entryReconciler = new PiEntryReconciler(
+      new FilePiCursorStore(
+        options.cursorStoreDirectory ?? resolve(process.cwd(), ".patchbay", "pi-cursors"),
+      ),
+      {
+        publish: async (runtime, schemaRef, payload) => {
+          await this.#core.ingestPiProjection(runtime, schemaRef, payload);
+        },
+      },
+    );
     const corePort: SpawnSupervisorCorePort = {
       adapterId: options.adapterId,
       adapterGeneration: options.adapterGeneration,
@@ -228,12 +246,11 @@ export class AdapterProcess {
       registry: this.#registry,
       core: corePort,
       targets: options.managedTargets ?? [],
-      reconciler: new LocalStagedPiReconciler(
-        (runtime, entries) => this.#publishRecoveredProjection(runtime, entries),
-      ),
+      reconciler: new CursorBackedPiReconciler(this.#entryReconciler),
       observeTranscript: (entry, event) => this.#observeTranscript(entry, event),
       observeModelChange: (entry, model) => this.#observeModelChange(entry, model),
       observeLifecycle: (entry, event) => this.#observeLifecycle(entry, event),
+      observePersistedEntry: (entry) => this.#observePersistedEntry(entry),
     });
   }
 
@@ -288,6 +305,7 @@ export class AdapterProcess {
         (observedEntry, event) => this.#observeTranscript(observedEntry, event),
         (observedEntry, model) => this.#observeModelChange(observedEntry, model),
         (observedEntry, event) => this.#observeLifecycle(observedEntry, event),
+        (observedEntry) => this.#observePersistedEntry(observedEntry),
       );
     } catch (error) {
       this.#record({
@@ -736,6 +754,48 @@ export class AdapterProcess {
     return undefined;
   }
 
+  #observePersistedEntry(entry: RuntimeSessionEntry): void {
+    if (!entry.logicalTargetId || !entry.sessionRoot) return;
+    const tail = this.#observationTails.get(entry.runtimeSessionId) ?? Promise.resolve();
+    const next = tail.then(async () => {
+      const [state, complete] = await Promise.all([
+        entry.session.getState(),
+        entry.session.getEntries(),
+      ]);
+      const materialization = await classifyPiSessionMaterialization({
+        sessionId: state.sessionId,
+        declaredPath: state.sessionFile,
+        allowedRoot: entry.sessionRoot!,
+        rpcEntries: complete.entries,
+        rpcLeafId: complete.leafId,
+      });
+      const runtime = create(RuntimeGenerationRefSchema, {
+        logicalTargetId: create(LogicalTargetIdSchema, { value: entry.logicalTargetId! }),
+        externalRuntime: create(ExternalRuntimeRefSchema, {
+          adapterId: create(AdapterIdSchema, { value: this.#options.adapterId }),
+          deploymentScope: entry.deploymentScope,
+          runtimeSessionId: create(RuntimeSessionIdSchema, { value: entry.runtimeSessionId }),
+          generation: create(GenerationSchema, { value: BigInt(entry.session.generation) }),
+        }),
+      });
+      await this.#entryReconciler.reconcileCurrent(runtime, {
+        logicalTargetId: entry.logicalTargetId!,
+        configuredSessionRoot: entry.sessionRoot!,
+        piSessionId: state.sessionId,
+        declaredSessionPath: state.sessionFile,
+        materialization,
+        completeEntries: complete.entries,
+        leafId: complete.leafId,
+        fetchKnown: (cursor) => entry.session.getEntries(cursor),
+      });
+    });
+    this.#observationTails.set(entry.runtimeSessionId, next);
+    this.#trackObservation(next, {
+      session: this.#sessionRef(entry),
+      observationKind: "transcript",
+    });
+  }
+
   #observeTranscript(entry: RuntimeSessionEntry, event: TranscriptEvent): void {
     const identity = this.#identity(entry);
     const activeCommand = this.#activeCommands.get(entry.runtimeSessionId)?.commandId;
@@ -847,38 +907,6 @@ export class AdapterProcess {
       });
     this.#observationTails.set(entry.runtimeSessionId, next);
     return next;
-  }
-
-  async #publishRecoveredProjection(
-    runtime: RuntimeGenerationRef,
-    entries: readonly unknown[],
-  ): Promise<void> {
-    const external = runtime.externalRuntime;
-    const runtimeSessionId = external?.runtimeSessionId?.value;
-    const generation = external?.generation?.value;
-    if (
-      !runtimeSessionId || !external?.deploymentScope || !generation ||
-      generation > BigInt(Number.MAX_SAFE_INTEGER)
-    ) {
-      throw new Error("recovered projection runtime identity is incomplete");
-    }
-    const numericGeneration = Number(generation);
-    const identity: SessionIdentity = {
-      runtimeSessionId,
-      deploymentScope: external.deploymentScope,
-      generation: numericGeneration,
-      project: "",
-      cwd: "",
-      name: runtimeSessionId,
-      model: "",
-    };
-    const projected = projectSessionEntries(
-      entries as Parameters<typeof projectSessionEntries>[0],
-      `${runtimeSessionId}:${numericGeneration}`,
-    );
-    for (const event of projected) {
-      await this.#core.ingestTranscript(identity, event);
-    }
   }
 
   #queueRecoveredSessionReport(

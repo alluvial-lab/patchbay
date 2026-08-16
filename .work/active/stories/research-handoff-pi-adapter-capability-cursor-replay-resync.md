@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-cursor-replay-resync
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, verification]
 parent: research-handoff-pi-adapter-capability
 depends_on: [research-handoff-pi-adapter-capability-control-session-integrity, research-handoff-pi-adapter-capability-rpc-process-supervisor, research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-cursor-authoritative-replacement-contract, research-handoff-spawn-runtime-evidence-promotion-contract, research-handoff-spawn-reconnect-cursor-reconcile]
@@ -9,7 +9,7 @@ release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-16
 ---
 
 # Pi-session-scoped cursor replay and authoritative projection replacement
@@ -91,16 +91,37 @@ For `memory_only` sessions, the reconciler may hold a volatile exact set for cur
 
 ## Acceptance evidence
 
-- [ ] N+1 resumed against the same verified Pi session loads N's cursor without transfer; a different Pi id/path/root or second logical target rejects.
-- [ ] Known suffix commits only after core acknowledgement and is inert under acknowledgement-loss retry.
-- [ ] Unknown cursor cannot return empty/current, clear first, or upsert over the old projection.
-- [ ] A full set omitting previously projected entry X removes X in the consuming current projection after one replacement fold; durable source/audit history remains.
-- [ ] Projection, cursor, leaf, and epoch become current together; cursor-before-projection and partial-file crash mutations fail.
-- [ ] Claimed successor replacement stays staged and emits no normal transcript until promotion; post-promotion publication precedes `live` report.
-- [ ] Pre-compaction and abandoned-branch entries validate and remain in the exact tree; current leaf does not imply live-process order.
-- [ ] Memory-only state is not advertised as restart-stable; materialization triggers exact replacement.
-- [ ] Upsert-only, generation-keyed, clear-before-fetch, same-epoch-conflict, and missing reverse-binding mutations fail.
+- [x] N+1 resumed against the same verified Pi session loads N's cursor without transfer; a different Pi id/path/root or second logical target rejects.
+- [x] Known suffix commits only after core acknowledgement and is inert under acknowledgement-loss retry.
+- [x] Unknown cursor cannot return empty/current, clear first, or upsert over the old projection.
+- [x] A full set omitting previously projected entry X removes X in the consuming current projection after one replacement fold; durable source/audit history remains.
+- [x] Projection, cursor, leaf, and epoch become current together; cursor-before-projection and partial-file crash mutations fail.
+- [x] Claimed successor replacement stays staged and emits no normal transcript until promotion; post-promotion publication precedes `live` report.
+- [x] Pre-compaction and abandoned-branch entries validate and remain in the exact tree; current leaf does not imply live-process order.
+- [x] Memory-only state is not advertised as restart-stable; materialization triggers exact replacement.
+- [x] Upsert-only, generation-keyed, clear-before-fetch, same-epoch-conflict, and missing reverse-binding mutations fail.
 
 ## Ordering constraint
 
 Consumes the logical identity, authoritative cursor replacement, runtime evidence/promotion, and reconnect contracts plus the concrete control/session proof and RPC supervisor. It is the sole Pi implementation of the shared cursor leaf.
+
+## Implementation notes
+
+- Execution capability: inline cohesive implementation, grounded in the completed Leaf-4 `AuthoritativeCursorReplacement` contract and the existing spawn supervisor.
+- Added generated Pi suffix/replacement protobuf envelopes, a path-opaque Pi continuity derivation, a private temp-fsync-rename cursor store with reverse logical-target binding and exported CAS conformance instrumentation, deterministic persisted-entry projection, and the Pi Leaf-4 port adapter.
+- Production spawn now stages cursor evidence under the exact claim, journals a recovery capsule, publishes only after exact promotion, and commits the local cursor only after durable core acknowledgement. Recovered promotions resend the same deterministic envelope. Current managed sessions use persisted-entry notifications only as reconciliation wakes.
+- Added the operator-domain Pi compositor and cockpit fold. Exact replacement deletes omitted Pi projection memberships while leaving immutable source events untouched; duplicate suffix/replacement delivery is inert and same-epoch conflicts fail closed.
+- Added/extended the `spawn-reconnect-cursor-convergence` conformance vector with Pi adapter and Pi presentation runners. Generated envelopes contain stable ids, hashes, opaque continuity, and transcript presentation facts but no raw local path, session label, or custom-entry payload.
+- Acceptance tests cover same-Pi N→N+1 continuity, cross-Pi/reverse-binding rejection, known and unknown cursor paths, response loss, crash after core acknowledgement before CAS, memory-only materialization, abandoned branches/pre-compaction membership, publication gating, exact omission deletion, and POSIX-private storage.
+
+## Verification
+
+- `contracts/ts: npm run build` — passed.
+- `contracts/ts: npm run check:vectors` — passed (59 vectors, 31 implementation checks, 38 mutation witnesses).
+- `cargo test -p patchbay-contracts` — passed.
+- `operator-domain: npm test` — passed (30/30).
+- `pi-adapter: npm test` — passed (108/108).
+- `pi-adapter: npm run test:mutations` — passed (18/18 killed, including Pi continuity collapse, skipped exact replacement publication, and acknowledged-without-write CAS mutants).
+- `web-cockpit: npm test` — passed (145/145).
+- `cli: npm test` — passed (53/53 plus real-core resource projection).
+- `token-commune-adapter: npm test` — passed (63/63).

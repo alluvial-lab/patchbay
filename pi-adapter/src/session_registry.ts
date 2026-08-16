@@ -10,6 +10,8 @@ export interface RuntimeSessionConfig {
   readonly cwd: string;
   readonly name?: string;
   readonly logicalTargetId?: string;
+  /** Adapter-local root used only for materialization/cursor verification. */
+  readonly sessionRoot?: string;
 }
 
 export interface RuntimeSessionEntry extends RuntimeSessionConfig {
@@ -23,11 +25,13 @@ export type LifecycleObserver = (
   entry: RuntimeSessionEntry,
   event: Parameters<Parameters<PiSession["onLifecycle"]>[0]>[0],
 ) => void;
+export type PersistedEntryObserver = (entry: RuntimeSessionEntry) => void;
 
 interface OwnedRuntimeSessionEntry extends RuntimeSessionEntry {
   readonly unsubscribeTranscript: () => void;
   readonly unsubscribeModelChange: () => void;
   readonly unsubscribeLifecycle: () => void;
+  readonly unsubscribePersistedEntry: () => void;
   active: boolean;
 }
 
@@ -37,6 +41,7 @@ interface CandidateEntry {
   readonly observeTranscript: TranscriptObserver;
   readonly observeModelChange: ModelChangeObserver;
   readonly observeLifecycle: LifecycleObserver;
+  readonly observePersistedEntry: PersistedEntryObserver;
 }
 
 /** Current/candidate registry with attachment-token fencing around every callback. */
@@ -64,8 +69,16 @@ export class SessionRegistry {
     observeTranscript: TranscriptObserver,
     observeModelChange: ModelChangeObserver,
     observeLifecycle: LifecycleObserver = () => undefined,
+    observePersistedEntry: PersistedEntryObserver = () => undefined,
   ): RuntimeSessionEntry {
-    const entry = this.#ownedEntry(config, session, observeTranscript, observeModelChange, observeLifecycle);
+    const entry = this.#ownedEntry(
+      config,
+      session,
+      observeTranscript,
+      observeModelChange,
+      observeLifecycle,
+      observePersistedEntry,
+    );
     this.#installCurrent(entry);
     return entry;
   }
@@ -77,6 +90,7 @@ export class SessionRegistry {
     observeTranscript: TranscriptObserver,
     observeModelChange: ModelChangeObserver,
     observeLifecycle: LifecycleObserver = () => undefined,
+    observePersistedEntry: PersistedEntryObserver = () => undefined,
   ): RuntimeSessionEntry {
     const claimOperationId = exactClaim.claimOperationId?.value;
     const logicalTargetId = exactClaim.logicalTargetId?.value;
@@ -113,6 +127,7 @@ export class SessionRegistry {
       observeTranscript,
       observeModelChange,
       observeLifecycle,
+      observePersistedEntry,
     });
     return entry;
   }
@@ -143,6 +158,7 @@ export class SessionRegistry {
       candidate.observeTranscript,
       candidate.observeModelChange,
       candidate.observeLifecycle,
+      candidate.observePersistedEntry,
     );
     this.#candidates.delete(claimOperationId);
     this.#installCurrent(promoted);
@@ -205,6 +221,7 @@ export class SessionRegistry {
     observeTranscript: TranscriptObserver,
     observeModelChange: ModelChangeObserver,
     observeLifecycle: LifecycleObserver,
+    observePersistedEntry: PersistedEntryObserver,
   ): OwnedRuntimeSessionEntry {
     if (!config.runtimeSessionId || session.runtimeSessionId !== config.runtimeSessionId) {
       throw new Error("registry key does not match Pi runtime identity");
@@ -218,6 +235,7 @@ export class SessionRegistry {
       unsubscribeTranscript: () => undefined,
       unsubscribeModelChange: () => undefined,
       unsubscribeLifecycle: () => undefined,
+      unsubscribePersistedEntry: () => undefined,
     };
     Object.assign(entry, {
       unsubscribeTranscript: session.onTranscript((event) => {
@@ -228,6 +246,9 @@ export class SessionRegistry {
       }),
       unsubscribeLifecycle: session.onLifecycle((event) => {
         if (this.#callbackIsCurrent(entry, attachmentToken)) observeLifecycle(entry, event);
+      }),
+      unsubscribePersistedEntry: session.onPersistedEntry(() => {
+        if (this.#callbackIsCurrent(entry, attachmentToken)) observePersistedEntry(entry);
       }),
     });
     return entry;
@@ -252,6 +273,7 @@ export class SessionRegistry {
     entry.unsubscribeTranscript();
     entry.unsubscribeModelChange();
     entry.unsubscribeLifecycle();
+    entry.unsubscribePersistedEntry();
     if (this.#entries.get(entry.runtimeSessionId) === entry) this.#entries.delete(entry.runtimeSessionId);
     if (entry.logicalTargetId && this.#byLogicalTarget.get(entry.logicalTargetId) === entry) {
       this.#byLogicalTarget.delete(entry.logicalTargetId);

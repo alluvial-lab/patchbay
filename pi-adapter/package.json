@@ -11,6 +11,7 @@
     "start": "node dist/src/main.js",
     "test": "npm run build && node --test dist/tests/*.test.js",
     "test:e2e": "npm run build && node --test dist/tests/e2e.test.js dist/tests/rpc_process_e2e.test.js",
+    "test:conformance": "npm run build && node --test dist/tests/conformance-vectors.test.js",
     "test:mutations": "node scripts/mutation-cycle.mjs"
   },
   "dependencies": {
@@ -18,7 +19,8 @@
     "@connectrpc/connect": "^2.1.2",
     "@connectrpc/connect-node": "^2.1.2",
     "@earendil-works/pi-coding-agent": "0.84.1",
-    "@patchbay/contracts": "file:../contracts/ts"
+    "@patchbay/contracts": "file:../contracts/ts",
+    "@patchbay/operator-domain": "file:../operator-domain"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.84.1",

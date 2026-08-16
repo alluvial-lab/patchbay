@@ -48,6 +48,7 @@ import {
   verifyMaterializedSessionSeal,
   verifyResumedSessionExtension,
   type MaterializedSessionSeal,
+  type PiSessionMaterialization,
 } from "./session_file.js";
 import { SessionRegistry, type RuntimeSessionEntry } from "./session_registry.js";
 import {
@@ -58,6 +59,13 @@ import {
   type SpawnEffectJournal,
 } from "./spawn_journal.js";
 import type { RuntimeReplacementLease } from "./runtime_action_gate.js";
+import {
+  PiEntryReconciler,
+  restorePiStagedCursorPublication,
+  serializePiStagedCursorPublication,
+  type PiCursorReconciliationEvidence,
+  type PiStagedCursorPublication,
+} from "./entry_reconciler.js";
 
 export const PI_SPAWN_TARGET_SCHEMA_REF = "patchbay.PiSpawnTargetSpec.v1";
 export const PI_SPAWN_RESULT_SCHEMA_REF = "patchbay.PiSpawnResult.v1";
@@ -133,6 +141,7 @@ export interface StagedPiProjection {
   readonly entryCount: number;
   readonly recoveryEntries: readonly unknown[];
   readonly recoveryLeafId: string | null;
+  readonly cursorPublication?: PiStagedCursorPublication;
 }
 
 export interface PiAuthoritativeReconciler {
@@ -140,12 +149,57 @@ export interface PiAuthoritativeReconciler {
     runtime: RuntimeGenerationRef,
     entries: readonly unknown[],
     leafId: string | null,
+    cursorEvidence?: PiCursorReconciliationEvidence,
   ): Promise<StagedPiProjection>;
   publishAfterPromotion(staged: StagedPiProjection, session: PiSession): Promise<void>;
   publishRecoveredAfterPromotion(
     staged: StagedPiProjection,
     runtime: RuntimeGenerationRef,
   ): Promise<void>;
+}
+
+/** Production compositor that replaces Unit 3's local publisher seam. */
+export class CursorBackedPiReconciler implements PiAuthoritativeReconciler {
+  constructor(private readonly entries: PiEntryReconciler) {}
+
+  async stageClaimedSuccessor(
+    runtime: RuntimeGenerationRef,
+    _entries: readonly unknown[],
+    leafId: string | null,
+    cursorEvidence?: PiCursorReconciliationEvidence,
+  ): Promise<StagedPiProjection> {
+    if (!cursorEvidence) throw new Error("Pi cursor staging requires verified continuity evidence");
+    const cursorPublication = await this.entries.stageClaimedSuccessor(runtime, cursorEvidence);
+    const recoveryEntries = Object.freeze([serializePiStagedCursorPublication(cursorPublication)]);
+    return Object.freeze({
+      runtime,
+      readinessDigest: cursorPublication.readinessDigest,
+      entryCount: recoveryEntries.length,
+      recoveryEntries,
+      recoveryLeafId: leafId,
+      cursorPublication,
+    });
+  }
+
+  async publishAfterPromotion(staged: StagedPiProjection, _session: PiSession): Promise<void> {
+    await this.entries.publishAfterPromotion(this.#restore(staged));
+  }
+
+  async publishRecoveredAfterPromotion(
+    staged: StagedPiProjection,
+    runtime: RuntimeGenerationRef,
+  ): Promise<void> {
+    await this.entries.publishRecoveredAfterPromotion(this.#restore(staged, runtime));
+  }
+
+  #restore(staged: StagedPiProjection, runtime = staged.runtime): PiStagedCursorPublication {
+    const restored = staged.cursorPublication
+      ?? restorePiStagedCursorPublication(staged.recoveryEntries[0], runtime);
+    if (restored.readinessDigest !== staged.readinessDigest) {
+      throw new Error("Pi cursor recovery digest differs from staged successor evidence");
+    }
+    return restored;
+  }
 }
 
 export class LocalStagedPiReconciler implements PiAuthoritativeReconciler {
@@ -277,6 +331,7 @@ export class ClaimAwareSpawnSupervisor {
   readonly #observeTranscript: Parameters<SessionRegistry["stageCandidate"]>[3];
   readonly #observeModelChange: Parameters<SessionRegistry["stageCandidate"]>[4];
   readonly #observeLifecycle: Parameters<SessionRegistry["stageCandidate"]>[5];
+  readonly #observePersistedEntry: Parameters<SessionRegistry["stageCandidate"]>[6];
 
   constructor(options: {
     readonly runtimePort: ManagedPiRuntimePort;
@@ -288,6 +343,7 @@ export class ClaimAwareSpawnSupervisor {
     readonly observeTranscript?: Parameters<SessionRegistry["stageCandidate"]>[3];
     readonly observeModelChange?: Parameters<SessionRegistry["stageCandidate"]>[4];
     readonly observeLifecycle?: Parameters<SessionRegistry["stageCandidate"]>[5];
+    readonly observePersistedEntry?: Parameters<SessionRegistry["stageCandidate"]>[6];
   }) {
     this.#runtimePort = options.runtimePort;
     this.#journal = options.journal;
@@ -297,6 +353,7 @@ export class ClaimAwareSpawnSupervisor {
     this.#observeTranscript = options.observeTranscript ?? (() => undefined);
     this.#observeModelChange = options.observeModelChange ?? (() => undefined);
     this.#observeLifecycle = options.observeLifecycle ?? (() => undefined);
+    this.#observePersistedEntry = options.observePersistedEntry ?? (() => undefined);
     const targets = new Map<string, ManagedPiTargetConfig>();
     for (const target of options.targets) {
       if (!target.projectContextRef || targets.has(target.projectContextRef)) {
@@ -528,6 +585,7 @@ export class ClaimAwareSpawnSupervisor {
       }
       const successorEntries = await successor.getEntries(undefined, lease);
       let persistence = PiSpawnPersistence.MEMORY_ONLY;
+      let successorMaterialization: PiSessionMaterialization;
       if (validated.continuationMode === "require_resume") {
         const resumed = await verifyResumedSessionExtension({
           seal: seal!,
@@ -541,6 +599,7 @@ export class ClaimAwareSpawnSupervisor {
         if (resumed.kind !== "materialized") {
           throw new SpawnSupervisorError("successor failed sealed-prefix verification", FailureCode.EXECUTION_FAILED, true);
         }
+        successorMaterialization = resumed;
         persistence = PiSpawnPersistence.MATERIALIZED;
       } else {
         const materialization = await classifyPiSessionMaterialization({
@@ -553,6 +612,7 @@ export class ClaimAwareSpawnSupervisor {
         if (materialization.kind === "invalid") {
           throw new SpawnSupervisorError("successor session tree is invalid", FailureCode.EXECUTION_FAILED, true);
         }
+        successorMaterialization = materialization;
         if (materialization.kind === "materialized") persistence = PiSpawnPersistence.MATERIALIZED;
       }
       await this.#recordProgress(
@@ -568,6 +628,16 @@ export class ClaimAwareSpawnSupervisor {
         externalRuntime,
         successorEntries.entries,
         successorEntries.leafId,
+        {
+          logicalTargetId: validated.claim.logicalTargetId!.value,
+          configuredSessionRoot: validated.target.sessionRoot,
+          piSessionId: handshake.sessionId,
+          declaredSessionPath: handshake.sessionFile,
+          materialization: successorMaterialization,
+          completeEntries: successorEntries.entries,
+          leafId: successorEntries.leafId,
+          fetchKnown: async (cursor) => successor!.getEntries(cursor, lease),
+        },
       );
       const status = validated.continuationMode === "require_resume"
         ? ContinuationContextStatus.RESUMED
@@ -590,11 +660,13 @@ export class ClaimAwareSpawnSupervisor {
           deploymentScope: validated.target.deploymentTarget.deploymentScope,
           cwd: validated.target.cwd,
           logicalTargetId: validated.claim.logicalTargetId!.value,
+          sessionRoot: validated.target.sessionRoot,
         },
         successor,
         this.#observeTranscript,
         this.#observeModelChange,
         this.#observeLifecycle,
+        this.#observePersistedEntry,
       );
       await this.#core.stageSuccessor({
         acceptedSpawn,

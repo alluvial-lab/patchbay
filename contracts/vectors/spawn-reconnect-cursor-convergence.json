@@ -4,7 +4,9 @@
   "promotion_status": "draft",
   "implementation_checks": [
     { "runner": "operator-domain", "case": "external_cursor_authoritative_replacement" },
-    { "runner": "web-cockpit", "case": "spawn_reconnect_surface_convergence" }
+    { "runner": "pi-adapter", "case": "pi_cursor_authoritative_replacement" },
+    { "runner": "web-cockpit", "case": "spawn_reconnect_surface_convergence" },
+    { "runner": "web-cockpit", "case": "pi_authoritative_replacement_presentation" }
   ],
   "proto_fields_constrained": [
     "patchbay.EventId.authority_domain_id",

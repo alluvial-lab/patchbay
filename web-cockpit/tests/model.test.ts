@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import { create, toBinary, type DescMessage, type MessageShape } from "@bufbuild/protobuf";
@@ -29,6 +30,9 @@ import {
   OperationState,
   PayloadContentType,
   PayloadEnvelopeSchema,
+  PiPersistedPresentationItemSchema,
+  PiPersistedProjectionEntrySchema,
+  PiPersistedProjectionReplacementSchema,
   QuestionContractSchema,
   ResponseContractKind,
   ResponseContractSchema,
@@ -378,6 +382,34 @@ test("typed command correlation survives transcript folding and conflicting corr
   assert.equal(model.observations.find((item) => item.id === "operator-b")?.commandId, "command-b");
   assert.equal(model.observations.find((item) => item.id === "operator-conflict")?.commandId, undefined);
   assert.equal(model.commands.size, 2);
+});
+
+test("Pi authoritative replacement removes omitted transcript membership in one fold", () => {
+  let model = fold(emptyPresentationModel(), registration(1n, 1n));
+  const auditPrefix = [
+    piReplacementEvent(2n, 1n, [
+      piProjectionEntry("root", null),
+      piProjectionEntry("omitted", "root", "membership-omitted", "stale text"),
+    ], "omitted"),
+    piReplacementEvent(3n, 2n, [
+      piProjectionEntry("root", null),
+      piProjectionEntry("current", "root", "membership-current", "fresh text"),
+    ], "current"),
+  ];
+  model = fold(model, auditPrefix[0]!);
+  assert.deepEqual(model.observations.map((item) => item.markdown), ["stale text"]);
+  model = fold(model, auditPrefix[1]!);
+  assert.deepEqual(model.observations.map((item) => item.markdown), ["fresh text"]);
+  assert.deepEqual(
+    [...model.piPersistedProjections.values()][0]?.exactEntries.map((entry) => entry.stableEntryId),
+    ["root", "current"],
+  );
+  model = fold(model, piReplacementEvent(4n, 2n, [
+    piProjectionEntry("root", null),
+    piProjectionEntry("current", "root", "membership-current", "fresh text"),
+  ], "current"));
+  assert.deepEqual(model.observations.map((item) => item.markdown), ["fresh text"]);
+  assert.equal(auditPrefix.length, 2, "presentation replacement does not erase immutable source events");
 });
 
 test("bounded safe token-commune resource observations reach the presentation model", () => {
@@ -1646,6 +1678,85 @@ function sessionTarget(generation: bigint) {
     runtimeSessionId,
     sessionGeneration: create(GenerationSchema, { value: generation }),
   });
+}
+
+const PI_CONTINUITY = `pi1:${"a".repeat(43)}`;
+
+function piProjectionEntry(
+  stableEntryId: string,
+  parentEntryId: string | null,
+  membershipId?: string,
+  text = stableEntryId,
+) {
+  return {
+    stableEntryId,
+    parentEntryId,
+    contentDigest: createHash("sha256").update(`${stableEntryId}:${text}`).digest("hex"),
+    presentationItems: membershipId ? [{
+      membershipId,
+      transcriptEventJson: JSON.stringify({
+        kind: "user_confirmed", eventId: membershipId, sessionId: PI_CONTINUITY,
+        ts: 1, messageId: stableEntryId, text,
+      }),
+    }] : [],
+  };
+}
+
+function piReplacementEvent(
+  lsn: bigint,
+  epoch: bigint,
+  entries: readonly ReturnType<typeof piProjectionEntry>[],
+  leaf: string,
+): SubscribeEvent {
+  const treeDigest = createHash("sha256")
+    .update(JSON.stringify(entries.map((entry) => [entry.stableEntryId, entry.parentEntryId])))
+    .digest("hex");
+  const cursor = entries.at(-1)?.stableEntryId ?? "";
+  const batchParts = [
+    "replacement", PI_CONTINUITY, epoch.toString(), canonicalPi(entries), cursor, leaf, treeDigest,
+  ];
+  const hash = createHash("sha256");
+  for (const part of batchParts) hash.update(`${Buffer.byteLength(part)}:${part}\0`);
+  const replacement = create(PiPersistedProjectionReplacementSchema, {
+    externalContinuityId: PI_CONTINUITY,
+    replacementEpoch: epoch,
+    batchId: hash.digest("hex"),
+    exactEntries: entries.map((entry) => create(PiPersistedProjectionEntrySchema, {
+      stableEntryId: entry.stableEntryId,
+      parentEntryId: entry.parentEntryId ?? "",
+      contentDigest: entry.contentDigest,
+      presentationItems: entry.presentationItems.map((item) => create(PiPersistedPresentationItemSchema, {
+        membershipId: item.membershipId,
+        transcriptEventJson: encoder.encode(item.transcriptEventJson),
+      })),
+    })),
+    cursorEntryId: cursor,
+    leafEntryId: leaf,
+    treeDigest,
+  });
+  return stored(
+    lsn,
+    StoredEventKind.OBSERVATION,
+    ObservationSchema,
+    create(ObservationSchema, {
+      authorityDomainId: DOMAIN,
+      sender: create(ActorEndpointRefSchema, { actorId: create(ActorIdSchema, { value: adapterId.value }) }),
+      kind: ObservationKind.EVENT,
+      targetScope: sessionTarget(1n),
+      payload: create(PayloadEnvelopeSchema, {
+        contentType: PayloadContentType.PROTOBUF,
+        schemaRef: "patchbay.PiPersistedProjectionReplacement.v1",
+        payload: toBinary(PiPersistedProjectionReplacementSchema, replacement),
+      }),
+    }),
+  );
+}
+
+function canonicalPi(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalPi).join(",")}]`;
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalPi(object[key])}`).join(",")}}`;
 }
 
 function stored<D extends DescMessage>(

@@ -4393,6 +4393,63 @@ impl SnapshotViewKind {
         }
     }
 }
+/// Opaque persisted-entry projection envelopes. The core durably carries these
+/// as ordinary Observation payloads without interpreting Pi vocabulary. Raw
+/// session paths, roots, labels, and custom-entry data are intentionally absent.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PiPersistedProjectionEntry {
+    #[prost(string, tag="1")]
+    pub stable_entry_id: ::prost::alloc::string::String,
+    #[prost(string, tag="2")]
+    pub parent_entry_id: ::prost::alloc::string::String,
+    #[prost(string, tag="3")]
+    pub content_digest: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="4")]
+    pub presentation_items: ::prost::alloc::vec::Vec<PiPersistedPresentationItem>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiPersistedPresentationItem {
+    #[prost(string, tag="1")]
+    pub membership_id: ::prost::alloc::string::String,
+    #[prost(bytes="vec", tag="2")]
+    pub transcript_event_json: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PiPersistedProjectionSuffix {
+    #[prost(string, tag="1")]
+    pub external_continuity_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag="2")]
+    pub replacement_epoch: u64,
+    #[prost(string, tag="3")]
+    pub batch_id: ::prost::alloc::string::String,
+    #[prost(string, tag="4")]
+    pub base_cursor_entry_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="5")]
+    pub entries: ::prost::alloc::vec::Vec<PiPersistedProjectionEntry>,
+    #[prost(string, tag="6")]
+    pub cursor_entry_id: ::prost::alloc::string::String,
+    #[prost(string, tag="7")]
+    pub leaf_entry_id: ::prost::alloc::string::String,
+    #[prost(string, tag="8")]
+    pub tree_digest: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct PiPersistedProjectionReplacement {
+    #[prost(string, tag="1")]
+    pub external_continuity_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag="2")]
+    pub replacement_epoch: u64,
+    #[prost(string, tag="3")]
+    pub batch_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag="4")]
+    pub exact_entries: ::prost::alloc::vec::Vec<PiPersistedProjectionEntry>,
+    #[prost(string, tag="5")]
+    pub cursor_entry_id: ::prost::alloc::string::String,
+    #[prost(string, tag="6")]
+    pub leaf_entry_id: ::prost::alloc::string::String,
+    #[prost(string, tag="7")]
+    pub tree_digest: ::prost::alloc::string::String,
+}
 /// Generated Pi-local runtime vocabulary carried inside the generic opaque
 /// AdapterCapability.adapter_profile envelope. Core validation is deliberately
 /// limited to the outer envelope; the Pi adapter owns semantic decoding.

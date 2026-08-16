@@ -399,6 +399,9 @@ test("AdapterProcess resets report revision only for a new runtime or adapter ge
       onLifecycle() {
         return () => undefined;
       },
+      onPersistedEntry() {
+        return () => undefined;
+      },
       async dispose() {},
     } as unknown as PiSession;
     return {
@@ -512,6 +515,7 @@ test("AdapterProcess maps transport loss and exact process exits without mutatin
       lifecycle = listener;
       return () => undefined;
     },
+    onPersistedEntry: () => () => undefined,
     dispose: async () => undefined,
   } as unknown as PiSession;
   const originalAttach = PatchbayCoreClient.prototype.attach;
@@ -667,9 +671,11 @@ test("SessionRegistry owns complete runtime entries and observation wiring", asy
   const registry = new SessionRegistry();
   let transcriptListener: ((event: never) => void) | undefined;
   let modelChangeListener: ((model: string) => void) | undefined;
+  let persistedEntryListener: (() => void) | undefined;
   let unsubscribed = false;
   let modelUnsubscribed = false;
   let lifecycleUnsubscribed = false;
+  let persistedEntryUnsubscribed = false;
   const session = {
     runtimeSessionId: "runtime-1",
     onTranscript(listener: (event: never) => void) {
@@ -689,6 +695,12 @@ test("SessionRegistry owns complete runtime entries and observation wiring", asy
         lifecycleUnsubscribed = true;
       };
     },
+    onPersistedEntry(listener: () => void) {
+      persistedEntryListener = listener;
+      return () => {
+        persistedEntryUnsubscribed = true;
+      };
+    },
     async dispose() {},
   } as unknown as PiSession;
   const config = {
@@ -700,6 +712,7 @@ test("SessionRegistry owns complete runtime entries and observation wiring", asy
   };
   let observedEntryName = "";
   let observedModel = "";
+  let observedPersistedEntry = false;
   registry.register(
     config,
     session,
@@ -709,6 +722,10 @@ test("SessionRegistry owns complete runtime entries and observation wiring", asy
     (_entry, model) => {
       observedModel = model;
     },
+    () => undefined,
+    () => {
+      observedPersistedEntry = true;
+    },
   );
   const entry = registry.resolve("runtime-1");
   assert.equal(entry?.session, session);
@@ -717,6 +734,8 @@ test("SessionRegistry owns complete runtime entries and observation wiring", asy
   assert.equal(observedEntryName, "dynamic");
   modelChangeListener?.("provider/model-2");
   assert.equal(observedModel, "provider/model-2");
+  persistedEntryListener?.();
+  assert.equal(observedPersistedEntry, true);
   assert.throws(
     () => registry.register(config, session, () => undefined, () => undefined),
     /already registered/,
@@ -725,6 +744,7 @@ test("SessionRegistry owns complete runtime entries and observation wiring", asy
   assert.equal(unsubscribed, true);
   assert.equal(modelUnsubscribed, true);
   assert.equal(lifecycleUnsubscribed, true);
+  assert.equal(persistedEntryUnsubscribed, true);
 });
 
 function operation(kind: OperationKind, payload = ""): Operation {

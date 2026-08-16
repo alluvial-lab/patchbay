@@ -329,6 +329,55 @@ export class PatchbayCoreClient {
     return result.eventId;
   }
 
+  /** Durable acknowledgement for an opaque generated Pi projection envelope. */
+  async ingestPiProjection(
+    runtime: RuntimeGenerationRef,
+    schemaRef: string,
+    payload: Uint8Array,
+  ): Promise<EventId> {
+    const external = runtime.externalRuntime;
+    const runtimeSessionId = external?.runtimeSessionId?.value;
+    const generation = external?.generation?.value;
+    if (
+      external?.adapterId?.value !== this.#options.adapterId
+      || !external.deploymentScope
+      || !runtimeSessionId
+      || !generation
+      || !/^patchbay\.PiPersistedProjection(?:Suffix|Replacement)\.v1$/u.test(schemaRef)
+      || payload.byteLength === 0
+    ) {
+      throw new Error("Pi projection Observation identity or envelope is invalid");
+    }
+    const observation = create(ObservationSchema, {
+      authorityDomainId: this.#authorityDomainId(),
+      sender: create(ActorEndpointRefSchema, {
+        actorId: create(ActorIdSchema, { value: this.#options.adapterId }),
+      }),
+      kind: ObservationKind.EVENT,
+      targetScope: create(TargetScopeSchema, {
+        kind: TargetScopeKind.RUNTIME_SESSION,
+        adapterId: this.#adapterId(),
+        deploymentScope: external.deploymentScope,
+        runtimeSessionId: create(RuntimeSessionIdSchema, { value: runtimeSessionId }),
+        sessionGeneration: create(GenerationSchema, { value: generation }),
+      }),
+      payload: create(PayloadEnvelopeSchema, {
+        payload,
+        contentType: PayloadContentType.PROTOBUF,
+        schemaRef,
+      }),
+      failureCode: FailureCode.UNSPECIFIED,
+    });
+    const result = await this.#postAttach(() => this.#client.ingestObservation(
+      create(ObservationRequestSchema, {
+        authorityDomainId: this.#authorityDomainId(),
+        observation: { case: "event", value: observation },
+      }),
+    ));
+    if (!result.eventId) throw new Error("core omitted durable Pi projection event id");
+    return result.eventId;
+  }
+
   async acknowledgeDelivery(operation: Operation, deliveryEventId?: EventId): Promise<EventId | undefined> {
     return this.#ingestLifecycle(
       operation,

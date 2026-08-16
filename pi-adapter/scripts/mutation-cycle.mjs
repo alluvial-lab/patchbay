@@ -5,6 +5,30 @@ import { resolve } from "node:path";
 const root = resolve(import.meta.dirname, "..");
 const mutations = [
   {
+    name: "collapse distinct Pi session continuity into one cursor scope",
+    file: "src/cursor_store.ts",
+    find: `  const externalContinuityId = \`pi1:\${lengthFramedDigest([\n    input.piSessionId,\n    input.sessionRootId,\n    rootRelativePath,\n  ])}\`;`,
+    replace: `  const externalContinuityId = \`pi1:\${lengthFramedDigest([\n    "collapsed-pi-session",\n    input.sessionRootId,\n    rootRelativePath,\n  ])}\`;`,
+    test: "different Pi continuity does not load",
+    testFile: "dist/tests/entry_reconciler.test.js",
+  },
+  {
+    name: "commit unknown-cursor replacement without publishing its exact set",
+    file: "src/entry_reconciler.ts",
+    find: `      publishReplacement: async (_scope, replacement) => {\n        const envelope = encodePiProjectionReplacement({\n          externalContinuityId: scope.externalContinuityId,\n          replacementEpoch: replacement.replacementEpoch,\n          exactEntries: replacement.exactEntries,\n          cursor: replacement.cursor,\n          leaf: replacement.leaf,\n        });\n        await this.#observations.publish(runtime, envelope.schemaRef, envelope.payload);\n      },`,
+    replace: `      publishReplacement: async (_scope, _replacement) => {\n        // mutant: exact replacement publication skipped\n      },`,
+    test: "unknown cursor stages old projection stale",
+    testFile: "dist/tests/entry_reconciler.test.js",
+  },
+  {
+    name: "acknowledge cursor CAS without its durable atomic write",
+    file: "src/cursor_store.ts",
+    find: `      await this.#write(scope, { ...current, record: recordToStored(safeNext) });`,
+    replace: `      // mutant: CAS acknowledged without durable write`,
+    test: "overlapping reader",
+    testFile: "dist/tests/cursor_store.test.js",
+  },
+  {
     name: "accept fresh generation other than exact claimed one",
     file: "src/spawn_supervisor.ts",
     find: "claim.claimedGeneration.value !== 1n",

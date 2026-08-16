@@ -1,18 +1,26 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 
 import { create, toBinary } from "@bufbuild/protobuf";
 import {
+  ActorEndpointRefSchema,
+  ActorIdSchema,
   AdapterIdSchema,
   AdapterSnapshotSupport,
   AuthorityDomainIdSchema,
   EventIdSchema,
   GenerationSchema,
   LsnSchema,
+  ObservationKind,
+  ObservationSchema,
   PayloadContentType,
   PayloadEnvelopeSchema,
+  PiPersistedPresentationItemSchema,
+  PiPersistedProjectionEntrySchema,
+  PiPersistedProjectionReplacementSchema,
   ResourceFreshnessState,
   ResourceSnapshotSchema,
   RuntimeSessionIdSchema,
@@ -26,6 +34,8 @@ import {
   StoredEventKind,
   StoredEventPayloadSchema,
   SubscribeEventSchema,
+  TargetScopeKind,
+  TargetScopeSchema,
 } from "@patchbay/contracts";
 import {
   TOKEN_COMMUNE_PRESENTATION_CONTRACT, composeTokenCommunePools, decodeTokenCommuneProjection,
@@ -36,6 +46,7 @@ import { JSDOM } from "jsdom";
 import {
   PresentationProjection,
   emptyPresentationModel,
+  fold,
   rendersLive,
   rendersResourceCurrent,
   resourceCollectionKey,
@@ -722,6 +733,100 @@ function executeSpawnReconnectSurface(vector: ConformanceVector): void {
   assert.equal(projection.model, repaired, "rejected cached-N replacement must install nothing");
 }
 
+function textList(value: unknown, name: string): readonly string[] {
+  assert.ok(Array.isArray(value) && value.every((item) => typeof item === "string"), `${name} must be a string array`);
+  return value;
+}
+
+function executePiAuthoritativeReplacementPresentation(vector: ConformanceVector): void {
+  const input = object(vector.input, "input");
+  const expected = object(vector.expected_outcome, "expected outcome");
+  const oldIds = textList(input.old_projection_ids, "old projection ids");
+  const nextIds = textList(input.replacement_projection_ids, "replacement projection ids");
+  const continuityId = `pi1:${"a".repeat(43)}`;
+  const event = (lsn: bigint, epoch: bigint, ids: readonly string[]) => {
+    const entries = ids.map((id, index) => ({
+      stableEntryId: id,
+      parentEntryId: index === 0 ? null : ids[0]!,
+      contentDigest: createHash("sha256").update(id).digest("hex"),
+      presentationItems: index === 0 ? [] : [{
+        membershipId: `membership:${id}`,
+        transcriptEventJson: JSON.stringify({
+          kind: "user_confirmed", eventId: `event:${id}`, sessionId: continuityId,
+          ts: 1, messageId: id, text: id,
+        }),
+      }],
+    }));
+    const treeDigest = createHash("sha256")
+      .update(JSON.stringify(entries.map((entry) => [entry.stableEntryId, entry.parentEntryId])))
+      .digest("hex");
+    const cursor = ids.at(-1)!;
+    const batchHash = createHash("sha256");
+    for (const part of ["replacement", continuityId, epoch.toString(), canonicalPi(entries), cursor, cursor, treeDigest]) {
+      batchHash.update(`${Buffer.byteLength(part)}:${part}\0`);
+    }
+    const payload = toBinary(PiPersistedProjectionReplacementSchema, create(PiPersistedProjectionReplacementSchema, {
+      externalContinuityId: continuityId,
+      replacementEpoch: epoch,
+      batchId: batchHash.digest("hex"),
+      exactEntries: entries.map((entry) => create(PiPersistedProjectionEntrySchema, {
+        stableEntryId: entry.stableEntryId,
+        parentEntryId: entry.parentEntryId ?? "",
+        contentDigest: entry.contentDigest,
+        presentationItems: entry.presentationItems.map((item) => create(PiPersistedPresentationItemSchema, {
+          membershipId: item.membershipId,
+          transcriptEventJson: new TextEncoder().encode(item.transcriptEventJson),
+        })),
+      })),
+      cursorEntryId: cursor,
+      leafEntryId: cursor,
+      treeDigest,
+    }));
+    const observation = create(ObservationSchema, {
+      sender: create(ActorEndpointRefSchema, { actorId: create(ActorIdSchema, { value: "pi" }) }),
+      kind: ObservationKind.EVENT,
+      targetScope: create(TargetScopeSchema, {
+        kind: TargetScopeKind.RUNTIME_SESSION,
+        adapterId: create(AdapterIdSchema, { value: text(input.adapter_id, "adapter id") }),
+        deploymentScope: text(input.deployment_scope, "deployment scope"),
+        runtimeSessionId: create(RuntimeSessionIdSchema, { value: "runtime-n-plus-one" }),
+        sessionGeneration: create(GenerationSchema, { value: 2n }),
+      }),
+      payload: create(PayloadEnvelopeSchema, {
+        contentType: PayloadContentType.PROTOBUF,
+        schemaRef: "patchbay.PiPersistedProjectionReplacement.v1",
+        payload,
+      }),
+    });
+    return create(SubscribeEventSchema, {
+      eventId: create(EventIdSchema, {
+        authorityDomainId: create(AuthorityDomainIdSchema, { value: "authority-main" }),
+        lsn: create(LsnSchema, { value: lsn }),
+      }),
+      payload: create(StoredEventPayloadSchema, {
+        kind: StoredEventKind.OBSERVATION,
+        payload: toBinary(ObservationSchema, observation),
+      }),
+    });
+  };
+
+  let model = fold(emptyPresentationModel(), event(1n, BigInt(input.old_epoch as number), oldIds));
+  model = fold(model, event(2n, BigInt(input.replacement_epoch as number), nextIds));
+  assert.deepEqual(
+    [...model.piPersistedProjections.values()][0]?.exactEntries.map((entry) => entry.stableEntryId),
+    expected.external_projection_ids,
+  );
+  assert.equal(model.observations.some((item) => item.messageId === "omitted-stale"), false);
+  assert.deepEqual(model.observations.map((item) => item.messageId), ["current"]);
+}
+
+function canonicalPi(value: unknown): string {
+  if (value === null || typeof value === "string" || typeof value === "boolean" || typeof value === "number") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalPi).join(",")}]`;
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalPi(object[key])}`).join(",")}}`;
+}
+
 async function executeVectorCase(vector: ConformanceVector, caseName: string): Promise<void> {
   assert.ok(vector.property_id);
   assert.ok(vector.promotion_status === "draft" || vector.promotion_status === "promoted");
@@ -734,6 +839,9 @@ async function executeVectorCase(vector: ConformanceVector, caseName: string): P
       return;
     case "spawn_reconnect_surface_convergence":
       executeSpawnReconnectSurface(vector);
+      return;
+    case "pi_authoritative_replacement_presentation":
+      executePiAuthoritativeReplacementPresentation(vector);
       return;
     default:
       throw new Error(`unhandled ${RUNNER} conformance case ${vector.vector_id}:${caseName}`);

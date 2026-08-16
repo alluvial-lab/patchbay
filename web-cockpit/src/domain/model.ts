@@ -48,7 +48,12 @@ import {
   TargetScopeKind,
 } from "@patchbay/contracts";
 
-import { decodeTokenCommuneResourceObservation } from "@patchbay/operator-domain";
+import {
+  decodeTokenCommuneResourceObservation,
+  foldPiPersistedProjectionObservation,
+  piPersistedProjectionContinuityId,
+  type PiPersistedProjectionState,
+} from "@patchbay/operator-domain";
 
 import type { ReconcileProjection } from "./reconcile.js";
 import { foldAdapterDiagnosticObservation } from "./adapter-diagnostics.js";
@@ -190,6 +195,8 @@ export interface ObservationView {
   commandId?: string;
   /** Plain-text preview of tool args/result; rendered as text, never markdown. */
   detail?: string;
+  /** Exact Pi-persisted projection membership; absent for transient/audit observations. */
+  piProjection?: { readonly continuityId: string; readonly membershipId: string };
 }
 
 export interface AdapterDiagnosticView {
@@ -271,6 +278,8 @@ export interface PresentationModel {
   elicitations: Map<string, ElicitationView>;
   adapters: Map<string, AdapterView>;
   observations: ObservationView[];
+  /** Authoritative exact-set state for known Pi continuity scopes. */
+  piPersistedProjections: Map<string, PiPersistedProjectionState>;
   resourceObservations: ResourceObservationView[];
   lockdown: LockdownView;
   security: SecurityInventoryView;
@@ -287,6 +296,7 @@ export function emptyPresentationModel(): PresentationModel {
     elicitations: new Map(),
     adapters: new Map(),
     observations: [],
+    piPersistedProjections: new Map(),
     resourceObservations: [],
     lockdown: { active: false, submitting: false },
     security: emptySecurityInventory(),
@@ -452,6 +462,7 @@ export function replaceFromSnapshots(
     elicitations: new Map(),
     adapters: new Map(),
     observations: [],
+    piPersistedProjections: new Map(),
     resourceObservations: [],
     lockdown: lockdownViewFromState(snapshots.session.lockdown),
     security: emptySecurityInventory(),
@@ -1037,6 +1048,45 @@ function foldObservation(model: PresentationModel, observation: Observation, lsn
     if (model.resourceObservations.length > 100) model.resourceObservations.splice(0, model.resourceObservations.length - 100);
     return;
   }
+  const piContinuityId = piPersistedProjectionContinuityId(observation);
+  if (piContinuityId) {
+    const projection = foldPiPersistedProjectionObservation(
+      model.piPersistedProjections.get(piContinuityId),
+      observation,
+    );
+    if (!projection) throw new Error("Pi projection continuity decoded without a fold");
+    model.piPersistedProjections.set(piContinuityId, projection.state);
+    const removed = new Set(projection.removedMembershipIds);
+    if (removed.size > 0) {
+      model.observations = model.observations.filter(
+        (item) => !item.piProjection || !removed.has(item.piProjection.membershipId),
+      );
+    }
+    const target = runtimeSessionFromScope(observation.targetScope);
+    const replacingMessageIds = new Set(
+      projection.addedItems
+        .map((item) => item.transcriptEvent.messageId)
+        .filter((messageId): messageId is string => Boolean(messageId)),
+    );
+    if (target && replacingMessageIds.size > 0) {
+      const targetKey = sessionKey(target);
+      model.observations = model.observations.filter((item) => !(
+        !item.piProjection &&
+        item.messageId &&
+        replacingMessageIds.has(item.messageId) &&
+        item.session &&
+        sessionKey(item.session) === targetKey
+      ));
+    }
+    for (const item of projection.addedItems) {
+      foldTranscriptObservation(model, item.transcriptEvent, target, lsn, undefined, {
+        continuityId: piContinuityId,
+        membershipId: item.membershipId,
+      });
+    }
+    return;
+  }
+
   const commandId = exactCommandCorrelation(observation.correlations);
   deriveTerminalRace(model, observation, commandId, lsn);
 
@@ -1800,10 +1850,16 @@ function foldTranscriptObservation(
   session: SessionIdentity | undefined,
   lsn: bigint,
   commandId: string | undefined,
+  piProjection?: ObservationView["piProjection"],
 ): void {
   const messageId = typeof event.messageId === "string" ? event.messageId : undefined;
+  const matchingIndex = (): number => model.observations.findIndex((item) =>
+    piProjection
+      ? item.piProjection?.membershipId === piProjection.membershipId
+      : item.messageId === messageId,
+  );
   if (event.kind === "assistant_delta" && messageId && typeof event.delta === "string") {
-    const index = model.observations.findIndex((item) => item.messageId === messageId);
+    const index = matchingIndex();
     if (index >= 0) {
       const current = model.observations[index]!;
       model.observations[index] = {
@@ -1811,10 +1867,11 @@ function foldTranscriptObservation(
         markdown: current.markdown + event.delta,
         lsn,
         commandId: commandId ?? current.commandId,
+        ...(piProjection ? { piProjection } : {}),
       };
     } else {
       model.observations.push({
-        id: messageId,
+        id: piProjection?.membershipId ?? messageId,
         messageId,
         session,
         role: "agent",
@@ -1822,14 +1879,15 @@ function foldTranscriptObservation(
         markdown: event.delta,
         lsn,
         commandId,
+        ...(piProjection ? { piProjection } : {}),
       });
     }
     return;
   }
   if (event.kind === "assistant_committed" && messageId && typeof event.text === "string") {
-    const index = model.observations.findIndex((item) => item.messageId === messageId);
+    const index = matchingIndex();
     const next: ObservationView = {
-      id: messageId,
+      id: piProjection?.membershipId ?? messageId,
       messageId,
       session,
       role: "agent",
@@ -1837,6 +1895,7 @@ function foldTranscriptObservation(
       markdown: event.text,
       lsn,
       commandId,
+      ...(piProjection ? { piProjection } : {}),
     };
     if (index >= 0) model.observations[index] = next;
     else model.observations.push(next);
@@ -1844,7 +1903,7 @@ function foldTranscriptObservation(
   }
   if (event.kind === "user_confirmed" && messageId && typeof event.text === "string") {
     model.observations.push({
-      id: messageId,
+      id: piProjection?.membershipId ?? messageId,
       messageId,
       session,
       role: "operator",
@@ -1852,12 +1911,14 @@ function foldTranscriptObservation(
       markdown: event.text,
       lsn,
       commandId,
+      ...(piProjection ? { piProjection } : {}),
     });
     return;
   }
   if (event.kind === "tool_requested" || event.kind === "tool_finished") {
     const baseId = typeof event.toolCallId === "string" ? event.toolCallId : `tool-${lsn}`;
-    const id = event.kind === "tool_finished" ? `${baseId}:finished` : baseId;
+    const id = piProjection?.membershipId
+      ?? (event.kind === "tool_finished" ? `${baseId}:finished` : baseId);
     const tool = typeof event.tool === "string" ? event.tool : "tool";
     const body = event.kind === "tool_requested" ? `Running **${tool}**` : event.error ? `**${tool}** failed: ${event.error}` : `**${tool}** finished`;
     const detail =
@@ -1873,6 +1934,7 @@ function foldTranscriptObservation(
       lsn,
       commandId,
       ...(detail ? { detail } : {}),
+      ...(piProjection ? { piProjection } : {}),
     });
   }
 }
@@ -1990,6 +2052,7 @@ function cloneModel(model: PresentationModel): PresentationModel {
     elicitations: new Map(model.elicitations),
     adapters: new Map(model.adapters),
     observations: [...model.observations],
+    piPersistedProjections: new Map(model.piPersistedProjections),
     resourceObservations: [...model.resourceObservations],
   };
 }

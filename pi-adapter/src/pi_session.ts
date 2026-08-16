@@ -15,7 +15,7 @@ import {
   projectSessionEntries,
 } from "./transcript_projection.js";
 import type { ManagedPiRuntimePort, PiRpcRuntime, ProcessExit } from "./pi_process.js";
-import type { PiRpcEvent, PiRpcTransportError } from "./rpc_client.js";
+import { PiRpcCommandError, type PiRpcEvent, type PiRpcTransportError } from "./rpc_client.js";
 import {
   RuntimeActionGate,
   type RuntimeActionKind,
@@ -65,6 +65,17 @@ export type SessionLifecycleEvent =
   | { readonly kind: "process_exit"; readonly exit: ProcessExit }
   | { readonly kind: "transport_loss"; readonly error: PiRpcTransportError };
 
+/** Typed signal that the supplied stable Pi entry cursor is no longer known. */
+export class PiUnknownCursorError extends Error {
+  readonly cursor: string;
+
+  constructor(cursor: string) {
+    super("Pi persisted-entry cursor is unknown");
+    this.name = "PiUnknownCursorError";
+    this.cursor = cursor;
+  }
+}
+
 export interface PiSession {
   readonly runtimeSessionId: string;
   readonly generation: number;
@@ -87,6 +98,8 @@ export interface PiSession {
   onTranscript(listener: (event: TranscriptEvent) => void): () => void;
   onModelChange(listener: (model: string) => void): () => void;
   onLifecycle(listener: (event: SessionLifecycleEvent) => void): () => void;
+  /** Persisted entry notifications only wake authoritative reconciliation. */
+  onPersistedEntry(listener: () => void): () => void;
   publishStagedTranscript(): readonly TranscriptEvent[];
   stagedReadinessDigest(): string;
   dispose(): Promise<void>;
@@ -112,6 +125,7 @@ export class RpcPiSession implements PiSession {
   readonly #listeners = new Set<(event: TranscriptEvent) => void>();
   readonly #modelListeners = new Set<(model: string) => void>();
   readonly #lifecycleListeners = new Set<(event: SessionLifecycleEvent) => void>();
+  readonly #persistedEntryListeners = new Set<() => void>();
   readonly #seenTranscriptEventIds = new Set<string>();
   readonly #stagedTranscript: TranscriptEvent[] = [];
   readonly #deltaOrdinals = new Map<string, number>();
@@ -256,11 +270,19 @@ export class RpcPiSession implements PiSession {
     since?: string,
     lease?: RuntimeReplacementLease,
   ): Promise<{ entries: SessionEntry[]; leafId: string | null }> {
-    const data = await this.#request<Record<string, unknown>>(
-      { type: "get_entries", ...(since ? { since } : {}) },
-      "query",
-      lease,
-    );
+    let data: Record<string, unknown>;
+    try {
+      data = await this.#request<Record<string, unknown>>(
+        { type: "get_entries", ...(since ? { since } : {}) },
+        "query",
+        lease,
+      );
+    } catch (error) {
+      if (since && error instanceof PiRpcCommandError && error.command === "get_entries") {
+        throw new PiUnknownCursorError(since);
+      }
+      throw error;
+    }
     if (!Array.isArray(data["entries"]) || !(data["leafId"] === null || typeof data["leafId"] === "string")) {
       throw new Error("Pi get_entries response is malformed");
     }
@@ -334,6 +356,11 @@ export class RpcPiSession implements PiSession {
     return () => this.#lifecycleListeners.delete(listener);
   }
 
+  onPersistedEntry(listener: () => void): () => void {
+    this.#persistedEntryListeners.add(listener);
+    return () => this.#persistedEntryListeners.delete(listener);
+  }
+
   publishStagedTranscript(): readonly TranscriptEvent[] {
     if (this.#publication === "current") return [];
     this.#publication = "current";
@@ -366,6 +393,7 @@ export class RpcPiSession implements PiSession {
     this.#listeners.clear();
     this.#modelListeners.clear();
     this.#lifecycleListeners.clear();
+    this.#persistedEntryListeners.clear();
     await this.#runtimePort.terminate(this.#runtime).catch(() => this.#runtime.exit);
     this.#runtime.rpc.close();
   }
@@ -423,6 +451,7 @@ export class RpcPiSession implements PiSession {
       if (entry["type"] === "model_change" && typeof entry["provider"] === "string" && typeof entry["modelId"] === "string") {
         this.#emitModel(`${entry["provider"]}/${entry["modelId"]}`);
       }
+      for (const listener of this.#persistedEntryListeners) listener();
     }
   }
 
@@ -582,6 +611,7 @@ export class AgentSessionRuntimeFixture implements PiSession {
   readonly #session: AgentSession;
   readonly #listeners = new Set<(event: TranscriptEvent) => void>();
   readonly #modelListeners = new Set<(model: string) => void>();
+  readonly #persistedEntryListeners = new Set<() => void>();
   readonly #seen = new Set<string>();
   readonly #deltaOrdinals = new Map<string, number>();
   #turn = initialTurnSnapshot();
@@ -670,7 +700,8 @@ export class AgentSessionRuntimeFixture implements PiSession {
   async getEntries(since?: string): Promise<{ entries: SessionEntry[]; leafId: string | null }> {
     const entries = this.#session.sessionManager.getEntries();
     const index = since ? entries.findIndex((entry) => entry.id === since) : -1;
-    return { entries: since && index >= 0 ? entries.slice(index + 1) : entries, leafId: this.#session.sessionManager.getLeafId() };
+    if (since && index < 0) throw new PiUnknownCursorError(since);
+    return { entries: since ? entries.slice(index + 1) : entries, leafId: this.#session.sessionManager.getLeafId() };
   }
   async snapshotTranscript(): Promise<readonly TranscriptEvent[]> {
     const projected = projectSessionEntries(this.#session.sessionManager.getEntries(), `${this.runtimeSessionId}:${this.generation}`);
@@ -698,9 +729,10 @@ export class AgentSessionRuntimeFixture implements PiSession {
   onTranscript(listener: (event: TranscriptEvent) => void): () => void { this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   onModelChange(listener: (model: string) => void): () => void { this.#modelListeners.add(listener); return () => this.#modelListeners.delete(listener); }
   onLifecycle(_listener: (event: SessionLifecycleEvent) => void): () => void { return () => undefined; }
+  onPersistedEntry(listener: () => void): () => void { this.#persistedEntryListeners.add(listener); return () => this.#persistedEntryListeners.delete(listener); }
   publishStagedTranscript(): readonly TranscriptEvent[] { return []; }
   stagedReadinessDigest(): string { return createHash("sha256").digest("hex"); }
-  async dispose(): Promise<void> { this.#unsubscribe(); this.#pendingApproval?.(false); this.#session.dispose(); }
+  async dispose(): Promise<void> { this.#unsubscribe(); this.#pendingApproval?.(false); this.#persistedEntryListeners.clear(); this.#session.dispose(); }
   #publishSnapshotDelta(): void {
     const projected = projectSessionEntries(
       this.#session.sessionManager.getEntries(),
@@ -720,8 +752,11 @@ export class AgentSessionRuntimeFixture implements PiSession {
       this.#seen.add(projected.eventId);
       for (const listener of this.#listeners) listener(projected);
     }
-    if (event.type === "entry_appended" && event.entry.type === "model_change") {
-      for (const listener of this.#modelListeners) listener(`${event.entry.provider}/${event.entry.modelId}`);
+    if (event.type === "entry_appended") {
+      if (event.entry.type === "model_change") {
+        for (const listener of this.#modelListeners) listener(`${event.entry.provider}/${event.entry.modelId}`);
+      }
+      for (const listener of this.#persistedEntryListeners) listener();
     }
   }
 }
