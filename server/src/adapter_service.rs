@@ -17,7 +17,7 @@ use patchbay_contracts::patchbay::{
     RuntimeEvidenceSourceAttachment, RuntimeGenerationDisposition, RuntimeGenerationRef,
     SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent, SpawnEvidenceAttachment,
     SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
-    SpawnSuccessorEvidenceStaged, StoredEventKind, TargetScopeKind,
+    SpawnPromotionCommitted, SpawnSuccessorEvidenceStaged, StoredEventKind, TargetScopeKind,
 };
 use patchbay_core::{
     acceptance::{self, CommandIndex, OperationStateExt},
@@ -1024,40 +1024,71 @@ fn deliveries_for_events(
                 .as_ref()
                 .is_some_and(|lsn| lsn.value > after_cursor)
         })
-        .filter_map(|event| match acceptance_for_delivery(event) {
-            Ok(Some(acceptance)) => {
-                let operation = match acceptance
-                    .accepted_operation()
-                    .and_then(|accepted| accepted.operation.clone())
-                {
-                    Some(operation) => operation,
-                    None => {
-                        return Some(Err(Status::internal("accepted operation has no operation")))
-                    }
-                };
-                let targets_adapter =
-                    operation.target_scope.as_ref().and_then(target_adapter_id) == Some(adapter_id);
-                let remains_deliverable = operation
-                    .command_id
+        .filter_map(|event| {
+            if StoredEventKind::try_from(event.payload.kind).ok()
+                == Some(StoredEventKind::SpawnPromotionCommitted)
+            {
+                let promotion =
+                    match SpawnPromotionCommitted::decode(event.payload.payload.as_slice()) {
+                        Ok(promotion) => promotion,
+                        Err(error) => {
+                            return Some(Err(Status::internal(format!(
+                                "cannot decode spawn promotion for adapter delivery: {error}"
+                            ))));
+                        }
+                    };
+                let targets_adapter = promotion
+                    .promoted_runtime
                     .as_ref()
-                    .and_then(|command_id| commands.get_command(command_id))
-                    .is_some_and(|record| {
-                        matches!(
-                            record.state,
-                            OperationState::Accepted | OperationState::Delivered
-                        ) && !commands.delivery_is_suppressed(&record.command_id)
-                    });
-                (targets_adapter && remains_deliverable).then_some(Ok(Delivery {
-                    operation: Some(operation),
+                    .and_then(|runtime| runtime.external_runtime.as_ref())
+                    .and_then(|runtime| runtime.adapter_id.as_ref())
+                    == Some(adapter_id);
+                return targets_adapter.then_some(Ok(Delivery {
+                    operation: None,
                     delivery_event_id: Some(event.event_id.clone()),
-                    accepted_spawn: match acceptance {
-                        DeliveryAcceptance::Operation(_) => None,
-                        DeliveryAcceptance::ManagedSpawn(accepted) => Some(*accepted),
-                    },
-                }))
+                    accepted_spawn: None,
+                    promotion_committed: Some(promotion),
+                }));
             }
-            Ok(None) => None,
-            Err(error) => Some(Err(error)),
+            match acceptance_for_delivery(event) {
+                Ok(Some(acceptance)) => {
+                    let operation = match acceptance
+                        .accepted_operation()
+                        .and_then(|accepted| accepted.operation.clone())
+                    {
+                        Some(operation) => operation,
+                        None => {
+                            return Some(Err(Status::internal(
+                                "accepted operation has no operation",
+                            )))
+                        }
+                    };
+                    let targets_adapter =
+                        operation.target_scope.as_ref().and_then(target_adapter_id)
+                            == Some(adapter_id);
+                    let remains_deliverable = operation
+                        .command_id
+                        .as_ref()
+                        .and_then(|command_id| commands.get_command(command_id))
+                        .is_some_and(|record| {
+                            matches!(
+                                record.state,
+                                OperationState::Accepted | OperationState::Delivered
+                            ) && !commands.delivery_is_suppressed(&record.command_id)
+                        });
+                    (targets_adapter && remains_deliverable).then_some(Ok(Delivery {
+                        operation: Some(operation),
+                        delivery_event_id: Some(event.event_id.clone()),
+                        accepted_spawn: match acceptance {
+                            DeliveryAcceptance::Operation(_) => None,
+                            DeliveryAcceptance::ManagedSpawn(accepted) => Some(*accepted),
+                        },
+                        promotion_committed: None,
+                    }))
+                }
+                Ok(None) => None,
+                Err(error) => Some(Err(error)),
+            }
         })
         .collect()
 }

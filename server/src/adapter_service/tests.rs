@@ -25,8 +25,9 @@ use patchbay_contracts::patchbay::{
     SessionActivityState, SessionConnectivityState, SessionReportSourceCursor, SessionStateEvent,
     SpawnClaimAccepted, SpawnClaimDisposition, SpawnClaimEvent, SpawnContinuation,
     SpawnExecutionEvidence, SpawnExecutionEvidenceProducer, SpawnExecutionPhase,
-    SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnRequest, SpawnTargetSpec,
-    StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind, TypedCorrelation,
+    SpawnGenerationClaim, SpawnPendingReplacementFence, SpawnPromotionCommitted, SpawnRequest,
+    SpawnTargetSpec, StoredEventKind, StoredEventPayload, TargetScope, TargetScopeKind,
+    TypedCorrelation,
 };
 use patchbay_core::{
     acceptance::{TargetBinding, TargetResolver},
@@ -2342,6 +2343,58 @@ fn resource_delivery_routes_only_to_the_nested_owning_adapter() {
         ..event
     };
     assert!(deliveries_for_events(&[malformed_event], &commands, &adapter_a, 0).is_empty());
+}
+
+#[test]
+fn promotion_delivery_routes_only_to_the_promoted_runtime_adapter() {
+    let domain = AuthorityDomainId {
+        value: "authority-main".into(),
+    };
+    let promoted_runtime = RuntimeGenerationRef {
+        logical_target_id: Some(LogicalTargetId {
+            value: "logical-target".into(),
+        }),
+        external_runtime: Some(ExternalRuntimeRef {
+            adapter_id: Some(AdapterId {
+                value: "adapter-a".into(),
+            }),
+            deployment_scope: "machine-a".into(),
+            runtime_session_id: Some(RuntimeSessionId {
+                value: "runtime-a".into(),
+            }),
+            generation: Some(Generation { value: 2 }),
+        }),
+    };
+    let promotion = SpawnPromotionCommitted {
+        authority_domain_id: Some(domain.clone()),
+        promoted_runtime: Some(promoted_runtime.clone()),
+        ..SpawnPromotionCommitted::default()
+    };
+    let event = RecordedEvent {
+        event_id: patchbay_contracts::patchbay::EventId {
+            authority_domain_id: Some(domain),
+            lsn: Some(Lsn { value: 9 }),
+        },
+        payload: StoredEventPayload {
+            kind: StoredEventKind::SpawnPromotionCommitted as i32,
+            payload: promotion.encode_to_vec(),
+        },
+    };
+    let commands = CommandIndex::new();
+    let adapter_a = AdapterId {
+        value: "adapter-a".into(),
+    };
+    let adapter_b = AdapterId {
+        value: "adapter-b".into(),
+    };
+    let delivery = deliveries_for_events(std::slice::from_ref(&event), &commands, &adapter_a, 0)
+        .into_iter()
+        .next()
+        .expect("promotion delivery exists")
+        .expect("promotion delivery decodes");
+    assert_eq!(delivery.promotion_committed, Some(promotion));
+    assert!(delivery.operation.is_none());
+    assert!(deliveries_for_events(&[event], &commands, &adapter_b, 0).is_empty());
 }
 
 #[tokio::test]

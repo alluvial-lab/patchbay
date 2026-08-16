@@ -9,7 +9,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/main.js",
-    "test": "npm run build && node --test dist/tests/*.test.js"
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "test:e2e": "npm run build && node --test dist/tests/e2e.test.js dist/tests/rpc_process_e2e.test.js",
+    "test:mutations": "node scripts/mutation-cycle.mjs"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.12.1",

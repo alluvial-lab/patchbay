@@ -15,7 +15,6 @@ export class UnsupportedCommandError extends Error {
 }
 
 export interface DeliveryOutcome {
-  sessionGenerationChanged?: boolean;
   value?: unknown;
 }
 
@@ -41,7 +40,7 @@ export class DeliveryTranslator {
         }
         case OperationKind.SESSION_MANAGEMENT: {
           const action = stringField(objectPayload(operation), "action");
-          if (action === "new" || action === "compact") return;
+          if (action === "compact") return;
           throw new UnsupportedCommandError(`unknown Pi session action: ${action}`);
         }
         case OperationKind.APPROVAL_RESPONSE: {
@@ -77,7 +76,7 @@ export class DeliveryTranslator {
         await session.cancel();
         return {};
       case OperationKind.QUERY:
-        return { value: this.#query(operation, session) };
+        return { value: await this.#query(operation, session) };
       case OperationKind.RECONFIGURE:
         await this.#reconfigure(operation, session);
         return {};
@@ -111,7 +110,7 @@ export class DeliveryTranslator {
     }
   }
 
-  #query(operation: Operation, session: PiSession): unknown {
+  async #query(operation: Operation, session: PiSession): Promise<unknown> {
     const payload = objectPayload(operation);
     switch (payload["action"] ?? "state") {
       case "state":
@@ -147,10 +146,6 @@ export class DeliveryTranslator {
   ): Promise<DeliveryOutcome> {
     const payload = objectPayload(operation);
     const action = stringField(payload, "action");
-    if (action === "new") {
-      await session.newSession();
-      return { sessionGenerationChanged: true };
-    }
     if (action === "compact") {
       await session.compact(stringField(payload, "instructions", false));
       return {};

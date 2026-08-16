@@ -1,11 +1,16 @@
 import { Code, ConnectError } from "@connectrpc/connect";
+import { randomBytes } from "node:crypto";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   FailureCode,
   OperationKind,
   SessionActivityState,
   SessionConnectivityState,
+  type ContinuationContextStatus,
   type Delivery,
   type Operation,
+  type SpawnClaimAccepted,
 } from "@patchbay/contracts";
 import { PatchbayCoreClient, type SessionIdentity } from "./core_client.js";
 import {
@@ -27,21 +32,41 @@ import {
   type DeploymentAuthorityResolver,
 } from "./deployment_authority.js";
 import { composeAdapterDiagnostics, CoreDiagnosticsForwarder } from "./core_diagnostics_forwarder.js";
-import { PiSession, type PiSessionOptions } from "./pi_session.js";
+import { RpcPiSession, type PiSession } from "./pi_session.js";
+import {
+  buildPiRpcArgv,
+  RpcManagedPiRuntimePort,
+  type ManagedPiRuntimePort,
+} from "./pi_process.js";
+import { FileSpawnEffectJournal } from "./spawn_journal.js";
+import {
+  ClaimAwareSpawnSupervisor,
+  type ManagedPiTargetConfig,
+  type SpawnSupervisorCorePort,
+} from "./spawn_supervisor.js";
 import {
   SessionRegistry,
   type RuntimeSessionEntry,
 } from "./session_registry.js";
+import type { TranscriptEvent } from "./transcript_event.js";
 import {
   nextSessionReportSequence,
   type SessionReportOrder,
   type SessionReportSequence,
 } from "./session_report_sequencer.js";
 
-export interface PreprovisionedSession extends PiSessionOptions {
-  runtimeSessionId: string;
-  deploymentScope: string;
-  project?: string;
+export interface PreprovisionedSession {
+  readonly runtimeSessionId: string;
+  readonly deploymentScope: string;
+  readonly cwd: string;
+  readonly project?: string;
+  readonly name?: string;
+  readonly model?: string;
+  readonly generation?: number;
+  readonly logicalTargetId?: string;
+  readonly sessionPath?: string;
+  readonly sessionRoot?: string;
+  readonly sessionDirectory?: string;
 }
 
 export interface AdapterProcessOptions {
@@ -55,6 +80,9 @@ export interface AdapterProcessOptions {
   diagnostics?: AdapterDiagnostics;
   forwardDiagnostics?: boolean;
   deploymentAuthorityResolver?: DeploymentAuthorityResolver;
+  managedTargets?: readonly ManagedPiTargetConfig[];
+  spawnJournalDirectory?: string;
+  managedRuntimePort?: ManagedPiRuntimePort;
 }
 
 interface StartedDelivery {
@@ -73,6 +101,8 @@ export class AdapterProcess {
   readonly #registry = new SessionRegistry();
   readonly #translator = new DeliveryTranslator();
   readonly #activeCommands = new Map<string, string>();
+  readonly #runtimePort: ManagedPiRuntimePort;
+  readonly #spawnSupervisor: ClaimAwareSpawnSupervisor;
   readonly #pendingObservations = new Set<Promise<void>>();
   // Per-session report chains: transcript events (hundreds of deltas per turn)
   // must reach the core in stream order. Firing each ingestTranscript
@@ -108,6 +138,57 @@ export class AdapterProcess {
       this.#diagnostics = composeAdapterDiagnostics([localDiagnostics, forwarder]);
       this.#core.setDiagnostics(this.#diagnostics);
     }
+    this.#runtimePort = options.managedRuntimePort ?? new RpcManagedPiRuntimePort();
+    const corePort: SpawnSupervisorCorePort = {
+      adapterId: options.adapterId,
+      adapterGeneration: options.adapterGeneration,
+      authorizeDeployment: async (acceptedSpawn, target, now) => {
+        await this.authorizeDeployment({ acceptedSpawn, target }, now);
+      },
+      flushObservations: () => this.flushObservations(),
+      reportSpawnEvidence: async (input) => {
+        if (!input.operation) throw new Error("spawn evidence operation is missing");
+        await this.#core.reportSpawnEvidence({ ...input, operation: input.operation });
+      },
+      reportSessionState: async (entry, connectivity, activity) => {
+        await this.#queueSessionReport(
+          entry,
+          sessionActivity(activity),
+          sessionConnectivity(connectivity),
+        );
+      },
+      stageSuccessor: async ({ acceptedSpawn, entry, continuationContextStatus }) => {
+        const claimOperationId = acceptedSpawn.claim?.claimOperationId?.value;
+        if (!claimOperationId) throw new Error("staged successor has no exact claim operation id");
+        await this.#queueSessionReport(
+          entry,
+          SessionActivityState.UNKNOWN,
+          SessionConnectivityState.LIVE,
+          undefined,
+          { claimOperationId, continuationContextStatus },
+        );
+      },
+      reportSpawnResult: async (operation, payload) => {
+        if (!operation) throw new Error("spawn Result operation is missing");
+        await this.#core.reportSpawnResult(operation, payload);
+      },
+      reportSpawnFailure: async (operation, failureCode) => {
+        if (!operation) throw new Error("spawn failure operation is missing");
+        await this.#core.ingestFailure(operation, failureCode, "managed_spawn_failed");
+      },
+    };
+    this.#spawnSupervisor = new ClaimAwareSpawnSupervisor({
+      runtimePort: this.#runtimePort,
+      journal: new FileSpawnEffectJournal(
+        options.spawnJournalDirectory ?? resolve(process.cwd(), ".patchbay", "pi-spawn-journal"),
+      ),
+      registry: this.#registry,
+      core: corePort,
+      targets: options.managedTargets ?? [],
+      observeTranscript: (entry, event) => this.#observeTranscript(entry, event),
+      observeModelChange: (entry, model) => this.#observeModelChange(entry, model),
+      observeLifecycle: (entry, event) => this.#observeLifecycle(entry, event),
+    });
   }
 
   async start(): Promise<void> {
@@ -131,7 +212,7 @@ export class AdapterProcess {
   /** The same complete registration path used by pre-provisioning and future spawn. */
   async registerSession(configured: PreprovisionedSession): Promise<void> {
     if (!this.#started) throw new Error("adapter process has not started");
-    const createSession = this.#options.createSession ?? PiSession.create;
+    const createSession = this.#options.createSession ?? ((options) => this.#createProductionSession(options));
     this.#record({ event: "session.register.started", level: "info" });
     let session: PiSession;
     try {
@@ -154,33 +235,9 @@ export class AdapterProcess {
       entry = this.#registry.register(
         configured,
         session,
-        (observedEntry, event) => {
-          const identity = this.#identity(observedEntry);
-          const activeCommand = this.#activeCommands.get(observedEntry.runtimeSessionId);
-          const tail = this.#observationTails.get(observedEntry.runtimeSessionId) ?? Promise.resolve();
-          const next = tail
-            .then(() => this.#core.ingestTranscript(identity, event, activeCommand))
-            .then(() => undefined);
-          this.#observationTails.set(observedEntry.runtimeSessionId, next);
-          this.#trackObservation(next, {
-            session: this.#sessionRef(observedEntry),
-            observationKind: "transcript",
-          });
-        },
-        (observedEntry, model) => {
-          const activity = observedEntry.session.getState().idle
-            ? SessionActivityState.IDLE
-            : SessionActivityState.WORKING;
-          this.#record({
-            event: "session.model.changed",
-            level: "info",
-            session: this.#sessionRef(observedEntry),
-          });
-          this.#trackObservation(this.#queueSessionReport(observedEntry, activity, undefined, model), {
-            session: this.#sessionRef(observedEntry),
-            observationKind: "session-report",
-          });
-        },
+        (observedEntry, event) => this.#observeTranscript(observedEntry, event),
+        (observedEntry, model) => this.#observeModelChange(observedEntry, model),
+        (observedEntry, event) => this.#observeLifecycle(observedEntry, event),
       );
     } catch (error) {
       this.#record({
@@ -201,7 +258,7 @@ export class AdapterProcess {
     // activity state. Unknown-runtime evidence is durably quarantined by the
     // core until the following authenticated report establishes the session.
     try {
-      for (const event of session.snapshotTranscript()) {
+      for (const event of await session.snapshotTranscript()) {
         await this.#core.ingestTranscript(this.#identity(entry), event);
       }
       await this.#queueSessionReport(
@@ -223,6 +280,47 @@ export class AdapterProcess {
         session: this.#sessionRef(entry),
         error: diagnosticError(error),
       });
+      throw error;
+    }
+  }
+
+  async #createProductionSession(configured: PreprovisionedSession): Promise<PiSession> {
+    const launchNonce = randomBytes(32).toString("base64url");
+    const piIndexPath = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
+    const cliPath = join(dirname(piIndexPath), "cli.js");
+    const controlExtensionPath = fileURLToPath(
+      new URL("../extensions/patchbay-control.js", import.meta.url),
+    );
+    const runtime = await this.#runtimePort.launch({
+      executable: process.execPath,
+      argv: buildPiRpcArgv({
+        cliPath,
+        controlExtensionPath,
+        ...(configured.sessionPath ? { sessionPath: configured.sessionPath } : {}),
+        ...(configured.sessionDirectory ? { sessionDirectory: configured.sessionDirectory } : {}),
+        ...(configured.model ? { model: configured.model } : {}),
+        ...(configured.name ? { name: configured.name } : {}),
+      }),
+      cwd: configured.cwd,
+      launchNonce,
+    });
+    try {
+      await this.#runtimePort.handshake(runtime, {
+        expectedProjectCwd: configured.cwd,
+        expectedExtensionPath: controlExtensionPath,
+      });
+      return await RpcPiSession.bind({
+        runtimeSessionId: configured.runtimeSessionId,
+        generation: configured.generation ?? 1,
+        runtime,
+        runtimePort: this.#runtimePort,
+        actionGate: this.#registry.gateFor(
+          configured.logicalTargetId ?? configured.runtimeSessionId,
+        ),
+        publication: "current",
+      });
+    } catch (error) {
+      await this.#runtimePort.terminate(runtime).catch(() => undefined);
       throw error;
     }
   }
@@ -361,13 +459,20 @@ export class AdapterProcess {
     let completionError: unknown;
     try {
       for await (const delivery of this.#core.receiveDeliveries(this.#cursor, signal)) {
+        this.#cursor = delivery.deliveryEventId?.lsn?.value ?? this.#cursor;
+        if (delivery.promotionCommitted) {
+          if (!this.#spawnSupervisor.acceptPromotion(delivery.promotionCommitted)) {
+            throw new Error("spawn promotion delivery is not exactly correlated");
+          }
+          continue;
+        }
         const operation = requiredOperation(delivery);
         const started = await this.#beginDelivery(delivery, operation);
-        this.#cursor = delivery.deliveryEventId?.lsn?.value ?? this.#cursor;
 
         // Instruction completion remains in flight so the live subscription
-        // can receive a later cancellation for the same session.
-        if (operation.kind === OperationKind.INSTRUCT) {
+        // can receive cancellation. Spawn remains in flight so this same
+        // authenticated stream can receive the authority-bearing promotion.
+        if (operation.kind === OperationKind.INSTRUCT || operation.kind === OperationKind.SPAWN) {
           let tracked: Promise<void>;
           tracked = started.completion
             .catch((error: unknown) => {
@@ -410,6 +515,49 @@ export class AdapterProcess {
       operationKind,
       ...(entry ? { session: this.#sessionRef(entry) } : {}),
     });
+
+    if (operation.kind === OperationKind.SPAWN) {
+      const acceptedSpawn = requiredAcceptedSpawn(delivery, operation);
+      await this.#core.reportRunning(operation);
+      this.#record({
+        event: "delivery.running",
+        level: "info",
+        ...(commandId ? { commandId } : {}),
+        operationKind,
+      });
+      return {
+        completion: this.#spawnSupervisor.handleAcceptedSpawn(acceptedSpawn)
+          .then(() => {
+            this.#record({
+              event: "delivery.completed",
+              level: "info",
+              ...(commandId ? { commandId } : {}),
+              operationKind,
+              outcome: "STAGED_AND_PROMOTED",
+            });
+          })
+          .catch(async (error: unknown) => {
+            const failureCode = error instanceof Error && "failureCode" in error
+              ? error.failureCode as FailureCode
+              : FailureCode.EXECUTION_FAILED;
+            // Validation can fail before the supervisor has a validated
+            // operation/evidence context. This terminalization is idempotent
+            // with the supervisor's post-journal failure report.
+            if (!(error instanceof Error && "terminalReported" in error && error.terminalReported === true)) {
+              await this.#core.ingestFailure(operation, failureCode, "managed_spawn_failed")
+                .catch(() => undefined);
+            }
+            this.#record({
+              event: "delivery.failed",
+              level: "error",
+              ...(commandId ? { commandId } : {}),
+              operationKind,
+              failureCode,
+              error: diagnosticError(error),
+            });
+          }),
+      };
+    }
 
     const targetError = this.#validateTarget(operation, entry);
     if (targetError) {
@@ -470,32 +618,14 @@ export class AdapterProcess {
   async #executeDelivery(operation: Operation, entry: RuntimeSessionEntry): Promise<void> {
     const commandId = operation.commandId?.value;
     const operationKind = operation.kind;
-    const fromGeneration = entry.session.generation;
     try {
       const outcome = await this.#translator.deliver(operation, entry.session);
-      if (outcome.sessionGenerationChanged) {
-        this.#record({
-          event: "session.generation.changed",
-          level: "info",
-          session: this.#sessionRef(entry),
-          fromGeneration,
-          toGeneration: entry.session.generation,
-        });
-      }
-      if (outcome.sessionGenerationChanged) {
-        // This Result is bound to the accepted target (generation N). Commit
-        // it before the ordinary N+1 report; otherwise the core correctly
-        // quarantines the now-stale Result instead of completing the command.
-        await this.#core.reportResult(operation, outcome.value);
+      // For in-generation work, await the serialized observation tail before
+      // terminal Result so command-correlated transcript cannot arrive late.
+      if (operation.kind === OperationKind.INSTRUCT) {
         await this.#queueSessionReport(entry, SessionActivityState.IDLE);
-      } else {
-        // For in-generation work, await the serialized observation tail before
-        // terminal Result so command-correlated transcript cannot arrive late.
-        if (operation.kind === OperationKind.INSTRUCT) {
-          await this.#queueSessionReport(entry, SessionActivityState.IDLE);
-        }
-        await this.#core.reportResult(operation, outcome.value);
       }
+      await this.#core.reportResult(operation, outcome.value);
       this.#record({
         event: "delivery.completed",
         level: "info",
@@ -548,6 +678,57 @@ export class AdapterProcess {
     return undefined;
   }
 
+  #observeTranscript(entry: RuntimeSessionEntry, event: TranscriptEvent): void {
+    const identity = this.#identity(entry);
+    const activeCommand = this.#activeCommands.get(entry.runtimeSessionId);
+    const tail = this.#observationTails.get(entry.runtimeSessionId) ?? Promise.resolve();
+    const next = tail
+      .then(() => this.#core.ingestTranscript(identity, event, activeCommand))
+      .then(() => undefined);
+    this.#observationTails.set(entry.runtimeSessionId, next);
+    this.#trackObservation(next, {
+      session: this.#sessionRef(entry),
+      observationKind: "transcript",
+    });
+  }
+
+  #observeModelChange(entry: RuntimeSessionEntry, model: string): void {
+    const activity = entry.session.getState().idle
+      ? SessionActivityState.IDLE
+      : SessionActivityState.WORKING;
+    this.#record({
+      event: "session.model.changed",
+      level: "info",
+      session: this.#sessionRef(entry),
+    });
+    this.#trackObservation(this.#queueSessionReport(entry, activity, undefined, model), {
+      session: this.#sessionRef(entry),
+      observationKind: "session-report",
+    });
+  }
+
+  #observeLifecycle(
+    entry: RuntimeSessionEntry,
+    event: Parameters<Parameters<PiSession["onLifecycle"]>[0]>[0],
+  ): void {
+    // Claimed successors are quarantined until promotion. Their failure is
+    // correlated through SpawnExecutionEvidence by the supervisor, never an
+    // ordinary SessionReport.
+    if (this.#registry.resolve(entry.runtimeSessionId) !== entry) return;
+    let connectivity: SessionConnectivityState;
+    if (event.kind === "transport_loss" && !event.error.processExit) {
+      connectivity = SessionConnectivityState.STALE;
+    } else if (event.kind === "process_exit" && confirmedCleanProcessExit(event.exit)) {
+      connectivity = SessionConnectivityState.OFFLINE;
+    } else {
+      connectivity = SessionConnectivityState.FAILED;
+    }
+    this.#trackObservation(
+      this.#queueSessionReport(entry, SessionActivityState.UNKNOWN, connectivity),
+      { session: this.#sessionRef(entry), observationKind: "session-report" },
+    );
+  }
+
   #sessionRef(entry: RuntimeSessionEntry): AdapterDiagnosticSessionRef {
     return {
       runtimeSessionId: entry.runtimeSessionId,
@@ -581,6 +762,10 @@ export class AdapterProcess {
     activity: SessionActivityState,
     connectivity = SessionConnectivityState.LIVE,
     model?: string,
+    spawn?: {
+      readonly claimOperationId: string;
+      readonly continuationContextStatus: ContinuationContextStatus;
+    },
   ): Promise<void> {
     // Capture both payload and order before touching the promise tail. The tail
     // serializes delivery, but it is not allowed to decide producer order or
@@ -592,7 +777,7 @@ export class AdapterProcess {
     );
     const tail = this.#observationTails.get(entry.runtimeSessionId) ?? Promise.resolve();
     const next = tail
-      .then(() => this.#core.reportSession(identity, activity, connectivity, sourceOrder))
+      .then(() => this.#core.reportSession(identity, activity, connectivity, sourceOrder, spawn))
       .then(() => {
         this.#record({
           event: "session.activity.reported",
@@ -675,6 +860,49 @@ function requiredOperation(delivery: Delivery): Operation {
   return delivery.operation;
 }
 
+function requiredAcceptedSpawn(delivery: Delivery, operation: Operation): SpawnClaimAccepted {
+  const accepted = delivery.acceptedSpawn;
+  if (
+    !accepted?.acceptedOperation?.operation ||
+    accepted.acceptedOperation.operation.commandId?.value !== operation.commandId?.value ||
+    accepted.claim?.claimOperationId?.value !== operation.commandId?.value
+  ) {
+    throw new Error("managed spawn delivery is missing its exact accepted envelope");
+  }
+  return accepted;
+}
+
+function sessionConnectivity(
+  value: "live" | "offline" | "stale" | "failed",
+): SessionConnectivityState {
+  switch (value) {
+    case "live": return SessionConnectivityState.LIVE;
+    case "offline": return SessionConnectivityState.OFFLINE;
+    case "stale": return SessionConnectivityState.STALE;
+    case "failed": return SessionConnectivityState.FAILED;
+  }
+}
+
+function confirmedCleanProcessExit(exit: {
+  readonly expected: boolean;
+  readonly code: number | null;
+  readonly signal: NodeJS.Signals | null;
+}): boolean {
+  return exit.expected && (
+    (exit.code === 0 && exit.signal === null) ||
+    (exit.code === 143 && exit.signal === null) ||
+    (exit.code === null && exit.signal === "SIGTERM")
+  );
+}
+
+function sessionActivity(value: "idle" | "working" | "unknown"): SessionActivityState {
+  switch (value) {
+    case "idle": return SessionActivityState.IDLE;
+    case "working": return SessionActivityState.WORKING;
+    case "unknown": return SessionActivityState.UNKNOWN;
+  }
+}
+
 function isRetryableTransportFailure(error: unknown): boolean {
   return (
     error instanceof ConnectError &&
@@ -707,6 +935,9 @@ function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
 
 async function runFromEnvironment(): Promise<void> {
   const sessions = JSON.parse(process.env["PATCHBAY_PI_SESSIONS"] ?? "[]") as PreprovisionedSession[];
+  const managedTargets = JSON.parse(
+    process.env["PATCHBAY_PI_MANAGED_TARGETS"] ?? "[]",
+  ) as ManagedPiTargetConfig[];
   const adapterId = process.env["PATCHBAY_ADAPTER_ID"] ?? "pi";
   const attachmentEvidence = requiredEnv("PATCHBAY_ADAPTER_ATTACHMENT_SECRET");
   const diagnostics = await openAdapterDiagnostics({
@@ -722,6 +953,10 @@ async function runFromEnvironment(): Promise<void> {
     attachmentEvidence,
     adapterGeneration: Number.parseInt(process.env["PATCHBAY_ADAPTER_GENERATION"] ?? "1", 10),
     sessions,
+    managedTargets,
+    ...(process.env["PATCHBAY_PI_SPAWN_JOURNAL_DIR"]
+      ? { spawnJournalDirectory: process.env["PATCHBAY_PI_SPAWN_JOURNAL_DIR"] }
+      : {}),
     diagnostics,
     forwardDiagnostics: true,
   });

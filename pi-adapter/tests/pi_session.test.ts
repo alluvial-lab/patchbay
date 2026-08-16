@@ -4,9 +4,7 @@ import { create } from "@bufbuild/protobuf";
 import { OperationKind, OperationSchema, type Operation } from "@patchbay/contracts";
 import {
   AgentSession,
-  ModelRuntime,
   SessionManager,
-  SettingsManager,
   type AgentSessionEvent,
   type AgentSessionEventListener,
 } from "@earendil-works/pi-coding-agent";
@@ -15,7 +13,11 @@ import {
   fauxAssistantMessage,
   fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
-import { PiSession } from "../src/pi_session.js";
+import { AgentSessionRuntimeFixture } from "../src/pi_session.js";
+import {
+  createOfflineFixtureServices,
+  createOfflineModelRuntime,
+} from "./offline_agent_fixture.js";
 import type { TranscriptEvent } from "../src/transcript_event.js";
 
 const cwd = process.cwd();
@@ -31,7 +33,7 @@ test("real AgentSession prompt emits transcript events and honors the approval g
     fauxAssistantMessage("approval was enforced", { timestamp: 11 }),
   ]);
 
-  const modelRuntime = await ModelRuntime.create({ refreshOnCreate: false });
+  const modelRuntime = await createOfflineModelRuntime();
   const model = faux.getModel();
   modelRuntime.registerProvider(provider, {
     name: "Patchbay test provider",
@@ -61,16 +63,17 @@ test("real AgentSession prompt emits transcript events and honors the approval g
     liveHookListeners.push(listener);
     return unsubscribe;
   };
-  const pi = await PiSession.create({
+  const pi = await AgentSessionRuntimeFixture.create({
     cwd,
     runtimeSessionId: "runtime-1",
+    generation: 1,
     model: `${provider}/${model.id}`,
-    sessionOptions: {
+    services: await createOfflineFixtureServices(
+      cwd,
       modelRuntime,
-      sessionManager: SessionManager.inMemory(cwd),
-      settingsManager: SettingsManager.inMemory(),
-      tools: ["read"],
-    },
+      SessionManager.inMemory(cwd),
+    ),
+    tools: ["read"],
   });
   const observed: TranscriptEvent[] = [];
   pi.onTranscript((event) => observed.push(event));
@@ -141,8 +144,8 @@ test("real AgentSession prompt emits transcript events and honors the approval g
     );
 
     assert.equal(pi.getState().idle, true);
-    assert.ok(pi.getEntries().entries.length > 0);
-    assert.ok(pi.getAvailableModels().some((candidate) => candidate.id === model.id));
+    assert.ok((await pi.getEntries()).entries.length > 0);
+    assert.ok((await pi.getAvailableModels()).some((candidate) => candidate.id === model.id));
     const initialHook = liveHookListeners.at(-1);
     assert.ok(initialHook, "PiSession subscribes to the live AgentSession hook");
     const duplicateHookEvent = duplicateLiveHookEvent("live-duplicate-entry");
@@ -160,52 +163,46 @@ test("real AgentSession prompt emits transcript events and honors the approval g
 
     await pi.setModel(provider, model.id);
     await pi.setThinkingLevel("off");
-    const oldPiSessionId = pi.getState().piSessionId;
-    faux.appendResponses([
-      async () => {
-        await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
-        return fauxAssistantMessage("late old-context response", { timestamp: 14 });
-      },
-    ]);
-    const oldContextRun = pi.prompt("replace this context while it is running");
-    await waitUntil(() => pi.getState().streaming);
-    assert.equal(await pi.newSession(), 2);
-    await oldContextRun.catch(() => undefined);
-    assert.equal(pi.getState().generation, 2);
-    const replacementHook = liveHookListeners.at(-1);
-    assert.ok(replacementHook, "generation replacement binds a fresh live AgentSession hook");
-    const replacementHookEvent = duplicateLiveHookEvent("live-duplicate-entry");
-    replacementHook(replacementHookEvent);
-    replacementHook(replacementHookEvent);
-    const replacementLiveEvent = observed.find(
-      (event) =>
-        event.kind === "user_confirmed" &&
-        event.messageId === "live-duplicate-entry" &&
-        event.sessionId === "runtime-1:2",
-    );
-    assert.ok(replacementLiveEvent, "the reset generation accepts its first live event");
-    assert.equal(
-      observed.filter((event) => event.eventId === replacementLiveEvent.eventId).length,
-      1,
-      "duplicate live hooks remain deduplicated after generation reset",
-    );
-    assert.notEqual(pi.getState().piSessionId, oldPiSessionId);
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
-    assert.equal(
-      observed.some(
-        (event) =>
-          event.sessionId === "runtime-1:2" &&
-          event.kind === "assistant_committed" &&
-          event.text === "late old-context response",
-      ),
-      false,
-      "late events from the disposed generation stay inert",
+    await assert.rejects(
+      async () => (pi as unknown as { newSession(): Promise<number> }).newSession(),
+      /newSession is not a function/,
+      "the SDK fixture exposes no adapter-owned generation increment path",
     );
     await pi.cancel();
   } finally {
     await pi.dispose();
     AgentSession.prototype.subscribe = originalSubscribe;
   }
+});
+
+test("offline fixture rejects a missing injected catalog and auth boundary marker", async () => {
+  const provider = "patchbay-offline-boundary";
+  const faux = createFauxCore({ provider, api: provider, tokensPerSecond: 0 });
+  const modelRuntime = await createOfflineModelRuntime();
+  const model = faux.getModel();
+  modelRuntime.registerProvider(provider, {
+    name: "offline boundary provider",
+    apiKey: "injected-only",
+    baseUrl: "http://localhost:0",
+    api: model.api,
+    streamSimple: faux.streamSimple,
+    models: [model],
+  });
+  const services = await createOfflineFixtureServices(cwd, modelRuntime);
+  await assert.rejects(
+    AgentSessionRuntimeFixture.create({
+      cwd,
+      runtimeSessionId: "runtime-ambient-rejected",
+      generation: 1,
+      model: `${provider}/${model.id}`,
+      services: {
+        ...services,
+        modelCatalogAuthStub: { kind: "ambient" },
+      } as unknown as typeof services,
+      noTools: "all",
+    }),
+    /requires offline catalog\/auth stubs/,
+  );
 });
 
 function duplicateLiveHookEvent(entryId: string): AgentSessionEvent {

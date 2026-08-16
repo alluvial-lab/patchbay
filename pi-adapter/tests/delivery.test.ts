@@ -13,43 +13,41 @@ import {
   SessionActivityState,
   SessionConnectivityState,
 } from "@patchbay/contracts";
-import {
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { PatchbayCoreClient, type SessionIdentity } from "../src/core_client.js";
 import type { SessionReportOrder } from "../src/session_report_sequencer.js";
 import type { AdapterDiagnosticInput } from "../src/adapter_diagnostics.js";
 import { DeliveryTranslator, UnsupportedCommandError } from "../src/delivery.js";
 import { AdapterProcess, type PreprovisionedSession } from "../src/main.js";
-import { PiSession } from "../src/pi_session.js";
+import { AgentSessionRuntimeFixture, type PiSession } from "../src/pi_session.js";
+import {
+  createOfflineFixtureServices,
+  createOfflineModelRuntime,
+} from "./offline_agent_fixture.js";
+import { PiRpcTransportError } from "../src/rpc_client.js";
 import { SessionRegistry } from "../src/session_registry.js";
 
 const encoder = new TextEncoder();
 
-test("DeliveryTranslator maps instruct/cancel/session-new and rejects spawn", async () => {
+test("DeliveryTranslator maps instruct/cancel and rejects adapter-owned generation changes", async () => {
   const calls: string[] = [];
   const session = {
     runtimeSessionId: "runtime-1",
     prompt: async (text: string) => calls.push(`prompt:${text}`),
     cancel: async () => calls.push("cancel"),
-    newSession: async () => {
-      calls.push("new");
-      return 2;
-    },
   } as unknown as PiSession;
   const translator = new DeliveryTranslator();
 
   await translator.deliver(operation(OperationKind.INSTRUCT, "hello"), session);
   await translator.deliver(operation(OperationKind.CANCEL), session);
-  const replaced = await translator.deliver(
-    operation(OperationKind.SESSION_MANAGEMENT, JSON.stringify({ action: "new" })),
-    session,
+  await assert.rejects(
+    translator.deliver(
+      operation(OperationKind.SESSION_MANAGEMENT, JSON.stringify({ action: "new" })),
+      session,
+    ),
+    UnsupportedCommandError,
   );
-  assert.deepEqual(calls, ["prompt:hello", "cancel", "new"]);
-  assert.equal(replaced.sessionGenerationChanged, true);
+  assert.deepEqual(calls, ["prompt:hello", "cancel"]);
   await assert.rejects(
     translator.deliver(operation(OperationKind.SPAWN), session),
     UnsupportedCommandError,
@@ -119,7 +117,7 @@ test("AdapterProcess preserves real Pi model_change values, activity, and order"
       return fauxAssistantMessage("model switch completed");
     },
   ]);
-  const modelRuntime = await ModelRuntime.create({ refreshOnCreate: false });
+  const modelRuntime = await createOfflineModelRuntime();
   const baseModel = faux.getModel();
   modelRuntime.registerProvider(provider, {
     name: "Patchbay model-switch provider",
@@ -139,15 +137,13 @@ test("AdapterProcess preserves real Pi model_change values, activity, and order"
     deploymentScope: "machine-a",
     project: "patchbay",
   };
-  const pi = await PiSession.create({
-    ...configured,
+  const pi = await AgentSessionRuntimeFixture.create({
+    cwd: configured.cwd,
+    runtimeSessionId: configured.runtimeSessionId,
+    generation: 1,
     model: `${provider}/model-a`,
-    sessionOptions: {
-      modelRuntime,
-      sessionManager: SessionManager.inMemory(configured.cwd),
-      settingsManager: SettingsManager.inMemory(),
-      noTools: "all",
-    },
+    services: await createOfflineFixtureServices(configured.cwd, modelRuntime),
+    noTools: "all",
   });
 
   const reports: Array<{
@@ -224,7 +220,7 @@ test("AdapterProcess preserves real Pi model_change values, activity, and order"
     await adapter.flushObservations();
 
     assert.deepEqual(
-      pi.getEntries().entries
+      (await pi.getEntries()).entries
         .filter((entry) => entry.type === "model_change")
         .map((entry) => `${entry.provider}/${entry.modelId}`)
         .slice(-2),
@@ -238,8 +234,8 @@ test("AdapterProcess preserves real Pi model_change values, activity, and order"
     );
     assert.deepEqual(
       reports.map(({ activity }) => activity),
-      [SessionActivityState.IDLE, SessionActivityState.WORKING, SessionActivityState.WORKING],
-      "model changes preserve the real in-flight activity state",
+      [SessionActivityState.IDLE, SessionActivityState.IDLE, SessionActivityState.IDLE],
+      "the action gate serializes model changes after the in-flight turn",
     );
     assert.deepEqual(
       reports.map(({ sourceOrder }) => sourceOrder),
@@ -306,6 +302,9 @@ test("AdapterProcess resets report revision only for a new runtime or adapter ge
       },
       onModelChange(listener: (model: string) => void) {
         observeModel = listener;
+        return () => undefined;
+      },
+      onLifecycle() {
         return () => undefined;
       },
       async dispose() {},
@@ -404,6 +403,91 @@ test("AdapterProcess resets report revision only for a new runtime or adapter ge
   }
 });
 
+test("AdapterProcess maps transport loss and exact process exits without mutating generation", async () => {
+  const reports: Array<{ connectivity: SessionConnectivityState; activity: SessionActivityState; generation: number }> = [];
+  let lifecycle: ((event: Parameters<Parameters<PiSession["onLifecycle"]>[0]>[0]) => void) | undefined;
+  const session = {
+    runtimeSessionId: "runtime-lifecycle",
+    generation: 5,
+    getState: () => ({
+      idle: true,
+      model: { provider: "provider", id: "model" },
+    }),
+    snapshotTranscript: async () => [],
+    onTranscript: () => () => undefined,
+    onModelChange: () => () => undefined,
+    onLifecycle(listener: NonNullable<typeof lifecycle>) {
+      lifecycle = listener;
+      return () => undefined;
+    },
+    dispose: async () => undefined,
+  } as unknown as PiSession;
+  const originalAttach = PatchbayCoreClient.prototype.attach;
+  const originalReportSession = PatchbayCoreClient.prototype.reportSession;
+  PatchbayCoreClient.prototype.attach = async () => ({}) as EventId;
+  PatchbayCoreClient.prototype.reportSession = async (identity, activity, connectivity) => {
+    reports.push({ connectivity, activity, generation: identity.generation });
+    return undefined;
+  };
+  const adapter = new AdapterProcess({
+    coreAddress: "http://127.0.0.1:1",
+    adapterId: "pi",
+    authorityDomainId: "authority-test",
+    attachmentEvidence: "adapter-test-secret",
+    adapterGeneration: 1,
+    sessions: [{
+      cwd: process.cwd(),
+      runtimeSessionId: "runtime-lifecycle",
+      deploymentScope: "machine-a",
+      generation: 5,
+    }],
+    createSession: async () => session,
+  });
+  try {
+    await adapter.start();
+    assert.ok(lifecycle);
+    lifecycle({
+      kind: "transport_loss",
+      error: new PiRpcTransportError("pipe", "test transport loss"),
+    });
+    lifecycle({
+      kind: "process_exit",
+      exit: {
+        pid: 10,
+        processToken: "process",
+        code: 0,
+        signal: null,
+        expected: true,
+        terminatedBySupervisor: true,
+      },
+    });
+    lifecycle({
+      kind: "process_exit",
+      exit: {
+        pid: 10,
+        processToken: "process",
+        code: 9,
+        signal: null,
+        expected: false,
+        terminatedBySupervisor: false,
+      },
+    });
+    await adapter.flushObservations();
+    assert.deepEqual(
+      reports.slice(-3),
+      [
+        { connectivity: SessionConnectivityState.STALE, activity: SessionActivityState.UNKNOWN, generation: 5 },
+        { connectivity: SessionConnectivityState.OFFLINE, activity: SessionActivityState.UNKNOWN, generation: 5 },
+        { connectivity: SessionConnectivityState.FAILED, activity: SessionActivityState.UNKNOWN, generation: 5 },
+      ],
+    );
+  } finally {
+    await adapter.dispose();
+    PatchbayCoreClient.prototype.attach = originalAttach;
+    PatchbayCoreClient.prototype.reportSession = originalReportSession;
+  }
+});
+
 test("AdapterProcess isolates broken diagnostics from lifecycle operations", async () => {
   const diagnostics = {
     record() {
@@ -493,6 +577,7 @@ test("SessionRegistry owns complete runtime entries and observation wiring", asy
   let modelChangeListener: ((model: string) => void) | undefined;
   let unsubscribed = false;
   let modelUnsubscribed = false;
+  let lifecycleUnsubscribed = false;
   const session = {
     runtimeSessionId: "runtime-1",
     onTranscript(listener: (event: never) => void) {
@@ -505,6 +590,11 @@ test("SessionRegistry owns complete runtime entries and observation wiring", asy
       modelChangeListener = listener;
       return () => {
         modelUnsubscribed = true;
+      };
+    },
+    onLifecycle() {
+      return () => {
+        lifecycleUnsubscribed = true;
       };
     },
     async dispose() {},
@@ -542,6 +632,7 @@ test("SessionRegistry owns complete runtime entries and observation wiring", asy
   await registry.dispose();
   assert.equal(unsubscribed, true);
   assert.equal(modelUnsubscribed, true);
+  assert.equal(lifecycleUnsubscribed, true);
 });
 
 function operation(kind: OperationKind, payload = ""): Operation {

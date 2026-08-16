@@ -3334,6 +3334,11 @@ pub struct Delivery {
     pub delivery_event_id: ::core::option::Option<EventId>,
     #[prost(message, optional, tag="3")]
     pub accepted_spawn: ::core::option::Option<SpawnClaimAccepted>,
+    /// Authority-bearing notification emitted only after the core's atomic
+    /// promotion transaction. It lets the owning adapter release its local
+    /// successor quarantine without inferring promotion from Result success.
+    #[prost(message, optional, tag="4")]
+    pub promotion_committed: ::core::option::Option<SpawnPromotionCommitted>,
 }
 /// Exact orchestration phase at the last durable spawn-execution observation.
 /// No phase is a catch-all liveness assertion: each phase has a closed set of
@@ -4459,6 +4464,19 @@ pub struct PiSpawnTargetSpec {
     #[prost(enumeration="PiContinuationMode", tag="2")]
     pub continuation_mode: i32,
 }
+/// Redacted adapter-specific spawn result. The generic exact claim, execution
+/// phase, external-effect disposition, successor SessionReport, and promotion
+/// remain in their shared generated contracts. This payload carries only Pi's
+/// bounded readiness proof and conditional persistence result.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PiSpawnResult {
+    #[prost(enumeration="ContinuationContextStatus", tag="1")]
+    pub continuation_context_status: i32,
+    #[prost(enumeration="PiSpawnPersistence", tag="2")]
+    pub persistence: i32,
+    #[prost(string, tag="3")]
+    pub readiness_digest: ::prost::alloc::string::String,
+}
 /// Typed Pi-local reconfiguration contract. Reloadable resources remain the
 /// narrow generated set below; broader changes require process replacement.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -4890,6 +4908,35 @@ impl PiContinuationMode {
             "PI_CONTINUATION_MODE_UNSPECIFIED" => Some(Self::Unspecified),
             "PI_CONTINUATION_MODE_REQUIRE_RESUME" => Some(Self::RequireResume),
             "PI_CONTINUATION_MODE_ALLOW_NEW_CONTEXT" => Some(Self::AllowNewContext),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum PiSpawnPersistence {
+    Unspecified = 0,
+    MemoryOnly = 1,
+    Materialized = 2,
+}
+impl PiSpawnPersistence {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "PI_SPAWN_PERSISTENCE_UNSPECIFIED",
+            Self::MemoryOnly => "PI_SPAWN_PERSISTENCE_MEMORY_ONLY",
+            Self::Materialized => "PI_SPAWN_PERSISTENCE_MATERIALIZED",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "PI_SPAWN_PERSISTENCE_UNSPECIFIED" => Some(Self::Unspecified),
+            "PI_SPAWN_PERSISTENCE_MEMORY_ONLY" => Some(Self::MemoryOnly),
+            "PI_SPAWN_PERSISTENCE_MATERIALIZED" => Some(Self::Materialized),
             _ => None,
         }
     }

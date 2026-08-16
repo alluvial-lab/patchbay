@@ -63,6 +63,13 @@ import {
   SessionConnectivityState,
   SessionReportSchema,
   SessionReportSourceCursorSchema,
+  SpawnExecutionEvidenceSchema,
+  SpawnExecutionPhase,
+  ExternalEffectDisposition,
+  NoExternalEffectProofSchema,
+  SupervisorPreLaunchFailureProofSchema,
+  SpawnExecutionEvidenceProducer,
+  ContinuationContextStatus,
   TargetScopeKind,
   TargetScopeSchema,
   TypedCorrelationSchema,
@@ -73,6 +80,9 @@ import {
   type EventId,
   type Operation,
   type PiRuntimeProfile,
+  type PayloadEnvelope,
+  type RuntimeGenerationRef,
+  type SpawnGenerationClaim,
 } from "@patchbay/contracts";
 import {
   diagnosticError,
@@ -141,6 +151,17 @@ export class PatchbayCoreClient {
     this.#diagnostics = diagnostics;
   }
 
+  get adapterId(): string {
+    return this.#options.adapterId;
+  }
+
+  get adapterGeneration(): number {
+    if (this.#adapterGeneration === undefined) {
+      throw new Error("adapter has not attached");
+    }
+    return this.#adapterGeneration;
+  }
+
   async attach(adapterGeneration: number): Promise<EventId> {
     this.#record({
       event: "adapter.attach.started",
@@ -206,6 +227,10 @@ export class PatchbayCoreClient {
     activity: SessionActivityState,
     connectivity: SessionConnectivityState,
     sourceOrder: SessionReportOrder,
+    spawn?: {
+      readonly claimOperationId: string;
+      readonly continuationContextStatus: ContinuationContextStatus;
+    },
   ): Promise<EventId | undefined> {
     if (sourceOrder.revision <= 0n) {
       throw new Error("session report revision must be positive");
@@ -226,10 +251,23 @@ export class PatchbayCoreClient {
               sessionGeneration: create(GenerationSchema, { value: BigInt(identity.generation) }),
               connectivity,
               activity,
-              project: identity.project,
-              cwd: identity.cwd,
+              // Raw project/cwd/path labels remain adapter-local. Core-visible
+              // successor/current identity uses only redacted presentation text.
+              project: "",
+              cwd: "",
               name: identity.name,
               model: identity.model,
+              ...(spawn
+                ? {
+                    spawnOrigin: create(TypedCorrelationSchema, {
+                      ref: {
+                        case: "commandId",
+                        value: create(CommandIdSchema, { value: spawn.claimOperationId }),
+                      },
+                    }),
+                    continuationContextStatus: spawn.continuationContextStatus,
+                  }
+                : {}),
               sourceCursor: create(SessionReportSourceCursorSchema, {
                 adapterGeneration: create(GenerationSchema, {
                   value: BigInt(sourceOrder.adapterGeneration),
@@ -320,6 +358,63 @@ export class PatchbayCoreClient {
     );
   }
 
+  async reportSpawnResult(operation: Operation, payload: Uint8Array): Promise<EventId | undefined> {
+    return this.#ingestLifecycleEnvelope(
+      operation,
+      ObservationKind.RESULT,
+      create(PayloadEnvelopeSchema, {
+        payload,
+        contentType: PayloadContentType.PROTOBUF,
+        schemaRef: "patchbay.PiSpawnResult.v1",
+      }),
+      FailureCode.UNSPECIFIED,
+    );
+  }
+
+  async reportSpawnEvidence(input: {
+    readonly operation: Operation;
+    readonly exactClaim: SpawnGenerationClaim;
+    readonly phase: SpawnExecutionPhase;
+    readonly disposition: ExternalEffectDisposition;
+    readonly failureCode: FailureCode;
+    readonly externalRuntime?: RuntimeGenerationRef;
+    readonly supervisorNoEffectProof?: boolean;
+  }): Promise<EventId | undefined> {
+    const proof = input.supervisorNoEffectProof
+      ? create(NoExternalEffectProofSchema, {
+          proof: {
+            case: "exactSupervisorPreLaunchFailure",
+            value: create(SupervisorPreLaunchFailureProofSchema, {
+              adapterId: this.#adapterId(),
+              adapterGeneration: create(GenerationSchema, {
+                value: BigInt(this.adapterGeneration),
+              }),
+            }),
+          },
+        })
+      : undefined;
+    const evidence = create(SpawnExecutionEvidenceSchema, {
+      authorityDomainId: this.#authorityDomainId(),
+      exactClaim: input.exactClaim,
+      phase: input.phase,
+      externalEffectDisposition: input.disposition,
+      // The server replaces both fields from the authenticated attachment.
+      producer: SpawnExecutionEvidenceProducer.UNSPECIFIED,
+      failureCode: input.failureCode,
+      ...(proof ? { noExternalEffectProof: proof } : {}),
+      ...(input.externalRuntime ? { externalRuntime: input.externalRuntime } : {}),
+    });
+    const result = await this.#postAttach(() =>
+      this.#client.ingestObservation(
+        create(ObservationRequestSchema, {
+          authorityDomainId: this.#authorityDomainId(),
+          observation: { case: "spawnExecutionEvidence", value: evidence },
+        }),
+      ),
+    );
+    return result.eventId;
+  }
+
   async ingestFailure(
     operation: Operation,
     failureCode: FailureCode,
@@ -401,6 +496,24 @@ export class PatchbayCoreClient {
     payload: unknown,
     failureCode = FailureCode.UNSPECIFIED,
   ): Promise<EventId | undefined> {
+    return this.#ingestLifecycleEnvelope(
+      operation,
+      kind,
+      create(PayloadEnvelopeSchema, {
+        payload: encoder.encode(jsonStringify(payload)),
+        contentType: PayloadContentType.JSON,
+        schemaRef,
+      }),
+      failureCode,
+    );
+  }
+
+  async #ingestLifecycleEnvelope(
+    operation: Operation,
+    kind: ObservationKind,
+    payload: PayloadEnvelope,
+    failureCode: FailureCode,
+  ): Promise<EventId | undefined> {
     const commandId = operation.commandId?.value;
     if (!commandId) throw new Error("delivery operation is missing command_id");
     if (!operation.targetScope) throw new Error("delivery operation is missing target_scope");
@@ -419,11 +532,7 @@ export class PatchbayCoreClient {
         }),
       ],
       targetScope: operation.targetScope,
-      payload: create(PayloadEnvelopeSchema, {
-        payload: encoder.encode(jsonStringify(payload)),
-        contentType: PayloadContentType.JSON,
-        schemaRef,
-      }),
+      payload,
       failureCode,
     });
     const result = await this.#postAttach(() =>

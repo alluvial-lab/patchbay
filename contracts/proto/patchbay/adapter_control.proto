@@ -129,4 +129,8 @@ message Delivery {
   Operation operation = 1;
   EventId delivery_event_id = 2;
   SpawnClaimAccepted accepted_spawn = 3;
+  // Authority-bearing notification emitted only after the core's atomic
+  // promotion transaction. It lets the owning adapter release its local
+  // successor quarantine without inferring promotion from Result success.
+  SpawnPromotionCommitted promotion_committed = 4;
 }

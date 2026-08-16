@@ -65,16 +65,15 @@ import {
   type PrincipalCredential,
   type StoredEventPayload,
 } from "@patchbay/contracts";
-import {
-  ModelRuntime,
-  SessionManager,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
 import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import { PatchbayCoreClient } from "../src/core_client.js";
 import { openAdapterDiagnostics } from "../src/adapter_diagnostics.js";
 import { AdapterProcess, type PreprovisionedSession } from "../src/main.js";
-import { PiSession } from "../src/pi_session.js";
+import { AgentSessionRuntimeFixture, type PiSession } from "../src/pi_session.js";
+import {
+  createOfflineFixtureServices,
+  createOfflineModelRuntime,
+} from "./offline_agent_fixture.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const coreSecret = "e2e-core-secret";
@@ -89,7 +88,7 @@ const runtimeSessionId = "session-e2e";
 const deploymentScope = "machine-e2e";
 
 // The test is deliberately serial: it owns one core process and one SQLite fixture.
-test("core → adapter → real AgentSession → observation loop, generation bump, reconnect, and core restart", { timeout: 180_000 }, async () => {
+test("core → adapter → offline AgentSession fixture → observation loop, fenced generation, reconnect, and core restart", { timeout: 180_000 }, async () => {
   const port = await freePort();
   let adminPort = await freePort();
   while (adminPort === port) adminPort = await freePort();
@@ -317,9 +316,13 @@ test("core → adapter → real AgentSession → observation loop, generation bu
         ),
       }),
     );
-    await waitForCommandState(control, "command-session-new", OperationState.COMPLETED);
+    await waitForCommandState(control, "command-session-new", OperationState.REJECTED);
+    assert.equal(
+      commandTransitions(await readAfter(control, 0n), "command-session-new").at(-1)?.failureCode,
+      FailureCode.UNSUPPORTED_COMMAND,
+    );
     const generationEvents = await readAfter(control, sessionNew.acceptedLsn?.value ?? 0n);
-    assert.ok(generationEvents.some(isGenerationTwo));
+    assert.equal(generationEvents.some(isGenerationTwo), false);
 
     const query = await control.submit(
       create(SubmitRequestSchema, {
@@ -327,7 +330,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
           "command-query",
           OperationKind.QUERY,
           JSON.stringify({ action: "state" }),
-          2,
+          1,
         ),
       }),
     );
@@ -340,7 +343,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     const queryValue = JSON.parse(
       new TextDecoder().decode(queryResult?.payload?.payload),
     ) as { value?: { generation?: number } };
-    assert.equal(queryValue.value?.generation, 2);
+    assert.equal(queryValue.value?.generation, 1);
 
     const malformedPayloadCases = [
       {
@@ -367,7 +370,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
             malformedCommandId,
             malformed.kind,
             malformed.payload,
-            2,
+            1,
           ),
         }),
       );
@@ -393,7 +396,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
             validCommandId,
             OperationKind.QUERY,
             JSON.stringify({ action: "state" }),
-            2,
+            1,
           ),
         }),
       );
@@ -418,22 +421,21 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     ]);
     await control.submit(
       create(SubmitRequestSchema, {
-        operation: operation("command-long", OperationKind.INSTRUCT, "start a cancellable turn", 2),
+        operation: operation("command-long", OperationKind.INSTRUCT, "start a cancellable turn", 1),
       }),
     );
     await control.submit(
       create(SubmitRequestSchema, {
-        operation: operation("command-cancel", OperationKind.CANCEL, "", 2),
+        operation: operation("command-cancel", OperationKind.CANCEL, "", 1),
       }),
     );
     await waitForCommandState(control, "command-cancel", OperationState.COMPLETED);
     await waitForPiIdle(sessionFixture);
 
-    // An accepted old-generation delivery may remain after replacement, but it
-    // must be acknowledged-and-rejected without entering the new Pi context.
+    // A future-generation acceptance cannot enter the current Pi context.
     appendAcceptedOperation(
       databasePath,
-      operation("command-old-generation", OperationKind.INSTRUCT, "must not execute", 1),
+      operation("command-old-generation", OperationKind.INSTRUCT, "must not execute", 2),
       auth.grantId,
     );
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -441,7 +443,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     assert.deepEqual(
       commandStates(staleDeliveryEvents, "command-old-generation"),
       [],
-      "the server does not deliver an operation for a tombstoned generation",
+      "the server does not deliver an operation for a non-current generation",
     );
     assert.equal(
       observationsFor(staleDeliveryEvents, "command-old-generation").some(
@@ -453,7 +455,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
 
     const spawn = await control.submit(
       create(SubmitRequestSchema, {
-        operation: operation("command-spawn", OperationKind.SPAWN, "", 2),
+        operation: operation("command-spawn", OperationKind.SPAWN, "", 1),
       }),
     );
     assert.equal(spawn.outcome, SubmissionOutcome.REJECTED);
@@ -477,7 +479,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
           "command-restart-mid-turn",
           OperationKind.INSTRUCT,
           "lose the adapter after running",
-          2,
+          1,
         ),
       }),
     );
@@ -497,7 +499,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     adapterController = undefined;
     adapterRun = undefined;
 
-    const reconnectFixture = createSessionFixture(3, true);
+    const reconnectFixture = createSessionFixture(1, true);
     const reconnectDiagnostics = await openAdapterDiagnostics({
       path: diagnosticsPath,
       adapterId,
@@ -510,7 +512,7 @@ test("core → adapter → real AgentSession → observation loop, generation bu
       authorityDomainId: domainId,
       attachmentEvidence: adapterEvidence,
       adapterGeneration: 2,
-      sessions: [{ ...configured, generation: 3 }],
+      sessions: [{ ...configured, generation: 1 }],
       createSession: reconnectFixture.create,
       diagnostics: reconnectDiagnostics,
       forwardDiagnostics: true,
@@ -519,18 +521,23 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     await waitForAdapterDiagnostic(control, "pi_adapter_started", AdapterDiagnosticState.ATTACHED);
     reconnectController = new AbortController();
     reconnectRun = reconnect.run(reconnectController.signal);
-    assert.equal(reconnectFixture.session?.getState().generation, 3);
+    assert.equal(reconnectFixture.session?.getState().generation, 1);
 
     const reconnectEvents = await readAfter(control, 0n);
     assert.ok(
-      quarantinedObservationsFromDatabase(databasePath).some(
-        (observation) =>
-          observation.payload?.schemaRef === "patchbay.pi.TranscriptEvent.v1" &&
-          new TextDecoder().decode(observation.payload.payload).includes("replayed snapshot entry"),
-      ),
-      "reconnect persists pre-registration snapshot evidence only inside quarantine",
+      reconnectEvents.some((payload) => {
+        if (payload.kind !== StoredEventKind.OBSERVATION) return false;
+        const observation = fromBinary(ObservationSchema, payload.payload);
+        return observation.payload?.schemaRef === "patchbay.pi.TranscriptEvent.v1" &&
+          new TextDecoder().decode(observation.payload.payload).includes("replayed snapshot entry");
+      }),
+      "same-generation reconnect replays snapshot evidence into the current runtime",
     );
-    assert.ok(reconnectEvents.some(isGenerationThreeUnknown));
+    assert.equal(
+      reconnectEvents.some((payload) => isGenerationBumpBeyondOne(payload)),
+      false,
+      "adapter restart never invents a successor generation",
+    );
     const attachCountBeforeRestart = reconnectEvents.filter(isAdapterRegistration).length;
 
     // Stop the adapter's delivery loop before restarting core so the query can
@@ -579,7 +586,11 @@ test("core → adapter → real AgentSession → observation loop, generation bu
     );
     assert.ok(commandRecords.some((line) => line["event"] === "delivery.received"));
     assert.ok(commandRecords.some((line) => line["event"] === "delivery.completed"));
-    assert.ok(diagnosticLines.some((line) => line["event"] === "session.generation.changed"));
+    assert.equal(
+      diagnosticLines.some((line) => line["event"] === "session.generation.changed"),
+      false,
+      "no adapter-local generation bump is published",
+    );
     assert.ok(diagnosticLines.some((line) => line["event"] === "adapter.stopped"));
     assert.equal(diagnosticLines.some((line) => JSON.stringify(line).includes(adapterEvidence)), false);
     assert.equal(diagnosticLines.some((line) => JSON.stringify(line).includes("hello from Patchbay")), false);
@@ -608,7 +619,7 @@ function createSessionFixture(generation: number, seedSnapshot = false) {
       return session;
     },
     create: async (configured: PreprovisionedSession) => {
-      const modelRuntime = await ModelRuntime.create({ refreshOnCreate: false });
+      const modelRuntime = await createOfflineModelRuntime();
       const model = faux.getModel();
       modelRuntime.registerProvider(provider, {
         name: provider,
@@ -630,25 +641,23 @@ function createSessionFixture(generation: number, seedSnapshot = false) {
           },
         ],
       });
-      const sessionManager = SessionManager.inMemory(repoRoot);
+      const services = await createOfflineFixtureServices(repoRoot, modelRuntime);
       if (seedSnapshot) {
-        sessionManager.appendMessage({
+        services.sessionManager.appendMessage({
           role: "user",
           content: "replayed snapshot entry",
           timestamp: Date.now(),
         });
       }
-      session = await PiSession.create({
-        ...configured,
+      session = await AgentSessionRuntimeFixture.create({
+        cwd: configured.cwd,
+        runtimeSessionId: configured.runtimeSessionId,
+        generation,
         model: `${provider}/${model.id}`,
-        sessionOptions: {
-          modelRuntime,
-          sessionManager,
-          settingsManager: SettingsManager.inMemory(),
-          noTools: "all",
-        },
+        services,
+        noTools: "all",
       });
-      return session;
+      return session!;
     },
   };
 }
@@ -1096,15 +1105,11 @@ function isGenerationTwo(payload: StoredEventPayload): boolean {
   return bump.fromGeneration?.value === 1n && bump.toGeneration?.value === 2n;
 }
 
-function isGenerationThreeUnknown(payload: StoredEventPayload): boolean {
+function isGenerationBumpBeyondOne(payload: StoredEventPayload): boolean {
   if (payload.kind !== StoredEventKind.SESSION_STATE) return false;
   const event = fromBinary(SessionStateEventSchema, payload.payload);
-  if (event.mutation.case !== "generationBumped") return false;
-  const bump = event.mutation.value;
-  return (
-    bump.toGeneration?.value === 3n &&
-    bump.initialState?.activity === SessionActivityState.UNKNOWN
-  );
+  return event.mutation.case === "generationBumped" &&
+    (event.mutation.value.toGeneration?.value ?? 0n) > 1n;
 }
 
 async function freePort(): Promise<number> {

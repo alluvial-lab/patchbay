@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-rpc-process-supervisor
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol, security]
 parent: research-handoff-pi-adapter-capability
 depends_on: [research-handoff-pi-adapter-capability-control-session-integrity, research-handoff-spawn-logical-target-identity-contract, research-handoff-spawn-continuation-payload-authority-contract, research-handoff-spawn-claim-registry-contract, research-handoff-spawn-crash-external-effect-evidence-contract, research-handoff-spawn-runtime-evidence-promotion-contract, research-handoff-spawn-idempotency-duplicate-handling, research-handoff-spawn-restart-continuation-orchestration, deployment-authority-workspace-scoped-revocable-keys]
@@ -82,14 +82,23 @@ Production implements `ManagedPiRuntimePort` only with RPC. Tests may use `Agent
 
 ## Acceptance evidence
 
-- [ ] Fresh generation `1` and continuation exact `N+1` come only from the accepted core claim; production contains no managed `current + 1` path.
-- [ ] Both continuation Grant provenance records and the pending-replacement fence are carried/validated; adapter-local project authority cannot replace either core Grant.
-- [ ] `require_resume` cannot terminate/launch from a memory-only or invalid session; explicit new context never reports `resumed`.
-- [ ] Wrong cwd/path/id, incomplete tree, changed seal, old callback, or stale process/attachment token cannot stage success.
-- [ ] Journal-before-launch and identity-after-handshake crash prefixes map to the exact shared effect disposition; ambiguity poisons and never auto-relaunches.
-- [ ] Successor transcript/status output remains staged/quarantined until core promotion; SessionReport is the only claimed-successor ingress used.
-- [ ] Explicit crash, unexplained transport loss, and clean exit map to failed/stale/offline without generation mutation.
-- [ ] Production never instantiates SDK lifecycle; `AgentSessionRuntimeFixture` is fully offline/injected and a mutation consulting ambient credentials/catalog fails.
+- [x] Fresh generation `1` and continuation exact `N+1` come only from the accepted core claim; production contains no managed `current + 1` path.
+- [x] Both continuation Grant provenance records and the pending-replacement fence are carried/validated; adapter-local project authority cannot replace either core Grant.
+- [x] `require_resume` cannot terminate/launch from a memory-only or invalid session; explicit new context never reports `resumed`.
+- [x] Wrong cwd/path/id, incomplete tree, changed seal, old callback, or stale process/attachment token cannot stage success.
+- [x] Journal-before-launch and identity-after-handshake crash prefixes map to the exact shared effect disposition; ambiguity poisons and never auto-relaunches.
+- [x] Successor transcript/status output remains staged/quarantined until core promotion; SessionReport is the only claimed-successor ingress used.
+- [x] Explicit crash, unexplained transport loss, and clean exit map to failed/stale/offline without generation mutation.
+- [x] Production never instantiates SDK lifecycle; `AgentSessionRuntimeFixture` is fully offline/injected and a mutation consulting ambient credentials/catalog fails.
+
+## Implementation evidence
+
+- Production now launches one isolated `pi --mode rpc` process group through `ManagedPiRuntimePort`, performs the challenged control handshake, binds `RpcPiSession`, and classifies clean exit, conclusive crash, and unexplained transport loss without allocating a generation.
+- `ClaimAwareSpawnSupervisor` consumes the exact accepted claim and deployment authority, journals the claim/nonce and `launch_attempted` before the process port, quiesces and seals continuations, stages claimed successors, and opens callbacks/publication only after an exact `SpawnPromotionCommitted` delivery.
+- `FileSpawnEffectJournal` uses atomic fsync+rename records with owner-only files, monotonic phases, exact runtime correlation, and a single launch attempt. `RuntimeActionGate` serializes runtime actions and retains a poisoned replacement fence after ambiguity.
+- Generated contracts add the Pi-local redacted result/persistence vocabulary and an authority-bearing adapter promotion notification; the server routes promotion only to the promoted runtime's adapter.
+- The SDK substitute is explicitly named `AgentSessionRuntimeFixture` and requires injected offline model, auth/catalog marker, resource loader, session manager, and settings manager. The real-process E2E launches Pi offline and awaits process-group exit.
+- Verification (2026-08-12): `cargo fmt --all -- --check`; `cargo test --workspace`; `cargo clippy --workspace --all-targets -- -D warnings`; `cd pi-adapter && npm test` (80/80); `cd contracts/ts && npm run build && npm run check:vectors` (59 vectors, 29 implementation checks, 38 mutation witnesses); generated artifacts reproduced byte-for-byte with `npm run gen`; and `cd pi-adapter && npm run test:mutations` (6/6 killed).
 
 ## Ordering constraint
 

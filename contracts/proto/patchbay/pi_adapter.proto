@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package patchbay;
 
+import "patchbay/sessions.proto";
+
 // Generated Pi-local runtime vocabulary carried inside the generic opaque
 // AdapterCapability.adapter_profile envelope. Core validation is deliberately
 // limited to the outer envelope; the Pi adapter owns semantic decoding.
@@ -121,6 +123,22 @@ enum PiContinuationMode {
   PI_CONTINUATION_MODE_UNSPECIFIED = 0;
   PI_CONTINUATION_MODE_REQUIRE_RESUME = 1;
   PI_CONTINUATION_MODE_ALLOW_NEW_CONTEXT = 2;
+}
+
+// Redacted adapter-specific spawn result. The generic exact claim, execution
+// phase, external-effect disposition, successor SessionReport, and promotion
+// remain in their shared generated contracts. This payload carries only Pi's
+// bounded readiness proof and conditional persistence result.
+message PiSpawnResult {
+  ContinuationContextStatus continuation_context_status = 1;
+  PiSpawnPersistence persistence = 2;
+  string readiness_digest = 3;
+}
+
+enum PiSpawnPersistence {
+  PI_SPAWN_PERSISTENCE_UNSPECIFIED = 0;
+  PI_SPAWN_PERSISTENCE_MEMORY_ONLY = 1;
+  PI_SPAWN_PERSISTENCE_MATERIALIZED = 2;
 }
 
 // Typed Pi-local reconfiguration contract. Reloadable resources remain the
