@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test, { after } from "node:test";
 import { PiReloadableResourceKind } from "@patchbay/contracts";
 import type {
   ExtensionAPI,
@@ -19,6 +22,10 @@ import patchbayControlExtension, {
 const launchNonce = Buffer.alloc(32, 4).toString("base64url");
 const challenge = Buffer.alloc(32, 5).toString("base64url");
 const reloadNonce = Buffer.alloc(32, 6).toString("base64url");
+const contextRoots: string[] = [];
+after(() => {
+  for (const root of contextRoots) rmSync(root, { recursive: true, force: true });
+});
 
 test("extension handshake command appends bounded initialized context evidence", async () => {
   await withLaunchNonce(async () => {
@@ -26,7 +33,8 @@ test("extension handshake command appends bounded initialized context evidence",
     patchbayControlExtension(harness.api);
     const handler = harness.commands.get(PATCHBAY_CONTROL_HANDSHAKE_COMMAND);
     assert.ok(handler);
-    await handler(challenge, context([]));
+    const ctx = context([]);
+    await handler(challenge, ctx);
     assert.equal(harness.appended.length, 1);
     const entry = harness.appended[0];
     assert.equal(entry?.customType, PATCHBAY_CONTROL_HANDSHAKE_CUSTOM_TYPE);
@@ -36,7 +44,7 @@ test("extension handshake command appends bounded initialized context evidence",
       extensionEpoch: (entry?.data as { extensionEpoch: string }).extensionEpoch,
       cwd: process.cwd(),
       sessionId: "extension-session",
-      sessionFile: "/adapter-local/extension-session.jsonl",
+      sessionFile: ctx.sessionManager.getSessionFile(),
     });
     assert.match(
       (entry?.data as { extensionEpoch: string }).extensionEpoch,
@@ -92,6 +100,31 @@ test("reload markers are bounded and completion comes from a new extension epoch
   });
 });
 
+test("reload command refuses an in-memory-only request marker before ctx.reload", async () => {
+  await withLaunchNonce(async () => {
+    const harness = createExtensionHarness();
+    patchbayControlExtension(harness.api);
+    const handshake = harness.commands.get(PATCHBAY_CONTROL_HANDSHAKE_COMMAND);
+    const reload = harness.commands.get(PATCHBAY_CONTROL_RELOAD_COMMAND);
+    assert.ok(handshake);
+    assert.ok(reload);
+    const ctx = context([]);
+    await handshake(challenge, ctx);
+    const epoch = (harness.appended[0]?.data as { extensionEpoch: string }).extensionEpoch;
+    ctx.persistAppends = false;
+    await assert.rejects(
+      reload(encodeReloadArgument({
+        commandId: "operation-1",
+        nonce: reloadNonce,
+        priorExtensionEpoch: epoch,
+        resources: [PiReloadableResourceKind.EXTENSION_ENTRYPOINT],
+      }), ctx),
+      /not materialized/u,
+    );
+    assert.equal(ctx.reloadCalls, 0);
+  });
+});
+
 test("reload command rejects stale epochs, duplicate resources, and malformed payloads before effect", async () => {
   await withLaunchNonce(async () => {
     const harness = createExtensionHarness();
@@ -140,6 +173,7 @@ function createExtensionHarness(): {
   appended: Appended[];
 } {
   const commands = new Map<string, (args: string, ctx: ExtensionCommandContext) => Promise<void>>();
+  let activeContext: TestExtensionContext | undefined;
   const sessionStartHandlers: Array<
     (event: { type: "session_start"; reason: "reload" }, ctx: ExtensionContext) => Promise<void> | void
   > = [];
@@ -149,36 +183,92 @@ function createExtensionHarness(): {
       name: string,
       options: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> },
     ) {
-      commands.set(name, options.handler);
+      commands.set(name, async (args, ctx) => {
+        activeContext = ctx as TestExtensionContext;
+        try {
+          await options.handler(args, ctx);
+        } finally {
+          activeContext = undefined;
+        }
+      });
     },
     appendEntry(customType: string, data: unknown) {
       appended.push({ customType, data });
+      activeContext?.appendCustom(customType, data);
     },
     on(event: string, handler: unknown) {
       if (event === "session_start") {
-        sessionStartHandlers.push(
-          handler as (event: { type: "session_start"; reason: "reload" }, ctx: ExtensionContext) => Promise<void> | void,
-        );
+        const typed = handler as (
+          event: { type: "session_start"; reason: "reload" },
+          ctx: ExtensionContext,
+        ) => Promise<void> | void;
+        sessionStartHandlers.push(async (startEvent, ctx) => {
+          activeContext = ctx as TestExtensionContext;
+          try {
+            await typed(startEvent, ctx);
+          } finally {
+            activeContext = undefined;
+          }
+        });
       }
     },
   } as unknown as ExtensionAPI;
   return { api, commands, sessionStartHandlers, appended };
 }
 
-function context(entries: readonly SessionEntry[]): ExtensionCommandContext & { reloadCalls: number } {
+interface TestExtensionContext extends ExtensionCommandContext {
+  reloadCalls: number;
+  persistAppends: boolean;
+  appendCustom(customType: string, data: unknown): void;
+}
+
+function context(entries: readonly SessionEntry[]): TestExtensionContext {
+  const root = mkdtempSync(join(tmpdir(), "patchbay-control-extension-"));
+  contextRoots.push(root);
+  const sessionFile = join(root, "extension-session.jsonl");
+  const mutableEntries = [...entries];
+  let sequence = 0;
+  const persist = () => {
+    const header = {
+      type: "session",
+      version: 3,
+      id: "extension-session",
+      timestamp: "2026-08-12T00:00:00.000Z",
+      cwd: process.cwd(),
+    };
+    writeFileSync(
+      sessionFile,
+      `${[header, ...mutableEntries].map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+      { mode: 0o600 },
+    );
+  };
+  persist();
   const value = {
     cwd: process.cwd(),
     sessionManager: {
       getSessionId: () => "extension-session",
-      getSessionFile: () => "/adapter-local/extension-session.jsonl",
-      getEntries: () => [...entries],
+      getSessionFile: () => sessionFile,
+      getEntries: () => [...mutableEntries],
     },
     reloadCalls: 0,
+    persistAppends: true,
+    appendCustom(customType: string, data: unknown) {
+      sequence += 1;
+      mutableEntries.push({
+        type: "custom",
+        id: `control${sequence.toString().padStart(3, "0")}`,
+        parentId: mutableEntries.at(-1)?.id ?? null,
+        timestamp: new Date(Date.UTC(2026, 7, 12, 0, 0, sequence)).toISOString(),
+        customType,
+        data,
+      } as SessionEntry);
+      if (value.persistAppends) persist();
+    },
     async reload() {
       value.reloadCalls += 1;
     },
   };
-  return value as unknown as ExtensionCommandContext & { reloadCalls: number };
+  return value as unknown as TestExtensionContext;
 }
 
 function encodeReloadArgument(value: object): string {

@@ -13,6 +13,8 @@ import {
   type Operation,
   PayloadContentType,
   PayloadEnvelopeSchema,
+  PiReconfigureRequestSchema,
+  PiReloadableResourceKind,
   SessionActivityState,
   SessionConnectivityState,
 } from "@patchbay/contracts";
@@ -32,6 +34,7 @@ import {
   createOfflineModelRuntime,
 } from "./offline_agent_fixture.js";
 import { PiRpcTransportError } from "../src/rpc_client.js";
+import { PiReloadAmbiguousError, PiReloadRejectedError } from "../src/reload_controller.js";
 import { SessionRegistry } from "../src/session_registry.js";
 
 const encoder = new TextEncoder();
@@ -59,6 +62,31 @@ test("DeliveryTranslator maps instruct/cancel and rejects adapter-owned generati
     translator.deliver(operation(OperationKind.SPAWN), session),
     UnsupportedCommandError,
   );
+});
+
+test("DeliveryTranslator routes typed Pi reload through the bounded controller seam", async () => {
+  const seen: Operation[] = [];
+  const expected = { outcome: "rehydrated" };
+  const session = {} as PiSession;
+  const translator = new DeliveryTranslator(async (candidate, receivedSession) => {
+    seen.push(candidate);
+    assert.equal(receivedSession, session);
+    return expected;
+  });
+  const candidate = create(OperationSchema, {
+    kind: OperationKind.RECONFIGURE,
+    payload: create(PayloadEnvelopeSchema, {
+      contentType: PayloadContentType.PROTOBUF,
+      schemaRef: "patchbay.PiReconfigureRequest",
+      payload: toBinary(PiReconfigureRequestSchema, create(PiReconfigureRequestSchema, {
+        reloadResources: [PiReloadableResourceKind.EXTENSION_ENTRYPOINT],
+      })),
+    }),
+  });
+
+  assert.doesNotThrow(() => translator.validate(candidate));
+  assert.deepEqual(await translator.deliver(candidate, session), { value: expected });
+  assert.deepEqual(seen, [candidate]);
 });
 
 test("DeliveryTranslator preflight defers malformed payload errors to execution", async () => {
@@ -116,6 +144,16 @@ test("DeliveryTranslator resolves committed approval decisions and rejects reser
 });
 
 test("delivery classification preserves post-write RPC ambiguity and session axes", () => {
+  const busyReload = classifyDeliveryFailure(new PiReloadRejectedError("busy_streaming"));
+  assert.equal(busyReload.failureCode, FailureCode.DELIVERY_REJECTED);
+  assert.equal(busyReload.rejected, true);
+  assert.equal(busyReload.diagnostic, "pi_reload_busy_streaming");
+
+  const ambiguousReload = classifyDeliveryFailure(new PiReloadAmbiguousError());
+  assert.equal(ambiguousReload.failureCode, FailureCode.EXECUTION_OUTCOME_UNKNOWN);
+  assert.equal(ambiguousReload.connectivity, SessionConnectivityState.STALE);
+  assert.equal(ambiguousReload.rejected, false);
+
   const timeout = classifyDeliveryFailure(new PiRpcTransportError(
     "timeout",
     "secret raw timeout",

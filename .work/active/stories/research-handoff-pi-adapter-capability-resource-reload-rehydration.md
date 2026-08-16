@@ -1,7 +1,7 @@
 ---
 id: research-handoff-pi-adapter-capability-resource-reload-rehydration
 kind: story
-stage: implementing
+stage: review
 tags: [adapter, protocol]
 parent: research-handoff-pi-adapter-capability
 depends_on: [research-handoff-pi-adapter-capability-manifest-profile, research-handoff-pi-adapter-capability-control-session-integrity, research-handoff-pi-adapter-capability-rpc-process-supervisor, research-handoff-pi-adapter-capability-cursor-replay-resync]
@@ -9,7 +9,7 @@ release_binding: null
 gate_origin: null
 research_origin: v1-control-plane-and-spawn
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-08-16
 ---
 
 # Idle-only Pi entrypoint/resource reload and persisted rehydration
@@ -72,16 +72,35 @@ Failure before the request marker proves no reload effect. Loss after request/re
 
 ## Acceptance evidence
 
-- [ ] Streaming, compacting, queued, auto-retrying, direct-RPC-busy, stale-generation, and memory-only sessions reject before marker/effect.
-- [ ] The gate remains held from state/settled checks through command invocation, closing a new-delivery race.
-- [ ] Request and completion markers must both exist in the materialized raw/RPC-valid tree; in-memory markers cannot pass.
-- [ ] Old call-frame code performs no post-reload mutation; the new extension epoch supplies the completion/handshake.
-- [ ] Success requires re-handshake, re-subscription, and cursor reconciliation, not marker presence alone.
-- [ ] Extension entrypoint and enumerated resource changes can refresh; an arbitrary transitive dependency or Pi/runtime `/dist` change remains old until spawn continuation/process replacement.
-- [ ] Busy/unsupported scope is distinct from execution ambiguity and carries canonical retry guidance without a new core state.
-- [ ] Logical target, Pi session continuity identity, process, and generation remain unchanged.
-- [ ] Mutations invoking while streaming, allowing unmaterialized markers, broadening dependency scope, or completing on prompt/marker alone fail.
+- [x] Streaming, compacting, queued, auto-retrying, direct-RPC-busy, stale-generation, and memory-only sessions reject before marker/effect.
+- [x] The gate remains held from state/settled checks through command invocation, closing a new-delivery race.
+- [x] Request and completion markers must both exist in the materialized raw/RPC-valid tree; in-memory markers cannot pass.
+- [x] Old call-frame code performs no post-reload mutation; the new extension epoch supplies the completion/handshake.
+- [x] Success requires re-handshake, re-subscription, and cursor reconciliation, not marker presence alone.
+- [x] Extension entrypoint and enumerated resource changes can refresh; an arbitrary transitive dependency or Pi/runtime `/dist` change remains old until spawn continuation/process replacement.
+- [x] Busy/unsupported scope is distinct from execution ambiguity and carries canonical retry guidance without a new core state.
+- [x] Logical target, Pi session continuity identity, process, and generation remain unchanged.
+- [x] Mutations invoking while streaming, allowing unmaterialized markers, broadening dependency scope, or completing on prompt/marker alone fail.
 
 ## Ordering constraint
 
 Consumes the opaque Pi profile schema, strict control/materialization proof, shared runtime gate/supervisor, and authoritative reconciler. It adds no spawn-side contract or generation transition.
+
+## Implementation notes
+
+- Execution capability: `openai-codex/gpt-5.6-sol`; selected by the autopilot caller for the cross-file runtime/protocol boundary and mutation-sensitive safety work.
+- Review weight: `thorough` from the caller; this story is left at `stage: review` for the independent review loop.
+- Dispatch rationale: direct-read implementation in the delegated worker. The integration points were explicit and a child session cannot safely fan out under the harness recursion guard.
+- Files changed: `pi-adapter/extensions/patchbay-control.ts`; `pi-adapter/src/{reload_controller,runtime_action_gate,rpc_client,pi_session,delivery,main,entry_reconciler,spawn_supervisor}.ts`; focused Pi tests; `docs/{ADAPTER-PI,ARCHITECTURE}.md`; this story.
+- Tests added/extended: a new reload-controller suite covers idle success, every busy admission branch, check-to-command serialization, durable two-marker correlation, forgery/mismatch rejection, persisted post-effect recovery without a second reload, greater-epoch handshake, subscription rebind, cursor acknowledgement, unchanged process/generation, and process-replacement-only scope. A real offline `pi --mode rpc` test rewrites a TypeScript extension entrypoint and a native `.mjs` transitive dependency, proving reload observes the new entrypoint while the transitive dependency remains cached. Extension and delivery suites cover physical request persistence and typed routing/failure mapping.
+- Simplification: reused the one runtime action gate, existing strict session materialization validator, existing challenged handshake, and existing authoritative entry reconciler. No second lock, durability store, generation transition, or broad dependency-reload abstraction was added.
+- Discrepancies from design: no Protobuf edit or generation run was needed because Units 1–2 had already landed the exact `PiReconfigureRequest`/result, resource enums, and marker contracts. Reload is available only for managed entries carrying the logical-target and session-root evidence required by authoritative reconciliation; other entries reject before the marker rather than receiving a weaker path.
+- Judgment rationale: post-command loss first reconciles an already materialized matching request/completion pair and never invokes `ctx.reload()` again blindly. An unmatched or conflicting persisted marker keeps the session stale/unknown and returns execution ambiguity.
+- Verification evidence (2026-08-16):
+  - `cargo build --workspace --all-targets && cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings` — passed.
+  - `cd contracts/ts && npm run check:drift && npm run check:vectors && npm run check:models && npm run build` — passed; 59 vectors, 31 implementation checks, 38 registered mutation witnesses, and generated drift/model traceability clean.
+  - `cd operator-domain && npm run build && npm test` — passed, 32 tests.
+  - `cd pi-adapter && npm test` — passed, 119 tests, including the real-process entrypoint-versus-transitive-dependency reload boundary.
+  - `cd web-cockpit && npm test` — passed, 148 tests; `cd cli && npm test` — passed, 53 tests plus the real-core resource projection; `cd token-commune-adapter && npm test` — passed, 63 tests.
+- Mutation evidence: six temporary production mutants were each killed by a focused test and restored with `git restore`: streaming admission bypass; unmaterialized request accepted; one-marker success; old-epoch handshake accepted; transitive/runtime-dist scope admitted; and busy-path effect before rejection. The post-mutation tree and regenerated focused/full tests were clean.
+- Adjacent issues parked: none.

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { lstatSync, readFileSync } from "node:fs";
 import {
   PiReloadableResourceKind,
   type PiControlHandshakeMarker,
@@ -78,10 +79,22 @@ export default function patchbayControlExtension(pi: ExtensionAPI): void {
     description: "Reload the bounded Pi resource set under Patchbay control",
     handler: async (args, ctx) => {
       const request = parseReloadArgument(args, extensionEpoch);
+      const priorEntryIds = new Set(ctx.sessionManager.getEntries().map((entry) => entry.id));
       pi.appendEntry<PiReloadRequestMarkerData>(
         PATCHBAY_CONTROL_RELOAD_REQUEST_CUSTOM_TYPE,
         request,
       );
+      const appended = ctx.sessionManager.getEntries().filter(
+        (entry) =>
+          !priorEntryIds.has(entry.id)
+          && entry.type === "custom"
+          && entry.customType === PATCHBAY_CONTROL_RELOAD_REQUEST_CUSTOM_TYPE
+          && storedReloadRequestEquals(entry.data, request),
+      );
+      if (appended.length !== 1 || !appended[0]) {
+        throw new Error("Patchbay reload request marker was not appended exactly once");
+      }
+      requireMaterializedReloadRequest(ctx, appended[0].id, request);
       await ctx.reload();
       return;
     },
@@ -242,6 +255,60 @@ function parseStoredReloadRequest(value: unknown): PiReloadRequestMarkerData | u
     priorExtensionEpoch: value.priorExtensionEpoch,
     resources: value.resources as PiReloadableResourceKind[],
   };
+}
+
+function requireMaterializedReloadRequest(
+  ctx: ExtensionCommandContext,
+  entryId: string,
+  request: PiReloadRequestMarkerData,
+): void {
+  const sessionFile = requireBoundedText(
+    ctx.sessionManager.getSessionFile(),
+    MAX_LOCAL_PATH_BYTES,
+    "session file",
+  );
+  try {
+    const stats = lstatSync(sessionFile);
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.size <= 0 || stats.size > 64 * 1_024 * 1_024) {
+      throw new Error("invalid materialization");
+    }
+    const bytes = readFileSync(sessionFile);
+    if (bytes.at(-1) !== 0x0a) throw new Error("invalid framing");
+    const matches = bytes
+      .toString("utf8")
+      .trimEnd()
+      .split("\n")
+      .flatMap((line) => {
+        try {
+          const value: unknown = JSON.parse(line);
+          return isRecord(value)
+            && value.type === "custom"
+            && value.id === entryId
+            && value.customType === PATCHBAY_CONTROL_RELOAD_REQUEST_CUSTOM_TYPE
+            && storedReloadRequestEquals(value.data, request)
+            ? [value]
+            : [];
+        } catch {
+          return [];
+        }
+      });
+    if (matches.length !== 1) throw new Error("missing durable request");
+  } catch {
+    throw new Error("Patchbay reload request marker is not materialized");
+  }
+}
+
+function storedReloadRequestEquals(
+  value: unknown,
+  expected: PiReloadRequestMarkerData,
+): boolean {
+  const parsed = parseStoredReloadRequest(value);
+  return parsed !== undefined
+    && parsed.commandId === expected.commandId
+    && parsed.nonce === expected.nonce
+    && parsed.priorExtensionEpoch === expected.priorExtensionEpoch
+    && parsed.resources.length === expected.resources.length
+    && parsed.resources.every((resource, index) => resource === expected.resources[index]);
 }
 
 function requireBoundedBase64Url(

@@ -153,6 +153,10 @@ export class PiRpcClient {
     return this.#extensionErrors;
   }
 
+  get pendingRequestCount(): number {
+    return this.#pending.size;
+  }
+
   /** Adapter-local only. Never place this value in core diagnostics/evidence. */
   stderrSnapshot(): string {
     return this.#stderr.toString("utf8");

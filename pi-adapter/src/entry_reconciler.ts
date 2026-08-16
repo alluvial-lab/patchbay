@@ -189,6 +189,17 @@ export class PiEntryReconciler {
     return staged;
   }
 
+  /** Reload stays in-generation but must re-enter through durable materialization. */
+  async reconcileAfterReload(
+    runtime: RuntimeGenerationRef,
+    evidence: PiCursorReconciliationEvidence,
+  ): Promise<PiStagedCursorPublication> {
+    if (evidence.materialization.kind !== "materialized") {
+      throw new Error("Pi reload reconciliation requires a materialized session");
+    }
+    return this.reconcileCurrent(runtime, evidence);
+  }
+
   /** Publish only after the caller has consumed SpawnPromotionCommitted. */
   async publishAfterPromotion(staged: PiStagedCursorPublication): Promise<void> {
     validateStagedPublication(staged);

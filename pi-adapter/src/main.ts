@@ -48,6 +48,11 @@ import { composeAdapterDiagnostics, CoreDiagnosticsForwarder } from "./core_diag
 import { RpcPiSession, type PiSession } from "./pi_session.js";
 import { PiRpcTransportError } from "./rpc_client.js";
 import {
+  PiReloadAmbiguousError,
+  PiReloadController,
+  PiReloadRejectedError,
+} from "./reload_controller.js";
+import {
   buildPiRpcArgv,
   RpcManagedPiRuntimePort,
   type ManagedPiRuntimePort,
@@ -119,8 +124,9 @@ export class AdapterProcess {
   readonly #options: AdapterProcessOptions;
   readonly #core: PatchbayCoreClient;
   readonly #registry = new SessionRegistry();
-  readonly #translator = new DeliveryTranslator();
+  readonly #translator: DeliveryTranslator;
   readonly #activeCommands = new Map<string, { readonly commandId: string; readonly operation: Operation }>();
+  readonly #inFlightDeliveries = new Map<string, number>();
   readonly #replacementResolvedCommands = new Set<string>();
   readonly #runtimePort: ManagedPiRuntimePort;
   readonly #entryReconciler: PiEntryReconciler;
@@ -161,6 +167,9 @@ export class AdapterProcess {
       this.#core.setDiagnostics(this.#diagnostics);
     }
     this.#runtimePort = options.managedRuntimePort ?? new RpcManagedPiRuntimePort();
+    this.#translator = new DeliveryTranslator(
+      (operation, session) => this.#reloadEnumeratedResources(operation, session),
+    );
     this.#entryReconciler = new PiEntryReconciler(
       new FilePiCursorStore(
         options.cursorStoreDirectory ?? resolve(process.cwd(), ".patchbay", "pi-cursors"),
@@ -379,7 +388,7 @@ export class AdapterProcess {
       launchNonce,
     });
     try {
-      await this.#runtimePort.handshake(runtime, {
+      const handshake = await this.#runtimePort.handshake(runtime, {
         expectedProjectCwd: configured.cwd,
         expectedExtensionPath: controlExtensionPath,
       });
@@ -390,6 +399,8 @@ export class AdapterProcess {
         runtimePort: this.#runtimePort,
         actionGate: this.#registry.gateFor(configured.runtimeSessionId),
         publication: "current",
+        initialControlHandshake: handshake,
+        controlExtensionPath,
       });
     } catch (error) {
       await this.#runtimePort.terminate(runtime).catch(() => undefined);
@@ -686,6 +697,10 @@ export class AdapterProcess {
     if (operation.kind === OperationKind.INSTRUCT) {
       await this.#queueSessionReport(entry, SessionActivityState.WORKING);
     }
+    this.#inFlightDeliveries.set(
+      entry.runtimeSessionId,
+      (this.#inFlightDeliveries.get(entry.runtimeSessionId) ?? 0) + 1,
+    );
     return { completion: this.#executeDelivery(operation, entry) };
   }
 
@@ -739,7 +754,57 @@ export class AdapterProcess {
         this.#activeCommands.delete(entry.runtimeSessionId);
       }
       if (commandId) this.#replacementResolvedCommands.delete(commandId);
+      const remaining = (this.#inFlightDeliveries.get(entry.runtimeSessionId) ?? 1) - 1;
+      if (remaining <= 0) this.#inFlightDeliveries.delete(entry.runtimeSessionId);
+      else this.#inFlightDeliveries.set(entry.runtimeSessionId, remaining);
     }
+  }
+
+  async #reloadEnumeratedResources(operation: Operation, session: PiSession): Promise<unknown> {
+    if (!(session instanceof RpcPiSession)) {
+      throw new UnsupportedCommandError("Pi resource reload requires a managed RPC runtime");
+    }
+    const entry = this.#registry.resolve(session.runtimeSessionId);
+    if (
+      !entry
+      || entry.session !== session
+      || !entry.logicalTargetId
+      || !entry.sessionRoot
+    ) {
+      throw new PiReloadRejectedError("materialization_required");
+    }
+    const runtime = session.runtimeForReload();
+    const runtimeReference = create(RuntimeGenerationRefSchema, {
+      logicalTargetId: create(LogicalTargetIdSchema, { value: entry.logicalTargetId }),
+      externalRuntime: create(ExternalRuntimeRefSchema, {
+        adapterId: create(AdapterIdSchema, { value: this.#options.adapterId }),
+        deploymentScope: entry.deploymentScope,
+        runtimeSessionId: create(RuntimeSessionIdSchema, { value: entry.runtimeSessionId }),
+        generation: create(GenerationSchema, { value: BigInt(entry.session.generation) }),
+      }),
+    });
+    const controller = new PiReloadController({
+      session,
+      runtimePort: this.#runtimePort,
+      reconciler: this.#entryReconciler,
+      runtimeReference,
+      logicalTargetId: entry.logicalTargetId,
+      configuredSessionRoot: entry.sessionRoot,
+      expectedProjectCwd: entry.cwd,
+      hasConflictingDelivery: () =>
+        (this.#inFlightDeliveries.get(entry.runtimeSessionId) ?? 0) !== 1,
+      markRehydrating: () => this.#queueSessionReport(
+        entry,
+        SessionActivityState.UNKNOWN,
+        SessionConnectivityState.STALE,
+      ),
+      markRehydrated: () => this.#queueSessionReport(
+        entry,
+        SessionActivityState.IDLE,
+        SessionConnectivityState.LIVE,
+      ),
+    });
+    return controller.reloadEnumeratedResources(operation, runtime);
   }
 
   #validateTarget(
@@ -1025,6 +1090,21 @@ export function classifyDeliveryFailure(error: unknown): DeliveryFailureClassifi
       failureCode: FailureCode.UNSUPPORTED_COMMAND,
       diagnostic: "unsupported_command",
       rejected: true,
+    };
+  }
+  if (error instanceof PiReloadRejectedError) {
+    return {
+      failureCode: error.failureCode,
+      diagnostic: error.diagnostic,
+      rejected: true,
+    };
+  }
+  if (error instanceof PiReloadAmbiguousError) {
+    return {
+      failureCode: error.failureCode,
+      diagnostic: error.diagnostic,
+      rejected: false,
+      connectivity: SessionConnectivityState.STALE,
     };
   }
   if (error instanceof PiRpcTransportError) {

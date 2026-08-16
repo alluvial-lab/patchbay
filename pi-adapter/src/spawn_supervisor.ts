@@ -582,6 +582,7 @@ export class ClaimAwareSpawnSupervisor {
         expectedProjectCwd: validated.target.cwd,
         expectedExtensionPath: validated.target.controlExtensionPath,
       });
+      successor.installControlHandshake(handshake, validated.target.controlExtensionPath);
       if (handshake.sessionId !== successor.runtimeSessionId) {
         throw new SpawnSupervisorError("successor handshake session id mismatched", FailureCode.EXECUTION_FAILED, true);
       }

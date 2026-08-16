@@ -1,3 +1,5 @@
+import type { PiRpcRuntime } from "./pi_process.js";
+
 export type RuntimeActionKind =
   | "delivery"
   | "query"
@@ -22,6 +24,32 @@ export class RuntimeActionGateError extends Error {
   }
 }
 
+export type RuntimeActionBusyReason = "direct_rpc_busy";
+
+export class RuntimeActionBusyError extends Error {
+  readonly reason: RuntimeActionBusyReason;
+
+  constructor(reason: RuntimeActionBusyReason) {
+    super("runtime action gate is busy");
+    this.name = "RuntimeActionBusyError";
+    this.reason = reason;
+  }
+}
+
+export interface SettledRuntimeSnapshot {
+  readonly pid: number;
+  readonly processToken: string;
+  readonly sessionId: string;
+  readonly sessionFile: string;
+  readonly isStreaming: boolean;
+  readonly isCompacting: boolean;
+  readonly pendingMessageCount: number;
+  readonly lastActivityStartEpoch: number;
+  readonly lastAgentSettledEpoch: number;
+  readonly noActivityStarted: boolean;
+  readonly settledAfterLatestActivity: boolean;
+}
+
 interface FenceState {
   readonly claimOperationId: string;
   readonly poisoned: boolean;
@@ -40,6 +68,10 @@ export class RuntimeActionGate {
   #fence: FenceState | undefined;
   #activeTargetLock: symbol | undefined;
   #activeLease: symbol | undefined;
+  #actionReservations = 0;
+  #activityEventEpoch = 0;
+  #lastActivityStartEpoch = 0;
+  #lastAgentSettledEpoch = 0;
 
   get fencedClaimOperationId(): string | undefined {
     return this.#fence?.claimOperationId;
@@ -51,12 +83,56 @@ export class RuntimeActionGate {
 
   async runAction<T>(kind: RuntimeActionKind, action: () => Promise<T>): Promise<T> {
     if (this.#fence) throw new RuntimeActionFencedError();
+    this.#actionReservations += 1;
     const release = await this.#acquireAction();
     try {
       if (this.#fence) throw new RuntimeActionFencedError();
       if (!kind) throw new RuntimeActionGateError("runtime action kind must not be empty");
       return await action();
     } finally {
+      this.#actionReservations -= 1;
+      release();
+    }
+  }
+
+  noteActivityStart(): void {
+    this.#activityEventEpoch += 1;
+    this.#lastActivityStartEpoch = this.#activityEventEpoch;
+  }
+
+  noteAgentSettled(): void {
+    this.#activityEventEpoch += 1;
+    this.#lastAgentSettledEpoch = this.#activityEventEpoch;
+  }
+
+  /**
+   * Fail-fast ownership for reload admission. Unlike ordinary actions, reload
+   * never waits behind existing RPC work and then acts on a later idle moment.
+   * Once admitted, later actions serialize behind this owner through command
+   * invocation and all rehydration work.
+   */
+  async withExclusiveCurrent<T>(
+    runtime: PiRpcRuntime,
+    action: (snapshot: SettledRuntimeSnapshot) => Promise<T>,
+  ): Promise<T> {
+    if (this.#fence) throw new RuntimeActionFencedError();
+    if (this.#actionReservations !== 0 || runtime.rpc.pendingRequestCount !== 0) {
+      throw new RuntimeActionBusyError("direct_rpc_busy");
+    }
+    this.#actionReservations += 1;
+    const release = await this.#acquireAction();
+    try {
+      if (this.#fence) throw new RuntimeActionFencedError();
+      if (runtime.rpc.pendingRequestCount !== 0) {
+        throw new RuntimeActionBusyError("direct_rpc_busy");
+      }
+      const state = await runtime.rpc.request<Record<string, unknown>>({ type: "get_state" });
+      if (runtime.rpc.pendingRequestCount !== 0) {
+        throw new RuntimeActionGateError("exclusive get_state left an outstanding RPC request");
+      }
+      return await action(this.#settledSnapshot(runtime, state));
+    } finally {
+      this.#actionReservations -= 1;
       release();
     }
   }
@@ -183,6 +259,32 @@ export class RuntimeActionGate {
     releaseTarget();
   }
 
+  #settledSnapshot(
+    runtime: PiRpcRuntime,
+    state: Readonly<Record<string, unknown>>,
+  ): SettledRuntimeSnapshot {
+    const sessionId = boundedStateString(state["sessionId"]);
+    const sessionFile = boundedStateString(state["sessionFile"]);
+    const isStreaming = booleanStateField(state, "isStreaming");
+    const isCompacting = booleanStateField(state, "isCompacting");
+    const pendingMessageCount = nonnegativeStateInteger(state["pendingMessageCount"]);
+    return Object.freeze({
+      pid: runtime.pid,
+      processToken: runtime.processToken,
+      sessionId,
+      sessionFile,
+      isStreaming,
+      isCompacting,
+      pendingMessageCount,
+      lastActivityStartEpoch: this.#lastActivityStartEpoch,
+      lastAgentSettledEpoch: this.#lastAgentSettledEpoch,
+      noActivityStarted: this.#lastActivityStartEpoch === 0,
+      settledAfterLatestActivity:
+        this.#lastActivityStartEpoch === 0
+        || this.#lastAgentSettledEpoch > this.#lastActivityStartEpoch,
+    });
+  }
+
   #acquireAction(): Promise<() => void> {
     return acquireTail(
       () => this.#actionTail,
@@ -297,4 +399,25 @@ async function acquireTail(
 
 function isBoundedId(value: string): boolean {
   return value.length > 0 && value.length <= 1_024 && !value.includes("\0");
+}
+
+function boundedStateString(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 4_096 || value.includes("\0")) {
+    throw new RuntimeActionGateError("exclusive get_state identity is malformed");
+  }
+  return value;
+}
+
+function booleanStateField(value: Readonly<Record<string, unknown>>, field: string): boolean {
+  if (typeof value[field] !== "boolean") {
+    throw new RuntimeActionGateError(`exclusive get_state ${field} is malformed`);
+  }
+  return value[field];
+}
+
+function nonnegativeStateInteger(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new RuntimeActionGateError("exclusive get_state pendingMessageCount is malformed");
+  }
+  return value as number;
 }

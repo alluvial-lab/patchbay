@@ -7,6 +7,7 @@ import {
   type Operation,
 } from "@patchbay/contracts";
 import type { PiSession } from "./pi_session.js";
+import { isPiReloadRequest } from "./reload_controller.js";
 
 const decoder = new TextDecoder();
 
@@ -18,8 +19,19 @@ export interface DeliveryOutcome {
   value?: unknown;
 }
 
+export type PiReloadDelivery = (
+  operation: Operation,
+  session: PiSession,
+) => Promise<unknown>;
+
 /** Single registry-derived OperationKind dispatch point for Pi actions. */
 export class DeliveryTranslator {
+  readonly #reload: PiReloadDelivery | undefined;
+
+  constructor(reload?: PiReloadDelivery) {
+    this.#reload = reload;
+  }
+
   /** Reject only semantic unsupported decisions before reporting execution running. */
   validate(operation: Operation): void {
     try {
@@ -34,6 +46,7 @@ export class DeliveryTranslator {
           throw new UnsupportedCommandError(`unknown Pi query action: ${String(action)}`);
         }
         case OperationKind.RECONFIGURE: {
+          if (isPiReloadRequest(operation)) return;
           const action = stringField(objectPayload(operation), "action");
           if (action === "model" || action === "thinking") return;
           throw new UnsupportedCommandError(`unknown Pi reconfigure action: ${action}`);
@@ -78,8 +91,7 @@ export class DeliveryTranslator {
       case OperationKind.QUERY:
         return { value: await this.#query(operation, session) };
       case OperationKind.RECONFIGURE:
-        await this.#reconfigure(operation, session);
-        return {};
+        return { value: await this.#reconfigure(operation, session) };
       case OperationKind.SESSION_MANAGEMENT:
         return this.#manageSession(operation, session);
       case OperationKind.SPAWN:
@@ -124,7 +136,11 @@ export class DeliveryTranslator {
     }
   }
 
-  async #reconfigure(operation: Operation, session: PiSession): Promise<void> {
+  async #reconfigure(operation: Operation, session: PiSession): Promise<unknown> {
+    if (isPiReloadRequest(operation)) {
+      if (!this.#reload) throw new UnsupportedCommandError("Pi resource reload is not configured");
+      return this.#reload(operation, session);
+    }
     const payload = objectPayload(operation);
     const action = stringField(payload, "action");
     if (action === "model") {

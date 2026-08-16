@@ -14,6 +14,7 @@ import {
   projectAgentEvent,
   projectSessionEntries,
 } from "./transcript_projection.js";
+import type { PiControlHandshake } from "./control_handshake.js";
 import type { ManagedPiRuntimePort, PiRpcRuntime, ProcessExit } from "./pi_process.js";
 import { PiRpcCommandError, type PiRpcEvent, type PiRpcTransportError } from "./rpc_client.js";
 import {
@@ -112,6 +113,8 @@ export interface RpcPiSessionOptions {
   readonly runtimePort: ManagedPiRuntimePort;
   readonly actionGate: RuntimeActionGate;
   readonly publication: "current" | "claimed_successor";
+  readonly initialControlHandshake?: PiControlHandshake;
+  readonly controlExtensionPath?: string;
 }
 
 /** Production Pi session: a process-token-fenced view over one RPC child. */
@@ -143,8 +146,10 @@ export class RpcPiSession implements PiSession {
   #disposed = false;
   #terminalLifecycle: SessionLifecycleEvent | undefined;
   #state: PiSessionState;
-  #unsubscribeEvent: () => void;
-  #unsubscribeFailure: () => void;
+  #controlHandshake: PiControlHandshake | undefined;
+  #controlExtensionPath: string | undefined;
+  #unsubscribeEvent: () => void = () => undefined;
+  #unsubscribeFailure: () => void = () => undefined;
 
   private constructor(
     options: RpcPiSessionOptions & { readonly runtimeSessionId: string },
@@ -158,16 +163,14 @@ export class RpcPiSession implements PiSession {
     this.#runtimePort = options.runtimePort;
     this.#publication = options.publication;
     this.#state = initialState;
+    if ((options.initialControlHandshake === undefined) !== (options.controlExtensionPath === undefined)) {
+      throw new Error("Pi reload control context is incomplete");
+    }
+    this.#controlHandshake = options.initialControlHandshake;
+    this.#controlExtensionPath = options.controlExtensionPath;
+    if (!initialState.idle) this.actionGate.noteActivityStart();
+    this.#bindRuntimeSubscriptions();
     const processToken = options.runtime.processToken;
-    this.#unsubscribeEvent = options.runtime.rpc.onEvent((event) => {
-      if (this.#isCurrentProcess(processToken)) this.#handleRpcEvent(event);
-    });
-    this.#unsubscribeFailure = options.runtime.onTransportFailure((error) => {
-      if (!this.#isCurrentProcess(processToken)) return;
-      const event: SessionLifecycleEvent = { kind: "transport_loss", error };
-      this.#terminalLifecycle = event;
-      for (const listener of this.#lifecycleListeners) listener(event);
-    });
     void options.runtime.exit.then((exit) => {
       if (!this.#isCurrentProcess(processToken)) return;
       const event: SessionLifecycleEvent = { kind: "process_exit", exit };
@@ -403,6 +406,46 @@ export class RpcPiSession implements PiSession {
     return this.#runtime;
   }
 
+  runtimeForReload(): PiRpcRuntime {
+    if (this.#disposed) throw new Error("Pi session is disposed");
+    return this.#runtime;
+  }
+
+  controlContextForReload(): {
+    readonly handshake: PiControlHandshake;
+    readonly extensionPath: string;
+  } {
+    if (!this.#controlHandshake || !this.#controlExtensionPath) {
+      throw new Error("Pi session has no current reload control context");
+    }
+    return Object.freeze({
+      handshake: this.#controlHandshake,
+      extensionPath: this.#controlExtensionPath,
+    });
+  }
+
+  installControlHandshake(handshake: PiControlHandshake, extensionPath?: string): void {
+    if (
+      handshake.sessionId !== this.#state.piSessionId
+      || handshake.sessionFile !== this.#state.sessionFile
+    ) {
+      throw new Error("Pi control handshake differs from the bound runtime session");
+    }
+    const resolvedPath = extensionPath ?? this.#controlExtensionPath;
+    if (!resolvedPath) throw new Error("Pi control extension path is unavailable");
+    this.#controlHandshake = Object.freeze({ ...handshake });
+    this.#controlExtensionPath = resolvedPath;
+  }
+
+  rebindAfterReload(processToken: string): void {
+    if (!this.#isCurrentProcess(processToken)) {
+      throw new Error("Pi reload subscription rebind targeted a stale process");
+    }
+    this.#unsubscribeEvent();
+    this.#unsubscribeFailure();
+    this.#bindRuntimeSubscriptions();
+  }
+
   async #request<T = unknown>(
     command: Record<string, unknown> & { readonly type: string },
     kind: RuntimeActionKind,
@@ -412,8 +455,22 @@ export class RpcPiSession implements PiSession {
     return rpcRequest(this.#runtime, command, lease, this.actionGate, kind);
   }
 
+  #bindRuntimeSubscriptions(): void {
+    const processToken = this.#runtime.processToken;
+    this.#unsubscribeEvent = this.#runtime.rpc.onEvent((event) => {
+      if (this.#isCurrentProcess(processToken)) this.#handleRpcEvent(event);
+    });
+    this.#unsubscribeFailure = this.#runtime.onTransportFailure((error) => {
+      if (!this.#isCurrentProcess(processToken)) return;
+      const event: SessionLifecycleEvent = { kind: "transport_loss", error };
+      this.#terminalLifecycle = event;
+      for (const listener of this.#lifecycleListeners) listener(event);
+    });
+  }
+
   #handleRpcEvent(event: PiRpcEvent): void {
     if (event.type === "agent_start" || event.type === "compaction_start" || event.type === "auto_retry_start") {
+      this.actionGate.noteActivityStart();
       this.#activityEpoch += 1;
       this.#state = Object.freeze({
         ...this.#state,
@@ -423,6 +480,7 @@ export class RpcPiSession implements PiSession {
       });
     }
     if (event.type === "agent_settled") {
+      this.actionGate.noteAgentSettled();
       this.#settledEpoch = this.#activityEpoch;
       this.#state = Object.freeze({
         ...this.#state,
