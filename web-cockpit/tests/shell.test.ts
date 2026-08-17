@@ -1385,3 +1385,22 @@ test("timeline activity indicator is absent when the session is tombstoned", () 
   });
   assert.equal(detail.element.querySelector(".timeline-activity"), null);
 });
+
+test("empty-session renders do not repeatedly fire selection-change diagnostics", async () => {
+  const dom = new JSDOM();
+  const model = withSessions();
+  let fired = 0;
+  const shell = createCockpitShell(dom.window.document, model, {
+    markdown: createMarkdownRenderer(dom.window as unknown as Window),
+    isMobile: () => false,
+    onSelectionChange() {
+      fired += 1;
+    },
+  });
+  dom.window.document.body.append(shell.element);
+  // Re-render the same empty model several times: the initial (empty)
+  // selection must latch exactly once, not re-arm per render.
+  for (let index = 0; index < 5; index += 1) shell.update(model);
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+  assert.equal(fired, 1);
+});
