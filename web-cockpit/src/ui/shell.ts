@@ -99,6 +99,7 @@ export function createCockpitShell(
   let detail!: SessionDetailComponent;
   let resourceDestination!: ResourceDestinationComponent;
   let observedSelectedKey: string | undefined;
+  let observedSelectionSeen = false;
   let observedConnectivity: SessionConnectivityState | undefined;
   const isMobile = options.isMobile ?? (() => document.defaultView?.matchMedia?.("(max-width: 760px)").matches ?? false);
   const settingsBackgroundInert = new Map<HTMLElement, boolean>();
@@ -240,19 +241,29 @@ export function createCockpitShell(
     // Reconciliation completion is delivered by Reconciler directly to the
     // diagnostics controller. Shell renders are intentionally not used as a
     // lifecycle edge because intermediate unreconciled models may not render.
-    const reason = observedSelectedKey === undefined
+    // The empty-selection case must latch: an observed `undefined` identity
+    // written back as undefined would re-arm "initial" on every render and
+    // loop a no-session browser through QueryDiagnostics forever. Only an
+    // actual transition (identity appear/disappear/change or connectivity
+    // change) emits a reason.
+    const observedSelection = observedSelectedKey ?? (observedSelectionSeen ? NULL_SELECTION : undefined);
+    const nextSelection = selectedIdentity ?? NULL_SELECTION;
+    const reason = observedSelection === undefined
       ? "initial"
-      : observedSelectedKey !== selectedIdentity
+      : observedSelection !== nextSelection
         ? "selection"
         : observedConnectivity !== selected?.connectivity
           ? "connectivity"
           : undefined;
+    observedSelectionSeen = true;
     observedSelectedKey = selectedIdentity;
     observedConnectivity = selected?.connectivity;
     if (reason) queueMicrotask(() => options.onSelectionChange?.(selected, reason));
   }
 
-  function isNearBottom(el: HTMLElement): boolean {
+  const NULL_SELECTION = "<no-selection>";
+
+function isNearBottom(el: HTMLElement): boolean {
     return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   }
 
