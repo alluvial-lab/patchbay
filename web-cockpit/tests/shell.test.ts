@@ -308,7 +308,9 @@ test("desktop shell is two-pane and rows lead with identity before label metadat
   assert.equal(shell.element.dataset.layout, "two-pane");
   assert.equal(shell.element.querySelector<HTMLElement>(".sidebar")!.hidden, false);
   assert.equal(shell.element.querySelector<HTMLElement>(".main")!.hidden, false);
-  assert.equal(shell.detail.header.hidden, true);
+  // Desktop keeps the detail header visible: it carries identity, restart,
+  // and adapter status. Only the mobile back affordance is hidden.
+  assert.equal(shell.detail.header.hidden, false);
   const sessionList = shell.element.querySelector<HTMLElement>(".session-list")!;
   const rows = [...sessionList.querySelectorAll<HTMLButtonElement>(".session-row")];
   assert.equal(sessionList.localName, "ul");
@@ -762,7 +764,9 @@ test("mobile drill-in swaps containers around the same detail component", () => 
   assert.equal(shell.element.dataset.layout, "two-pane");
   assert.equal(sidebar().hidden, false);
   assert.equal(main().hidden, false);
-  assert.equal(shell.detail.header.hidden, true);
+  // Desktop keeps the detail header (identity/restart/adapter status);
+  // only the back affordance hides outside mobile drill-in.
+  assert.equal(shell.detail.header.hidden, false);
 });
 
 test("identity-before-submission holds across generated incomplete and superseded targets", async () => {

@@ -146,7 +146,14 @@ export function renderSessionDetail(
     sendButton: send,
     input,
     setMobile(mobile) {
-      header.hidden = !mobile;
+      // The detail header carries session identity, restart, and adapter
+      // status. It must stay visible on desktop too — hiding it (the old
+      // mobile drill-in behavior) made the restart action unreachable in the
+      // two-pane layout (live UAT 2026-08-17). Only the back button is a
+      // mobile-navigation affordance.
+      header.hidden = false;
+      const back = header.querySelector<HTMLButtonElement>(".btn--sm.btn-ghost");
+      if (back) back.hidden = !mobile;
       detail.dataset.presentation = mobile ? "mobile-drill-in" : "desktop-two-pane";
     },
   };

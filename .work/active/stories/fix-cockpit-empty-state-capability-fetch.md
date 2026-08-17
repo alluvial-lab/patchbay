@@ -131,3 +131,16 @@ startup/reconciliation refresh makes the focused test fail with zero queries.
 - Review weight: `standard` (project default). This standalone story remains at
   `stage: review` for the orchestrator's bounded review and operator UAT.
 - Adjacent issues parked: none.
+
+## Follow-up fixes (same UAT session, 2026-08-17)
+
+- **Layout stacking (bug #9):** `.session-detail`/`.resources-view` set their
+  own `display`, overriding the `hidden` attribute — sessions screen rendered
+  session chat + resources + planned views stacked in one pane. Fixed with the
+  global `.cockpit [hidden] { display: none !important; }` invariant in
+  shell.css. Live-verified: sessions shows only the detail; Git shows only the
+  planned view.
+- **Invisible restart (bug #8):** the detail header (restart's only home) was
+  `hidden = !mobile` — unreachable on desktop. Header now stays visible on
+  both layouts; only the back affordance hides outside mobile. Live-verified:
+  restart renders 34x34, enabled.
