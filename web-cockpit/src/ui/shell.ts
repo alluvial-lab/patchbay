@@ -126,7 +126,14 @@ export function createCockpitShell(
     const content = document.createElement("div");
     content.className = "cockpit__content";
     content.dataset.mobileBottomNavReserve = "bottom-tabs";
-    const rail = renderRail(document, destination, settingsOpen, (next, source) => selectDestination(next, source));
+    const resourcesAvailable = resourceDestinationAvailability(model);
+    const rail = renderRail(
+      document,
+      destination,
+      settingsOpen,
+      resourcesAvailable,
+      (next, source) => selectDestination(next, source),
+    );
     const sidebar = renderSidebar(
       document,
       model,
@@ -198,7 +205,13 @@ export function createCockpitShell(
     if (model.lockdown.active) root.append(renderLockdownBanner(document, model));
     root.append(
       content,
-      renderBottomTabs(document, destination, settingsOpen, (next, source) => selectDestination(next, source)),
+      renderBottomTabs(
+        document,
+        destination,
+        settingsOpen,
+        resourcesAvailable,
+        (next, source) => selectDestination(next, source),
+      ),
     );
     root.append(
       renderOverflowMenu(document, destination, settingsOpen, (next, source) => selectDestination(next, source)),
@@ -298,6 +311,7 @@ function isNearBottom(el: HTMLElement): boolean {
 
   function selectDestination(next: CockpitDestination, source?: NavigationSource): void {
     root.classList.remove("more-open");
+    if (next === "resources" && resourceDestinationAvailability(model) === false) return;
     if (next === "settings") {
       settingsOpenerSource = source ?? (isMobile() ? "overflow" : "rail");
       settingsOpen = true;
@@ -359,6 +373,10 @@ function isNearBottom(el: HTMLElement): boolean {
     },
     update(nextModel) {
       model = nextModel;
+      if (destination === "resources" && resourceDestinationAvailability(model) === false) {
+        destination = "sessions";
+        mobileResourceDetailOpen = false;
+      }
       if (!selectedKey || !model.sessions.has(selectedKey)) selectedKey = preferredSessionKey(model);
       if (!selectedResourceKey || !model.resources.has(selectedResourceKey)) {
         selectedResourceKey = preferredResourceKey(model);
@@ -391,6 +409,7 @@ function renderRail(
   document: Document,
   selected: CockpitDestination,
   settingsOpen: boolean,
+  resourcesAvailable: boolean | undefined,
   onSelect: (destination: CockpitDestination, source: NavigationSource) => void,
 ): HTMLElement {
   const rail = document.createElement("aside");
@@ -403,8 +422,13 @@ function renderRail(
     button.type = "button";
     button.className = "btn btn-ghost destination";
     button.dataset.destination = destination;
-    button.setAttribute("aria-label", capitalize(destination));
-    button.dataset.tip = capitalize(destination);
+    const unavailableResources = destination === "resources" && resourcesAvailable === false;
+    const label = unavailableResources
+      ? "Resources unavailable — no operational-resource adapter is attached"
+      : capitalize(destination);
+    button.disabled = unavailableResources;
+    button.setAttribute("aria-label", label);
+    button.dataset.tip = label;
     if (selected === destination && !settingsOpen) button.setAttribute("aria-current", "page");
     if (destination === "settings") button.setAttribute("aria-expanded", String(settingsOpen));
     button.append(renderIcon(document, DESTINATION_ICONS[destination]), textElement(document, "span", "destination__label", capitalize(destination)));
@@ -419,6 +443,7 @@ function renderBottomTabs(
   document: Document,
   selected: CockpitDestination,
   settingsOpen: boolean,
+  resourcesAvailable: boolean | undefined,
   onSelect: (destination: CockpitDestination, source: NavigationSource) => void,
 ): HTMLElement {
   const nav = document.createElement("nav");
@@ -430,7 +455,12 @@ function renderBottomTabs(
     const button = document.createElement("button");
     button.type = "button";
     button.className = "tabs__tab";
-    button.setAttribute("aria-label", capitalize(destination));
+    const unavailableResources = destination === "resources" && resourcesAvailable === false;
+    const label = unavailableResources
+      ? "Resources unavailable — no operational-resource adapter is attached"
+      : capitalize(destination);
+    button.disabled = unavailableResources;
+    button.setAttribute("aria-label", label);
     if (selected === destination) button.setAttribute("aria-current", "page");
     button.append(renderIcon(document, DESTINATION_ICONS[destination]), textElement(document, "span", "", capitalize(destination)));
     button.addEventListener("click", () => onSelect(destination, "bottom-tabs"));
@@ -754,6 +784,22 @@ function preferredSessionKey(model: PresentationModel): string | undefined {
   const sessions = [...model.sessions.values()];
   const preferred = sessions.find(stableTarget) ?? sessions.find((session) => !session.tombstoned) ?? sessions[0];
   return preferred ? sessionKey(preferred.identity) : undefined;
+}
+
+function resourceDestinationAvailability(model: PresentationModel): boolean | undefined {
+  if (model.resources.size > 0 || model.resourceCollections.size > 0) return true;
+  const adapters = [...model.adapters.values()];
+  if (adapters.length === 0) return undefined;
+  let complete = true;
+  for (const adapter of adapters) {
+    const capability = adapter.status?.capability;
+    if (!capability) {
+      complete = false;
+      continue;
+    }
+    if (capability.resourceCapabilities.length > 0) return true;
+  }
+  return complete ? false : undefined;
 }
 
 function preferredResourceKey(model: PresentationModel): string | undefined {

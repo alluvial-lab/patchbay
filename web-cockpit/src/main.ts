@@ -116,7 +116,7 @@ export async function startCockpit(options: StartCockpitOptions = {}): Promise<C
   });
 }
 
-interface ComposeOptions {
+export interface ComposeOptions {
   idFactory?: () => string;
   startSubscription?: boolean;
   isMobile?: () => boolean;
@@ -126,7 +126,7 @@ interface ComposeOptions {
   scheduleFrame?: (callback: () => void) => void;
 }
 
-function composeCockpit(
+export function composeCockpit(
   document: Document,
   mount: HTMLElement,
   authorityDomainId: AuthorityDomainId,
@@ -147,7 +147,7 @@ function composeCockpit(
       const selected = selectedKey
         ? projection.model.sessions.get(selectedKey)
         : undefined;
-      void queryAdapterStatus(selected, "reconcile");
+      void refreshAdapterStatuses("reconcile", selected?.identity.adapterId);
     },
   });
   const idFactory = options.idFactory ?? (() => globalThis.crypto.randomUUID());
@@ -155,15 +155,28 @@ function composeCockpit(
   const inFlightDiagnostics = new Set<string>();
   let diagnosticRequestSequence = 0;
 
-  async function queryAdapterStatus(session: SessionView | undefined, reason: string): Promise<void> {
-    if (!session && options.startSubscription === false) return;
+  async function refreshAdapterStatuses(reason: string, preferredAdapterId?: string): Promise<void> {
+    const adapterIds = new Set(projection.model.adapters.keys());
+    if (preferredAdapterId) adapterIds.add(preferredAdapterId);
+    if (adapterIds.size === 0) {
+      await queryAdapterStatus(undefined, reason);
+      return;
+    }
+    await Promise.all([...adapterIds].sort().map((adapterId) =>
+      queryAdapterStatus(adapterId, reason),
+    ));
+  }
+
+  async function queryAdapterStatus(adapterId: string | undefined, reason: string): Promise<void> {
     if (projection.model.lockdown.active || projection.model.lockdown.submitting) return;
-    const adapterId = session?.identity.adapterId;
-    const key = `${adapterId ?? "*"}:${reason}`;
+    // Trigger reason is diagnostic context, not request identity. A shell
+    // selection microtask may coincide with a reconciliation callback; one
+    // adapter scope still gets only one concurrent authoritative read.
+    const key = adapterId ?? "*";
     if (inFlightDiagnostics.has(key)) return;
     inFlightDiagnostics.add(key);
     try {
-      const suffix = `${idFactory()}-${++diagnosticRequestSequence}`;
+      const suffix = `${reason}-${idFactory()}-${++diagnosticRequestSequence}`;
       const operation = buildAdapterStatusQueryOperation(authorityDomainId, adapterId, {
         commandId: `diagnostics-${suffix}`,
         idempotencyKey: `diagnostics-${suffix}`,
@@ -317,7 +330,7 @@ function composeCockpit(
     isMobile: options.isMobile,
     submission: () => submission,
     onSelectionChange(session, reason) {
-      void queryAdapterStatus(session, reason);
+      if (session) void queryAdapterStatus(session.identity.adapterId, reason);
     },
     actions: {
       spawn(adapterId, logicalTargetId) {
@@ -386,6 +399,13 @@ function composeCockpit(
     },
   });
   mount.replaceChildren(shell.element);
+
+  // Capability discovery is a composition lifecycle concern, including when
+  // there is no selected (or any) runtime session. The first login performs
+  // one bounded refresh; later reconciliation completions repeat it from the
+  // known adapter registry, falling back to one unscoped query only while the
+  // registry is empty.
+  void refreshAdapterStatuses("startup");
 
   // Security inventory is a separate redacted snapshot projection. Load it
   // at startup (and again on stream reconnect) instead of inferring endpoint,

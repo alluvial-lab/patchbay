@@ -5,17 +5,33 @@ import test from "node:test";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import {
   AdapterCapabilitySummarySchema,
+  AdapterIdSchema,
+  AdapterStatusPageSchema,
+  AdapterStatusSchema,
   AuthorityDomainIdSchema,
+  EventIdSchema,
+  GenerationSchema,
+  LoadSnapshotResponseSchema,
   LogicalTargetIdSchema,
+  LsnSchema,
   ManagedSpawnTargetCapabilitySchema,
   OperationKind,
+  OperationState,
   PayloadContentType,
   PayloadEnvelopeSchema,
   PiContinuationMode,
   PiSpawnTargetSpecSchema,
+  QueryDiagnosticsResponseSchema,
+  ResourceSnapshotSchema,
   SessionActivityState,
+  SessionSnapshotSchema,
+  SnapshotViewKind,
   SpawnRequestSchema,
   SessionConnectivityState,
+  SubmissionOutcome,
+  SubmissionResultSchema,
+  type LoadSnapshotRequest,
+  type QueryDiagnosticsRequest,
 } from "@patchbay/contracts";
 import { JSDOM } from "jsdom";
 
@@ -23,9 +39,11 @@ import {
   buildFreshSpawnOperation,
   buildInstructOperation,
   buildRestartOperation,
+  composeCockpit,
   startCockpit,
 } from "../src/main.js";
 import type { SessionView } from "../src/domain/model.js";
+import type { ProtocolClient } from "../src/domain/protocol-client.js";
 
 const DOMAIN = create(AuthorityDomainIdSchema, { value: "operator-domain" });
 
@@ -53,6 +71,87 @@ test("browser entry composes protocol client, projection, reconciler, and shell"
   assert.ok(app.reconciler);
   assert.equal(dom.window.document.querySelectorAll(".cockpit").length, 1);
   assert.equal(app.shell.element.isConnected, true);
+  app.stop();
+});
+
+test("empty-session reconciliation fetches capability and enables declared managed spawn", async () => {
+  const dom = new JSDOM("<!doctype html><body><main data-patchbay-cockpit></main></body>");
+  const capability = spawnCapability([["uat-logical-target", "uat-project-context"]]);
+  let diagnosticsCalls = 0;
+  const protocol = protocolStub({
+    async queryDiagnostics(_request: QueryDiagnosticsRequest) {
+      diagnosticsCalls += 1;
+      return adapterCapabilityResponse("pi", capability, BigInt(diagnosticsCalls));
+    },
+  });
+  const app = composeCockpit(
+    dom.window.document,
+    dom.window.document.querySelector<HTMLElement>("[data-patchbay-cockpit]")!,
+    DOMAIN,
+    protocol,
+    {
+      idFactory: () => "empty-session",
+      startSubscription: false,
+      isMobile: () => false,
+      fetcher: globalThis.fetch,
+      refreshCsrfToken: async () => "csrf-proof",
+    },
+  );
+
+  await waitForCondition(() => diagnosticsCalls === 1);
+  assert.equal(app.projection.model.sessions.size, 0);
+  assert.equal(app.projection.model.adapters.get("pi")?.status?.capability, capability);
+  let spawn = app.shell.element.querySelector<HTMLButtonElement>(
+    '.sidebar__actions [aria-label="Spawn uat-logical-target on pi"]',
+  );
+  assert.ok(spawn);
+  assert.equal(spawn.disabled, false);
+  const resources = [...app.shell.element.querySelectorAll<HTMLButtonElement>(
+    '[aria-label="Resources unavailable — no operational-resource adapter is attached"]',
+  )];
+  assert.equal(resources.length, 2);
+  assert.equal(resources.every((button) => button.disabled), true);
+  assert.equal(resources.every((button) => button.getAttribute("aria-label") ===
+    "Resources unavailable — no operational-resource adapter is attached"), true);
+
+  await app.reconciler.reconcileNow(DOMAIN);
+  await waitForCondition(() => diagnosticsCalls === 2);
+  assert.ok(diagnosticsCalls <= 2, "startup plus one explicit reconciliation stay bounded");
+  assert.equal(app.projection.model.adapters.get("pi")?.status?.capability, capability);
+  spawn = app.shell.element.querySelector<HTMLButtonElement>(
+    '.sidebar__actions [aria-label="Spawn uat-logical-target on pi"]',
+  );
+  assert.ok(spawn);
+  assert.equal(spawn.disabled, false);
+  app.stop();
+});
+
+test("empty-session adapter without capability keeps spawn canonically disabled", async () => {
+  const dom = new JSDOM("<!doctype html><body><main data-patchbay-cockpit></main></body>");
+  let diagnosticsCalls = 0;
+  const app = composeCockpit(
+    dom.window.document,
+    dom.window.document.querySelector<HTMLElement>("[data-patchbay-cockpit]")!,
+    DOMAIN,
+    protocolStub({
+      async queryDiagnostics(_request: QueryDiagnosticsRequest) {
+        diagnosticsCalls += 1;
+        return adapterCapabilityResponse("pi", undefined, 1n);
+      },
+    }),
+    {
+      idFactory: () => "capability-missing",
+      startSubscription: false,
+      isMobile: () => false,
+      fetcher: globalThis.fetch,
+      refreshCsrfToken: async () => "csrf-proof",
+    },
+  );
+
+  await waitForCondition(() => diagnosticsCalls === 1);
+  const spawn = app.shell.element.querySelector<HTMLButtonElement>(".sidebar__actions button")!;
+  assert.equal(spawn.disabled, true);
+  assert.equal(spawn.getAttribute("aria-label"), "Adapter capability is unavailable.");
   app.stop();
 });
 
@@ -190,6 +289,82 @@ async function waitForElement<T extends Element>(dom: JSDOM, selector: string): 
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   throw new Error(`element did not appear: ${selector}`);
+}
+
+async function waitForCondition(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error("condition did not become true");
+}
+
+function protocolStub(overrides: {
+  queryDiagnostics(request: QueryDiagnosticsRequest): Promise<ReturnType<typeof adapterCapabilityResponse>>;
+}): ProtocolClient {
+  const client = {
+    ...overrides,
+    async loadSnapshot(request: LoadSnapshotRequest) {
+      return emptySnapshotResponse(request.viewKind);
+    },
+    async *subscribe() {
+      // Empty operator-visible prefix: adapter registration is intentionally
+      // discovered through the diagnostics projection, not fabricated here.
+    },
+  };
+  return { client, transport: {} } as unknown as ProtocolClient;
+}
+
+function emptySnapshotResponse(viewKind: SnapshotViewKind) {
+  const eventId = create(EventIdSchema, {
+    authorityDomainId: DOMAIN,
+    lsn: create(LsnSchema, { value: 1n }),
+  });
+  const coreGeneration = create(GenerationSchema, { value: 1n });
+  const snapshotPayload = viewKind === SnapshotViewKind.SESSION
+    ? toBinary(SessionSnapshotSchema, create(SessionSnapshotSchema, {
+        authorityDomainId: DOMAIN,
+        snapshotLsn: eventId.lsn,
+        coreGeneration,
+      }))
+    : toBinary(ResourceSnapshotSchema, create(ResourceSnapshotSchema, {
+        authorityDomainId: DOMAIN,
+        snapshotLsn: eventId.lsn,
+        coreGeneration,
+      }));
+  return create(LoadSnapshotResponseSchema, {
+    present: true,
+    eventId,
+    viewKind,
+    snapshotPayload,
+  });
+}
+
+function adapterCapabilityResponse(
+  adapterId: string,
+  capability: ReturnType<typeof spawnCapability> | undefined,
+  asOfLsn: bigint,
+) {
+  return create(QueryDiagnosticsResponseSchema, {
+    submission: create(SubmissionResultSchema, {
+      outcome: SubmissionOutcome.ACCEPTED,
+      operationState: OperationState.COMPLETED,
+    }),
+    resultEventId: create(EventIdSchema, {
+      authorityDomainId: DOMAIN,
+      lsn: create(LsnSchema, { value: asOfLsn + 1n }),
+    }),
+    asOfLsn: create(LsnSchema, { value: asOfLsn }),
+    result: {
+      case: "adapters",
+      value: create(AdapterStatusPageSchema, {
+        adapters: [create(AdapterStatusSchema, {
+          adapterId: create(AdapterIdSchema, { value: adapterId }),
+          capability,
+        })],
+      }),
+    },
+  });
 }
 
 function spawnCapability(targets: readonly (readonly [string, string])[]) {
