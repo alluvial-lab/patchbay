@@ -80,11 +80,13 @@ export interface PiControlHandshakeOptions {
 
 export class PiControlHandshakeError extends Error {
   readonly code: PiControlHandshakeFailure;
+  readonly diagnosticCode: string;
 
   constructor(code: PiControlHandshakeFailure) {
-    super(`Pi control handshake failed (${failureName(code)})`);
+    super(`Pi control handshake failed (${failureName(code).toLowerCase()})`);
     this.name = "PiControlHandshakeError";
     this.code = code;
+    this.diagnosticCode = `handshake:${failureName(code)}`;
   }
 }
 
@@ -438,5 +440,5 @@ function isCanonicalAbsolutePath(value: unknown): value is string {
 }
 
 function failureName(code: PiControlHandshakeFailure): string {
-  return PiControlHandshakeFailure[code]?.toLowerCase() ?? "unknown";
+  return PiControlHandshakeFailure[code] ?? "UNKNOWN";
 }

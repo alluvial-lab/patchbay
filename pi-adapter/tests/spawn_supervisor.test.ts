@@ -23,6 +23,7 @@ import {
   PayloadContentType,
   PayloadEnvelopeSchema,
   PiContinuationMode,
+  PiControlHandshakeFailure,
   PiSpawnTargetSpecSchema,
   RuntimeGenerationRefSchema,
   RuntimeSessionIdSchema,
@@ -41,7 +42,10 @@ import {
   type RuntimeGenerationRef,
   type SpawnClaimAccepted,
 } from "@patchbay/contracts";
-import type { PiControlHandshake } from "../src/control_handshake.js";
+import {
+  PiControlHandshakeError,
+  type PiControlHandshake,
+} from "../src/control_handshake.js";
 import { PiRpcTransportError } from "../src/rpc_client.js";
 import type { ConfiguredDeploymentTarget } from "../src/deployment_authority.js";
 import {
@@ -59,6 +63,7 @@ import {
   LocalStagedPiReconciler,
   PI_RPC_TARGET_SHAPE,
   PI_SPAWN_TARGET_SCHEMA_REF,
+  SpawnSupervisorError,
   type PiAuthoritativeReconciler,
   type SpawnSupervisorCorePort,
 } from "../src/spawn_supervisor.js";
@@ -134,6 +139,7 @@ class FakeRuntimePort implements ManagedPiRuntimePort {
   readonly launches: PiLaunchSpec[] = [];
   readonly runtimes: PiRpcRuntime[] = [];
   failLaunch = false;
+  handshakeError: Error | undefined;
   nextSessionId = "pi-successor";
   nextSessionFile = join(cwd, "missing-pi-successor.jsonl");
 
@@ -152,6 +158,7 @@ class FakeRuntimePort implements ManagedPiRuntimePort {
   }
 
   async handshake(runtime: PiRpcRuntime, _challenge: PiHandshakeChallenge): Promise<PiControlHandshake> {
+    if (this.handshakeError) throw this.handshakeError;
     const rpc = runtime.rpc as unknown as FakeRpc;
     return {
       challenge: "c".repeat(43),
@@ -693,7 +700,7 @@ test("fresh spawn journals the exact generation before launch and publishes only
     journal: fixture.journal,
     registry,
     core,
-    targets: [managedTarget()],
+    targets: [{ ...managedTarget(), sessionRoot: fixture.directory }],
     reconciler,
     observeTranscript: () => { transcriptCount += 1; },
   });
@@ -703,6 +710,9 @@ test("fresh spawn journals the exact generation before launch and publishes only
     assert.equal(successor.runtime.externalRuntime?.generation?.value, 1n);
     assert.equal(runtimePort.launchCalls, 1);
     assert.equal(runtimePort.launches[0]?.argv.includes("--session"), false);
+    const sessionDirectoryIndex = runtimePort.launches[0]!.argv.indexOf("--session-dir");
+    assert.notEqual(sessionDirectoryIndex, -1, "sessionRoot defaults the Pi session directory");
+    assert.equal(runtimePort.launches[0]!.argv[sessionDirectoryIndex + 1], fixture.directory);
     assert.ok(events.indexOf("journal-claim") < events.findIndex((event) => event.startsWith("journal-phase:")));
     assert.ok(
       events.indexOf(`journal-phase:${SpawnExecutionPhase.LAUNCH_ATTEMPTED}`) < events.indexOf("process-launch"),
@@ -716,6 +726,43 @@ test("fresh spawn journals the exact generation before launch and publishes only
     assert.ok(events.indexOf("cursor-record-current") < events.indexOf("journal-publication-committed"));
     assert.ok(events.indexOf("journal-publication-committed") < events.findIndex((event) => event.startsWith("session:live:")));
     assert.equal(registry.resolve(successor.entry.runtimeSessionId)?.session, successor.entry.session);
+  } finally {
+    await registry.dispose();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test("handshake failure codes survive supervisor ambiguity wrapping", async () => {
+  const events: string[] = [];
+  const runtimePort = new FakeRuntimePort(events);
+  runtimePort.handshakeError = new PiControlHandshakeError(
+    PiControlHandshakeFailure.COMMAND_MISSING,
+  );
+  const registry = new SessionRegistry();
+  const fixture = await journalFixture(events);
+  const accepted = acceptedSpawn({ commandId: "handshake-code", generation: 1n });
+  const supervisor = new ClaimAwareSpawnSupervisor({
+    runtimePort,
+    journal: fixture.journal,
+    registry,
+    core: createCore(events),
+    targets: [managedTarget()],
+    reconciler: testReconciler(),
+  });
+
+  try {
+    await assert.rejects(
+      supervisor.handleAcceptedSpawn(accepted),
+      (error: unknown) => {
+        assert.ok(error instanceof SpawnSupervisorError);
+        assert.equal(error.failureCode, FailureCode.EXECUTION_OUTCOME_UNKNOWN);
+        assert.equal(error.diagnosticCode, "handshake:COMMAND_MISSING");
+        return true;
+      },
+    );
+    assert.equal(runtimePort.launchCalls, 1);
+    assert.equal(runtimePort.terminateCalls, 1);
+    assert.ok(events.includes(`failure:${FailureCode.EXECUTION_OUTCOME_UNKNOWN}`));
   } finally {
     await registry.dispose();
     await rm(fixture.directory, { recursive: true, force: true });

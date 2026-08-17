@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { realpath } from "node:fs/promises";
-import { isAbsolute, normalize } from "node:path";
+import { isAbsolute, normalize, relative, sep } from "node:path";
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import {
   AdapterIdSchema,
@@ -30,6 +30,7 @@ import {
   type SpawnPriorWorkEffect,
   type RuntimeGenerationRef,
 } from "@patchbay/contracts";
+import { PiControlHandshakeError } from "./control_handshake.js";
 import { PI_RPC_TARGET_SHAPE, PI_SPAWN_TARGET_SCHEMA_REF } from "./core_client.js";
 import type { ConfiguredDeploymentTarget } from "./deployment_authority.js";
 import { PiRpcTransportError } from "./rpc_client.js";
@@ -302,6 +303,7 @@ interface PriorRecoveryDisposition {
 
 export class SpawnSupervisorError extends Error {
   readonly failureCode: FailureCode;
+  readonly diagnosticCode: string;
   readonly ambiguous: boolean;
   readonly priorRecovery?: PriorRecoveryDisposition;
   terminalReported = false;
@@ -311,10 +313,12 @@ export class SpawnSupervisorError extends Error {
     failureCode: FailureCode,
     ambiguous = false,
     priorRecovery?: PriorRecoveryDisposition,
+    diagnosticCode?: string,
   ) {
     super(message);
     this.name = "SpawnSupervisorError";
     this.failureCode = failureCode;
+    this.diagnosticCode = diagnosticCode ?? `spawn:${FailureCode[failureCode] ?? "UNKNOWN"}`;
     this.ambiguous = ambiguous;
     if (priorRecovery) this.priorRecovery = Object.freeze({ ...priorRecovery });
   }
@@ -1153,11 +1157,27 @@ export class ClaimAwareSpawnSupervisor {
     const executable = await canonicalPath(target.executable);
     const cliPath = await canonicalPath(target.cliPath);
     const controlExtensionPath = await canonicalPath(target.controlExtensionPath);
+    const sessionRoot = await canonicalPath(target.sessionRoot);
+    const sessionDirectory = await canonicalPath(target.sessionDirectory ?? sessionRoot);
+    const relativeSessionDirectory = relative(sessionRoot, sessionDirectory);
+    if (
+      relativeSessionDirectory === ".."
+      || relativeSessionDirectory.startsWith(`..${sep}`)
+      || isAbsolute(relativeSessionDirectory)
+    ) {
+      throw new SpawnSupervisorError(
+        "managed Pi session directory is outside its configured root",
+        FailureCode.DELIVERY_REJECTED,
+        false,
+        undefined,
+        "spawn:SESSION_DIRECTORY_OUTSIDE_ROOT",
+      );
+    }
     const argv = buildPiRpcArgv({
       cliPath,
       controlExtensionPath,
       ...(sessionPath ? { sessionPath } : {}),
-      ...(target.sessionDirectory ? { sessionDirectory: target.sessionDirectory } : {}),
+      sessionDirectory,
       ...(target.model ? { model: target.model } : {}),
       ...(target.additionalArguments ? { additionalArguments: target.additionalArguments } : {}),
     });
@@ -1396,6 +1416,15 @@ function sameRuntime(left: RuntimeGenerationRef | undefined, right: RuntimeGener
 
 function normalizeSupervisorError(error: unknown, launchAttempted: boolean): SpawnSupervisorError {
   if (error instanceof SpawnSupervisorError) return error;
+  if (error instanceof PiControlHandshakeError) {
+    return new SpawnSupervisorError(
+      "spawn control handshake failed after launch",
+      FailureCode.EXECUTION_OUTCOME_UNKNOWN,
+      true,
+      undefined,
+      error.diagnosticCode,
+    );
+  }
   if (error instanceof PiRpcTransportError) {
     const possiblyWritten = error.requestEffect === "possibly_written";
     const failureCode = launchAttempted || possiblyWritten

@@ -8,7 +8,12 @@ import {
   openAdapterDiagnostics,
   resolveAdapterLogPath,
 } from "../src/adapter_diagnostics.js";
-import { FailureCode, OperationKind } from "@patchbay/contracts";
+import {
+  FailureCode,
+  OperationKind,
+  PiControlHandshakeFailure,
+} from "@patchbay/contracts";
+import { PiControlHandshakeError } from "../src/control_handshake.js";
 
 function temporaryDirectory(): string {
   return mkdtempSync(join(tmpdir(), "patchbay-adapter-diagnostics-"));
@@ -57,6 +62,36 @@ test("diagnostics writes ordered JSONL with generated enum names and structural 
     assert.equal(JSON.stringify(lines).includes("secret message"), false);
     assert.equal(JSON.stringify(lines).includes("secret cause"), false);
     assert.deepEqual(lines[1]?.["error"], { name: "Error", code: "EFAIL" });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("local diagnostics retain bounded handshake failure codes without message text", async () => {
+  const directory = temporaryDirectory();
+  const path = join(directory, "adapter.log");
+  try {
+    const diagnostics = await openAdapterDiagnostics({
+      path,
+      adapterId: "pi",
+      adapterGeneration: 1,
+    });
+    diagnostics.record({
+      event: "delivery.failed",
+      level: "error",
+      failureCode: FailureCode.EXECUTION_OUTCOME_UNKNOWN,
+      error: diagnosticError(new PiControlHandshakeError(
+        PiControlHandshakeFailure.COMMAND_MISSING,
+      )),
+    });
+    await diagnostics.close();
+
+    const line = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    assert.deepEqual(line["error"], {
+      name: "PiControlHandshakeError",
+      code: "handshake:COMMAND_MISSING",
+    });
+    assert.equal(readFileSync(path, "utf8").includes("Pi control handshake failed"), false);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -167,6 +202,17 @@ test("diagnostics failures and arbitrary errors are non-throwing", async () => {
       name: "Error",
       code: "7",
     });
+    assert.deepEqual(
+      diagnosticError(Object.assign(new Error("message"), {
+        diagnosticCode: "handshake:PROMPT_REJECTED",
+        code: "fallback",
+      })),
+      { name: "Error", code: "handshake:PROMPT_REJECTED" },
+    );
+    assert.deepEqual(
+      diagnosticError(Object.assign(new Error("message"), { code: "not a classification" })),
+      { name: "Error" },
+    );
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

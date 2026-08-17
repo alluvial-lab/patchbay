@@ -59,6 +59,22 @@ const mutations = [
     testFile: "dist/tests/spawn_supervisor.test.js",
   },
   {
+    name: "launch managed Pi outside the configured session root default",
+    file: "src/spawn_supervisor.ts",
+    find: `    const sessionDirectory = await canonicalPath(target.sessionDirectory ?? sessionRoot);`,
+    replace: `    const sessionDirectory = await canonicalPath(target.sessionDirectory ?? target.cwd);`,
+    test: "fresh spawn journals the exact generation",
+    testFile: "dist/tests/spawn_supervisor.test.js",
+  },
+  {
+    name: "strip the challenged handshake failure code during supervisor wrapping",
+    file: "src/spawn_supervisor.ts",
+    find: `      undefined,\n      error.diagnosticCode,\n    );`,
+    replace: `      undefined,\n    );`,
+    test: "handshake failure codes survive supervisor ambiguity wrapping",
+    testFile: "dist/tests/spawn_supervisor.test.js",
+  },
+  {
     name: "invoke process launch before durable launch-attempt phase",
     file: "src/spawn_supervisor.ts",
     find: `      const launchSpec = await this.#launchSpec(validated.target, launchNonce, resumeSelector);\n      await this.#journal.recordPhase({\n        claimOperationId,\n        phase: SpawnExecutionPhase.LAUNCH_ATTEMPTED,\n        externalEffectDisposition: ExternalEffectDisposition.MAY_EXIST,\n        recordedAt: new Date().toISOString(),\n        poisoned: true,\n      });\n      lastPhase = SpawnExecutionPhase.LAUNCH_ATTEMPTED;\n      lastPhaseHasNoSuccessorProof = false;\n      launchAttempted = true;\n      launched = await this.#runtimePort.launch(launchSpec);`,

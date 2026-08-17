@@ -110,21 +110,26 @@ export function diagnosticError(error: unknown): AdapterDiagnosticError {
   try {
     if (error instanceof Error) {
       const result: AdapterDiagnosticError = { name: error.name || "Error" };
-      const code = (error as Error & { code?: unknown }).code;
-      if (typeof code === "string" || typeof code === "number") result.code = String(code);
+      const value = error as Error & { diagnosticCode?: unknown; code?: unknown };
+      const code = safeDiagnosticCode(value.diagnosticCode) ?? safeDiagnosticCode(value.code);
+      if (code !== undefined) result.code = code;
       return result;
     }
     if (typeof error === "object" && error !== null) {
-      const value = error as { name?: unknown; code?: unknown; constructor?: { name?: unknown } };
+      const value = error as {
+        name?: unknown;
+        diagnosticCode?: unknown;
+        code?: unknown;
+        constructor?: { name?: unknown };
+      };
       const name = typeof value.name === "string"
         ? value.name
         : typeof value.constructor?.name === "string"
           ? value.constructor.name
           : "ThrownValue";
       const result: AdapterDiagnosticError = { name };
-      if (typeof value.code === "string" || typeof value.code === "number") {
-        result.code = String(value.code);
-      }
+      const code = safeDiagnosticCode(value.diagnosticCode) ?? safeDiagnosticCode(value.code);
+      if (code !== undefined) result.code = code;
       return result;
     }
     return { name: typeof error === "string" ? "String" : typeof error };
@@ -133,6 +138,17 @@ export function diagnosticError(error: unknown): AdapterDiagnosticError {
     // replace the original adapter failure with a property-access failure.
     return { ...DIAGNOSTIC_ERROR_FALLBACK };
   }
+}
+
+function safeDiagnosticCode(value: unknown): string | undefined {
+  const code = typeof value === "number" && Number.isSafeInteger(value)
+    ? String(value)
+    : typeof value === "string"
+      ? value
+      : undefined;
+  return code !== undefined && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u.test(code)
+    ? code
+    : undefined;
 }
 
 export async function openAdapterDiagnostics(

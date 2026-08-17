@@ -752,7 +752,6 @@ export default function offlineMaterialization(pi) {
         executable: realpathSync(process.execPath),
         cliPath,
         controlExtensionPath,
-        sessionDirectory: realpathSync(sessionDirectory),
         environment: { PI_OFFLINE: "1" },
         additionalArguments: ["--extension", realpathSync(materializationExtension)],
       }],
@@ -837,6 +836,12 @@ export default function offlineMaterialization(pi) {
       realLaunches[0]!.spec.argv.slice(modeIndex, modeIndex + 2),
       ["--mode", "rpc"],
       "the delivery-loop supervisor launches Pi in RPC mode",
+    );
+    const sessionDirectoryIndex = realLaunches[0]!.spec.argv.indexOf("--session-dir");
+    assert.notEqual(sessionDirectoryIndex, -1, "sessionRoot supplies the default Pi session directory");
+    assert.equal(
+      realLaunches[0]!.spec.argv[sessionDirectoryIndex + 1],
+      realpathSync(sessionDirectory),
     );
     assert.doesNotThrow(
       () => process.kill(realLaunches[0]!.runtime.pid, 0),
