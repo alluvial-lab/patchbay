@@ -1,4 +1,16 @@
-# ✅ STRIDE COMPLETE (2026-08-16, final HEAD `65e0f5e`, CI green) — this resume prompt is archival
+# UAT IN PROGRESS (2026-08-17) — 4 integration bugs found in live UAT; 3 FIXED, 1 OPEN (see below)
+
+Live dev stack runs at https://192.168.50.110:3010 (uat-operator / uat-operator-pass-1; core :50051/:50052, SQLite /home/agent/uat/state, logs /home/agent/uat/logs + ~/.local/state/patchbay/adapter.log). Env files: /home/agent/uat/state/env-{core,adapter}.sh. Config learnings: managed target needs executable=node, cliPath=adapter node_modules pi 0.84.1, controlExtensionPath=dist build, environment PI_OFFLINE=1 for offline; deploymentTarget needs full DeploymentTargetIdentity (adapterId/deploymentScope/logicalTargetId + credentialPolicy).
+
+**FIXED + verified live:** (1) cockpit AcceptedOperation decode `28868d1` + CLI sibling `5f483b1`/`101860e`; (2) managed-spawn delivery wiring `37d0c52`; (3) spawn target-shape from declared capability `b5a9f33` (cockpit+CLI now build pi-rpc payloads from the adapter manifest).
+
+**OPEN (fix story filed, root-cause candidates listed):** `.work/active/stories/fix-supervisor-handshake-fails-in-adapter-context.md` — supervisor handshakes its launched child inside the live adapter and fails in ~100ms at HANDSHAKE_RECONCILING → correct poison; the IDENTICAL manual handshake (same modules/env/cwd/build) succeeds; e2e 4/4 passes. Prime suspect: first get_commands before the extension registers (COMMAND_MISSING) — supervisor path may lack a readiness wait the test path has. ALSO fix the redaction blind spot: SpawnSupervisorError codes never reach even the local adapter ndjson log.
+
+**Also filed (design seam, not yet scheduled):** `fix-fresh-spawn-one-shot-managed-target.md` — configured managed target is one-shot for fresh spawn; a pre-effect failure wedges it (ExactRetry mapped to SpawnClaimConflict at storage; abandon can't see pre-staging claims). Options a/b/c in the story; needs a design decision + review.
+
+**UAT config notes:** world resets required between attempts (one-shot targets); the wedge is itself evidence for the seam story. Ten original cockpit clicks remain poisoned in the ORIGINAL wedged world (patchbay.sqlite3.wedged-world) — good poison-path demo data.
+
+# (archival) ✅ stride-complete note
 
 The spawn stride is DONE: research-handoff-spawn (16 children), research-handoff-pi-adapter-capability (6 children), capability-manifest-durability-and-reconciliation-depth (2 children) — all 24 stories + 3 features at stage:done through thorough/deep review convergence; Phase-8 final completion review confirmed (both its re-run blockers closed: pi-adapter conformance-runner CI deps; Pi feature pass-3 CLEAN retained). Do NOT re-drive. Next stride is a separate release-deploy decision (operator-owned).
 
